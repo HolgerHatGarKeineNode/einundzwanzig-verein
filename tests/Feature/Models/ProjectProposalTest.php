@@ -122,6 +122,25 @@ it('is "supported" once a payout is recorded, outranking a majority of rejection
     expect($rejected)->not->toContain($project->id);
 });
 
+it('surfaces the paid sats once a payout is recorded, otherwise the requested amount', function () {
+    $unpaid = ProjectProposal::factory()->create([
+        'support_in_sats' => 1_250_000,
+        'sats_paid' => null,
+    ]);
+    $zeroPaid = ProjectProposal::factory()->create([
+        'support_in_sats' => 1_250_000,
+        'sats_paid' => 0,
+    ]);
+    $paid = ProjectProposal::factory()->create([
+        'support_in_sats' => 1_250_000,
+        'sats_paid' => 392_613,
+    ]);
+
+    expect($unpaid->displayedSats())->toBe(1_250_000);
+    expect($zeroPaid->displayedSats())->toBe(1_250_000);
+    expect($paid->displayedSats())->toBe(392_613);
+});
+
 it('does not let votes from non-board members reach the board threshold', function () {
     $project = ProjectProposal::factory()->create();
     $threshold = ProjectProposal::boardVoteThreshold();

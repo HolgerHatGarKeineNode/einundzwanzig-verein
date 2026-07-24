@@ -201,6 +201,23 @@ class ProjectProposal extends Model implements HasMedia
     }
 
     /**
+     * Sats, die die Oberfläche anzeigt: die erfasste Auszahlung, sobald eine
+     * vorliegt, sonst die beantragte Fördersumme.
+     *
+     * Die Übersichtskarte darf nicht die Beantragung zeigen, wenn der Verein
+     * einen anderen Betrag ausgezahlt hat — sonst bleibt eine Korrektur nur
+     * auf der Detailseite sichtbar.
+     */
+    public function displayedSats(): int
+    {
+        if ($this->sats_paid > 0) {
+            return (int) $this->sats_paid;
+        }
+
+        return (int) $this->support_in_sats;
+    }
+
+    /**
      * Der abgeleitete Status. Setzt geladene Aggregate voraus (scopeWithVoteAggregates);
      * fällt sonst auf die geladenen Stimmen zurück.
      */
