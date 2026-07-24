@@ -74,7 +74,8 @@
         </h3>
 
         <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-orange-500">
-            {{ number_format($project->support_in_sats, 0, ',', '.') }} Sats
+            {{-- Ausgezahlt, sobald erfasst — sonst die beantragte Fördersumme. --}}
+            {{ number_format($project->displayedSats(), 0, ',', '.') }} Sats
         </div>
 
         {{-- Quorum: wie weit ist der Antrag von der absoluten Mehrheit entfernt.

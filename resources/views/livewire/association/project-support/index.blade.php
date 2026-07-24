@@ -28,7 +28,9 @@ new class extends Component {
         'newest' => ['created_at', 'desc'],
         'oldest' => ['created_at', 'asc'],
         'supporters' => ['supporters_count', 'desc'],
-        'sats' => ['support_in_sats', 'desc'],
+        // 'sats' hat keine Einzelspalte: sortiert über displayedSats-Logik
+        // (sats_paid wenn > 0, sonst support_in_sats) — siehe projects().
+        'sats' => ['sats_paid', 'desc'],
     ];
 
     private const PER_PAGE = 12;
@@ -91,12 +93,21 @@ new class extends Component {
     {
         [$column, $direction] = self::SORT_OPTIONS[$this->sortBy] ?? self::SORT_OPTIONS['newest'];
 
-        return $this->filteredQuery()
+        $query = $this->filteredQuery()
             ->withVoteAggregates()
             ->withOwnVote($this->currentPleb?->id)
-            ->with(['einundzwanzigPleb.profile', 'media'])
-            ->orderBy($column, $direction)
-            ->paginate(self::PER_PAGE);
+            ->with(['einundzwanzigPleb.profile', 'media']);
+
+        // Sortierung „Höchste Fördersumme": dieselben Sats wie auf der Karte —
+        // ausgezahlter Betrag, sobald erfasst, sonst die Beantragung. Reines
+        // orderBy('support_in_sats') würde korrigierte Auszahlungen ignorieren.
+        if ($this->sortBy === 'sats') {
+            $query->orderByRaw('CASE WHEN sats_paid > 0 THEN sats_paid ELSE support_in_sats END DESC');
+        } else {
+            $query->orderBy($column, $direction);
+        }
+
+        return $query->paginate(self::PER_PAGE);
     }
 
     /**

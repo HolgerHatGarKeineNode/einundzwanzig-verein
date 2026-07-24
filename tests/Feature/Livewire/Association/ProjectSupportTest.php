@@ -33,6 +33,57 @@ it('loads projects on mount', function () {
         });
 });
 
+it('shows paid sats on the overview card, not the original request, when a payout was recorded', function () {
+    // Regression: die Karte las immer support_in_sats. Eine korrigierte
+    // Auszahlung (sats_paid) blieb nur auf der Detailseite sichtbar.
+    ProjectProposal::factory()->create([
+        'name' => 'Shirts fuer der Weg',
+        'support_in_sats' => 1_250_000,
+        'sats_paid' => 392_613,
+    ]);
+
+    Livewire::test('association.project-support.index')
+        ->assertSee('392.613')
+        ->assertDontSee('1.250.000');
+});
+
+it('shows the requested sats on the overview card when nothing is paid yet', function () {
+    ProjectProposal::factory()->create([
+        'support_in_sats' => 1_250_000,
+        'sats_paid' => null,
+    ]);
+
+    Livewire::test('association.project-support.index')
+        ->assertSee('1.250.000');
+});
+
+it('sorts by paid sats when a payout exists, otherwise by the requested amount', function () {
+    $smallPaid = ProjectProposal::factory()->create([
+        'name' => 'Small Paid',
+        'support_in_sats' => 9_000_000,
+        'sats_paid' => 100_000,
+    ]);
+    $largeUnpaid = ProjectProposal::factory()->create([
+        'name' => 'Large Unpaid',
+        'support_in_sats' => 500_000,
+        'sats_paid' => null,
+    ]);
+    $midPaid = ProjectProposal::factory()->create([
+        'name' => 'Mid Paid',
+        'support_in_sats' => 50_000,
+        'sats_paid' => 300_000,
+    ]);
+
+    Livewire::test('association.project-support.index')
+        ->call('setSort', 'sats')
+        ->assertSet('projects', function ($projects) use ($smallPaid, $largeUnpaid, $midPaid) {
+            $ids = $projects->pluck('id')->all();
+
+            // 500k (unpaid) > 300k (paid) > 100k (paid) — nicht 9M beantragt.
+            return $ids === [$largeUnpaid->id, $midPaid->id, $smallPaid->id];
+        });
+});
+
 it('can search projects', function () {
     $project = ProjectProposal::factory()->create(['name' => 'Unique Project Name']);
 
