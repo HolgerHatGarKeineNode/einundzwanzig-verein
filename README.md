@@ -13,7 +13,7 @@ weder Commit noch Push noch `composer update`:
 
 ```
 ~/Code/
-├── einundzwanzig-nostr/                       ← dieses Repo
+├── einundzwanzig-verein/                      ← dieses Repo
 └── einundzwanzig-group/
     └── packages/einundzwanzig-group/          ← wird automatisch verwendet
 ```

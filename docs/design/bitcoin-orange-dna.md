@@ -1,7 +1,7 @@
 # Bitcoin-Orange Design-DNA — geteilte Grundlage für zwei EINUNDZWANZIG-Portale
 
 **Status:** Konzept / Entscheidungsgrundlage (KEIN Code-Umbau)
-**Gilt für:** `einundzwanzig-app` (offizielles Portal, portal.einundzwanzig.space) · `einundzwanzig-nostr` (Vereinsportal)
+**Gilt für:** `einundzwanzig-app` (offizielles Portal, portal.einundzwanzig.space) · `einundzwanzig-verein` (Vereinsportal)
 **Erstellt:** 2026-07-19 · **Autor:** Design-Lead
 **Zweck:** Eine abgestimmte Farb-DNA, aus der sich pro Repo ein sauberer Umsetzungsauftrag ableiten lässt. Umsetzung erfolgt getrennt nach Freigabe.
 
@@ -201,7 +201,7 @@ Zeilenhöhe 1.5 für Fließtext, 1.1–1.25 für Headlines. Gewichte 400/700 (In
 
 ## 7. Der `@theme`-Block (copy-paste-fertig, kommentiert)
 
-Beide Repos übernehmen den **geteilten** Block. Nur `einundzwanzig-nostr` hängt den **portal-spezifischen** Anhang an. Tailwind v4 CSS-first, konsistent mit den bestehenden `theme.css`/`app.css`.
+Beide Repos übernehmen den **geteilten** Block. Nur `einundzwanzig-verein` hängt den **portal-spezifischen** Anhang an. Tailwind v4 CSS-first, konsistent mit den bestehenden `theme.css`/`app.css`.
 
 ```css
 /* =========================================================================
@@ -297,7 +297,7 @@ Beide Repos übernehmen den **geteilten** Block. Nur `einundzwanzig-nostr` häng
 
 ```css
 /* =========================================================================
-   NUR einundzwanzig-nostr — portal-spezifischer Anhang.
+   NUR einundzwanzig-verein — portal-spezifischer Anhang.
    Feature-/Protokoll-Farben, DEMOTED unter dem Marken-Orange.
    Niemals in gleicher Hierarchie neben einem Orange-Primary einsetzen.
    ========================================================================= */

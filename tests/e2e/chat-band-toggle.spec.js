@@ -182,7 +182,7 @@ test('Punkt 2: Band startet auf dem Telefon zu, auf dem Desktop offen', async ({
     expect(box.height, `Kopfzeile ist nur ${box.height}px hoch, verlangt sind >=44px`).toBeGreaterThanOrEqual(44)
 
     await page.screenshot({
-        path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/chat-band-mobile-closed.png',
+        path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/chat-band-mobile-closed.png',
         fullPage: false,
     })
 
@@ -191,7 +191,7 @@ test('Punkt 2: Band startet auf dem Telefon zu, auf dem Desktop offen', async ({
     await expect(panel).toBeVisible()
 
     await page.screenshot({
-        path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/chat-band-mobile-open.png',
+        path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/chat-band-mobile-open.png',
         fullPage: false,
     })
 
@@ -205,7 +205,7 @@ test('Punkt 2: Band startet auf dem Telefon zu, auf dem Desktop offen', async ({
     await expect(panel).toBeVisible()
 
     await page.screenshot({
-        path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/chat-band-desktop-open.png',
+        path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/chat-band-desktop-open.png',
         fullPage: false,
     })
 })
@@ -305,7 +305,7 @@ test.describe('Aenderung A: Band nimmt seine Hoehe aus dem Inhalt', () => {
         expect(closedBox, 'Band hat keine Bounding-Box').not.toBeNull()
         console.log(`Band-Hoehe ungeladen: ${closedBox.height}px`)
         await page.screenshot({
-            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/band-room-unloaded.png',
+            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/band-room-unloaded.png',
         })
         // Der behobene Fehler war ~350px Panel- / ~420px Gesamthoehe durch die
         // leere Faktenspalte, die die Grid-Zeile offenhielt. Grosszuegige
@@ -324,7 +324,7 @@ test.describe('Aenderung A: Band nimmt seine Hoehe aus dem Inhalt', () => {
         expect(openBox.height, `Band waechst nach dem Laden nicht (${closedBox.height}px -> ${openBox.height}px)`)
             .toBeGreaterThan(closedBox.height + 200)
         await page.screenshot({
-            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/band-room-loaded.png',
+            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/band-room-loaded.png',
         })
 
         const hits = await overflowHiddenAncestors(page, '#chat-band-panel')
@@ -400,7 +400,7 @@ test.describe('Nachtrag: Chat nutzt die Bandbreite (68ch-Deckel entfernt)', () =
 
             if (label === '1920x1080') {
                 await page.screenshot({
-                    path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/nachtrag-1920-loaded.png',
+                    path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/nachtrag-1920-loaded.png',
                 })
             }
         })
@@ -422,7 +422,7 @@ test.describe('Aenderung A: Zustaende ohne Raum', () => {
         await expect(header).toHaveAttribute('aria-expanded', 'true')
         await expect(page.getByRole('button', { name: /Chatraum anlegen/i })).toBeVisible()
         await page.screenshot({
-            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/band-no-room-board.png',
+            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/band-no-room-board.png',
         })
     })
 
@@ -453,7 +453,7 @@ test.describe('Aenderung A: Zustaende ohne Raum', () => {
         await expect(page.getByText('Der Vorstand legt den Raum bei Nachfragen an')).toBeVisible()
 
         await page.screenshot({
-            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/band-no-room-submitter-fixed.png',
+            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/band-no-room-submitter-fixed.png',
             fullPage: true,
         })
     })
@@ -479,7 +479,7 @@ test.describe('Aenderung A: Zustaende ohne Raum', () => {
         await expect(page.locator('#chat-band-panel')).toHaveCount(0)
 
         await page.screenshot({
-            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/band-no-room-stranger.png',
+            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/band-no-room-stranger.png',
             fullPage: true,
         })
     })
@@ -519,7 +519,7 @@ test.describe('Aenderung B: mobile Reihenfolge', () => {
         expect(fundingBox.y, `Foerdersumme bei ${fundingBox.y}px — nicht mehr im ersten Bildschirm`).toBeLessThan(400)
 
         await page.screenshot({
-            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/mobile-order-first-screen.png',
+            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/mobile-order-first-screen.png',
         })
 
         // Beschreibung (Hauptspalte, Ende) muss VOR "Deine Stimme" (Seitenspalte,
@@ -533,7 +533,7 @@ test.describe('Aenderung B: mobile Reihenfolge', () => {
             .toBeLessThan(voteCardBox.y)
 
         await page.screenshot({
-            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/mobile-full-order.png',
+            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/mobile-full-order.png',
             fullPage: true,
         })
     })
@@ -592,7 +592,7 @@ test.describe('Desktop unveraendert (Zweispalter, Kartenreihenfolge, Sticky)', (
                 .toBeLessThan(40)
 
             await page.screenshot({
-                path: `/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/desktop-${label}-sticky.png`,
+                path: `/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/desktop-${label}-sticky.png`,
             })
         })
     }
@@ -623,7 +623,7 @@ test.describe('Regressionen laut Auftrag (Punkt 4)', () => {
             .toBeGreaterThanOrEqual(44)
 
         await page.screenshot({
-            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/regression-4a-button-desktop.png',
+            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/regression-4a-button-desktop.png',
         })
     })
 
@@ -651,7 +651,7 @@ test.describe('Regressionen laut Auftrag (Punkt 4)', () => {
             .toBeGreaterThan(mobilePanelBox.width - 60)
 
         await page.screenshot({
-            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/regression-4a-button-mobile.png',
+            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/regression-4a-button-mobile.png',
         })
     })
 
@@ -719,7 +719,7 @@ test.describe('Reflow bei 320px (WCAG 1.4.10)', () => {
             .toBeLessThanOrEqual(clientWidth)
 
         await page.screenshot({
-            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/reflow-320-closed.png',
+            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/reflow-320-closed.png',
             fullPage: true,
         })
 
@@ -742,7 +742,7 @@ test.describe('Reflow bei 320px (WCAG 1.4.10)', () => {
             .toBeLessThanOrEqual(REFLOW.width)
 
         await page.screenshot({
-            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-nostr/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/reflow-320-open.png',
+            path: '/tmp/claude-1000/-home-user-Code-einundzwanzig-verein/576545e5-100b-4a8e-a905-9e6c6ed70562/scratchpad/screenshots/reflow-320-open.png',
             fullPage: true,
         })
     })
