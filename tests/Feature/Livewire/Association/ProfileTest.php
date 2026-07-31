@@ -12,13 +12,21 @@ it('rejects non-string values for the fax field', function () {
         ->assertStatus(422);
 });
 
-it('lists all member benefits including blossom for guests with a link to the benefits page', function () {
+it('lists all member benefits for guests with a link to the benefits page', function () {
     Livewire::test('association.profile')
         ->assertSee('Nostr Relay')
         ->assertSee('NIP-05 Verifizierung')
         ->assertSee('Lightning Watchtower')
         ->assertSee('Blossom Medienserver')
+        ->assertSee('Nostr Community-Gruppe')
+        ->assertSee('Buzz Relay')
         ->assertSeeHtml(route('association.benefits'));
+});
+
+it('flags the buzz relay as experimental in the profile teaser', function () {
+    Livewire::test('association.profile')
+        ->assertSee('Experimentell')
+        ->assertSee('Testbetrieb · Desktop App nötig', escape: false);
 });
 
 it('rejects non-string values for the email field', function () {
