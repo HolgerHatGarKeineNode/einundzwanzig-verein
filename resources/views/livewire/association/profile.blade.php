@@ -698,6 +698,21 @@ new class extends Component {
                                 <p class="text-xs text-text-secondary">Schreibe in der Einundzwanzig-Gruppe auf unserem Community-Relay (NIP-29).</p>
                             </div>
                         </li>
+                        <li class="flex items-start gap-3">
+                            <div
+                                class="shrink-0 w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-900/60 flex items-center justify-center">
+                                <i class="fa-sharp-duotone fa-solid fa-robot text-indigo-600 dark:text-indigo-300"></i>
+                            </div>
+                            <div class="min-w-0">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <h3 class="text-sm font-semibold text-text-primary">Buzz Relay</h3>
+                                    <flux:badge color="indigo" size="sm">NEU</flux:badge>
+                                    <flux:badge color="yellow" size="sm" icon="beaker">Experimentell</flux:badge>
+                                </div>
+                                <p class="text-xs text-text-secondary">Arbeitsraum für Menschen und KI-Agenten – Kanäle, Threads, Dateien und Code, komplett auf Nostr.</p>
+                                <p class="text-xs text-text-tertiary mt-0.5">Testbetrieb · Desktop App nötig</p>
+                            </div>
+                        </li>
                     </ul>
 
                     <flux:button :href="route('association.benefits')" wire:navigate variant="primary" size="sm"
