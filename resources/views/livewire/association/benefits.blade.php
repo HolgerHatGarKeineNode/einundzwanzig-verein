@@ -185,12 +185,13 @@ new class extends Component
         </flux:callout>
     @endif
 
-    <!-- Benefits Grid - 2 Spalten auf Desktop, gleiche Höhe je Zeile (flex + h-full) für ruhige Optik -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <!-- Benefits Grid - 2 Spalten auf Desktop; Karten wachsen einzeln (md:items-start), damit eine
+         aufgeklappte Anleitung die Nachbarkarte nicht mit einem Loch aufbläht -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 md:items-start">
 
         <!-- Benefit 1: Nostr Relay -->
         <flux:card
-            class="flex flex-col h-full {{ $isActiveMember ? '' : 'opacity-60' }} border-amber-200 dark:border-amber-200/30">
+            class="flex flex-col {{ $isActiveMember ? '' : 'opacity-60' }}">
             <div class="flex items-start gap-3">
                 <div
                     class="shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/60 flex items-center justify-center">
@@ -213,19 +214,20 @@ new class extends Component
 
             @if($isActiveMember)
                 <div class="mt-4 flex items-center gap-2">
-                    <code
-                        class="flex-1 text-xs bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded text-zinc-700 dark:text-zinc-300 font-mono cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors break-all"
+                    <button
+                        type="button"
+                        class="flex-1 text-left text-xs bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded text-zinc-700 dark:text-zinc-300 font-mono cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors break-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                         wire:click="copyRelayUrl"
                         title="Klicken zum Kopieren">
-                        wss://nostr.einundzwanzig.space
-                    </code>
+                        <code>wss://nostr.einundzwanzig.space</code>
+                    </button>
                     <flux:button wire:click="copyRelayUrl" size="sm" variant="ghost" icon="clipboard"
                                  aria-label="Relay-Adresse kopieren"/>
                 </div>
 
-                <flux:accordion class="mt-auto pt-3">
+                <flux:accordion class="mt-4">
                     <flux:accordion.item heading="Anleitung anzeigen">
-                        <div class="space-y-2 text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                        <div class="space-y-2 max-w-[68ch] text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
                             <p>
                                 Ein Outbox-Relay ist wie ein Postbote für deine Nostr-Nachrichten: Es speichert
                                 und verteilt deine Posts.
@@ -246,7 +248,7 @@ new class extends Component
 
         <!-- Benefit 2: NIP-05 -->
         <flux:card
-            class="flex flex-col h-full {{ $isActiveMember ? '' : 'opacity-60' }} border-emerald-200 dark:border-emerald-200/30">
+            class="flex flex-col {{ $isActiveMember ? '' : 'opacity-60' }}">
             <div class="flex items-start gap-3">
                 <div
                     class="shrink-0 w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/60 flex items-center justify-center">
@@ -283,7 +285,7 @@ new class extends Component
                     @endif
                 </div>
 
-                <flux:accordion class="mt-auto pt-3">
+                <flux:accordion class="mt-4">
                     <flux:accordion.item heading="NIP-05 einrichten & verwalten">
                         <div class="space-y-3">
                             <flux:field>
@@ -331,7 +333,7 @@ new class extends Component
                                 </flux:callout>
                             @endif
 
-                            <div class="space-y-2 text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                            <div class="space-y-2 max-w-[68ch] text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
                                 <p>
                                     <flux:link href="https://nostr.how/en/guides/get-verified#self-hosted" target="_blank">NIP-05</flux:link>
                                     funktioniert wie eine E-Mail-Adresse (z.B. name@einundzwanzig.space) und zeigt
@@ -350,7 +352,7 @@ new class extends Component
 
         <!-- Benefit 3: Lightning Watchtower -->
         <flux:card
-            class="flex flex-col h-full {{ $isActiveMember ? '' : 'opacity-60' }} border-purple-200 dark:border-purple-200/30">
+            class="flex flex-col {{ $isActiveMember ? '' : 'opacity-60' }}">
             <div class="flex items-start gap-3">
                 <div
                     class="shrink-0 w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900/60 flex items-center justify-center">
@@ -373,19 +375,20 @@ new class extends Component
 
             @if($isActiveMember)
                 <div class="mt-4 flex items-center gap-2">
-                    <code
-                        class="flex-1 text-xs bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded text-zinc-700 dark:text-zinc-300 font-mono cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors break-all"
+                    <button
+                        type="button"
+                        class="flex-1 text-left text-xs bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded text-zinc-700 dark:text-zinc-300 font-mono cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors break-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                         wire:click="copyWatchtowerUrl"
                         title="Klicken zum Kopieren">
-                        03a09f56bba3d2c200cc55eda2f1f069564a97c1fb74345e1560e2868a8ab3d7d0@62.171.139.240:9911
-                    </code>
+                        <code>03a09f56bba3d2c200cc55eda2f1f069564a97c1fb74345e1560e2868a8ab3d7d0@62.171.139.240:9911</code>
+                    </button>
                     <flux:button wire:click="copyWatchtowerUrl" size="sm" variant="ghost" icon="clipboard"
                                  aria-label="Watchtower-Adresse kopieren"/>
                 </div>
 
-                <flux:accordion class="mt-auto pt-3">
+                <flux:accordion class="mt-4">
                     <flux:accordion.item heading="Anleitung anzeigen">
-                        <div class="space-y-2 text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                        <div class="space-y-2 max-w-[68ch] text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
                             <p>
                                 Ein Watchtower überwacht deine Channel und springt ein, falls deine Node offline ist –
                                 so verhinderst du den Verlust deiner Sats bei unfairen Channel-Schließungen.
@@ -408,7 +411,7 @@ new class extends Component
 
         <!-- Benefit 4: Blossom Medienserver (NEU) -->
         <flux:card
-            class="flex flex-col h-full {{ $isActiveMember ? '' : 'opacity-60' }} border-rose-200 dark:border-rose-200/30">
+            class="flex flex-col {{ $isActiveMember ? '' : 'opacity-60' }}">
             <div class="flex items-start gap-3">
                 <div
                     class="shrink-0 w-10 h-10 rounded-full bg-rose-100 dark:bg-rose-900/60 flex items-center justify-center">
@@ -438,19 +441,20 @@ new class extends Component
 
             @if($isActiveMember)
                 <div class="mt-4 flex items-center gap-2">
-                    <code
-                        class="flex-1 text-xs bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded text-zinc-700 dark:text-zinc-300 font-mono cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors break-all"
+                    <button
+                        type="button"
+                        class="flex-1 text-left text-xs bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded text-zinc-700 dark:text-zinc-300 font-mono cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors break-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                         wire:click="copyBlossomUrl"
                         title="Klicken zum Kopieren">
-                        https://blossom.einundzwanzig.space
-                    </code>
+                        <code>https://blossom.einundzwanzig.space</code>
+                    </button>
                     <flux:button wire:click="copyBlossomUrl" size="sm" variant="ghost" icon="clipboard"
                                  aria-label="Blossom-Adresse kopieren"/>
                 </div>
 
-                <flux:accordion class="mt-auto pt-3">
+                <flux:accordion class="mt-4">
                     <flux:accordion.item heading="Was ist Blossom & wie nutze ich ihn?">
-                        <div class="space-y-3 text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                        <div class="space-y-3 max-w-[68ch] text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
                             <p>
                                 Wenn du auf Nostr ein Bild oder Video postest, muss diese Datei irgendwo gespeichert
                                 werden. Bisher landet sie oft auf fremden Gratis-Servern, die jederzeit verschwinden
@@ -487,7 +491,7 @@ new class extends Component
 
         <!-- Benefit 5: Nostr Community / NIP-29 Gruppe (NEU) -->
         <flux:card
-            class="flex flex-col h-full {{ $isActiveMember ? '' : 'opacity-60' }} border-sky-200 dark:border-sky-200/30">
+            class="flex flex-col {{ $isActiveMember ? '' : 'opacity-60' }}">
             <div class="flex items-start gap-3">
                 <div
                     class="shrink-0 w-10 h-10 rounded-full bg-sky-100 dark:bg-sky-900/60 flex items-center justify-center">
@@ -525,20 +529,21 @@ new class extends Component
                         Gruppen Web App öffnen
                     </flux:button>
                     <div class="flex items-center gap-2">
-                        <code
-                            class="flex-1 text-xs bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded text-zinc-700 dark:text-zinc-300 font-mono cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors break-all"
+                        <button
+                            type="button"
+                            class="flex-1 text-left text-xs bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded text-zinc-700 dark:text-zinc-300 font-mono cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors break-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                             wire:click="copyGroupRelayUrl"
                             title="Klicken zum Kopieren">
-                            wss://group.einundzwanzig.space
-                        </code>
+                            <code>wss://group.einundzwanzig.space</code>
+                        </button>
                         <flux:button wire:click="copyGroupRelayUrl" size="sm" variant="ghost" icon="clipboard"
                                      aria-label="Community-Relay-Adresse kopieren"/>
                     </div>
                 </div>
 
-                <flux:accordion class="mt-auto pt-3">
+                <flux:accordion class="mt-4">
                     <flux:accordion.item heading="Was ist das & wie trete ich bei?">
-                        <div class="space-y-3 text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                        <div class="space-y-3 max-w-[68ch] text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
                             <p>
                                 Unser <strong>group.einundzwanzig.space</strong> ist ein Community-Relay nach dem
                                 <flux:link href="https://github.com/nostr-protocol/nips/blob/master/29.md" target="_blank">NIP-29</flux:link>-Standard
@@ -570,7 +575,7 @@ new class extends Component
 
         <!-- Benefit 6: Buzz Relay (NEU, experimentell) -->
         <flux:card
-            class="flex flex-col h-full {{ $isActiveMember ? '' : 'opacity-60' }} border-indigo-200 dark:border-indigo-200/30">
+            class="flex flex-col {{ $isActiveMember ? '' : 'opacity-60' }}">
             <div class="flex items-start gap-3">
                 <div
                     class="shrink-0 w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900/60 flex items-center justify-center">
@@ -598,7 +603,7 @@ new class extends Component
 
             @if($isActiveMember)
                 <flux:callout variant="warning" icon="beaker" class="mt-4">
-                    <flux:callout.text class="text-xs!">
+                    <flux:callout.text>
                         <strong>Testbetrieb.</strong> Buzz ist junge Software mit hohem Änderungstempo – rechne mit
                         Fehlern und Brüchen. Nutze das Relay nicht als einzigen Ort für wichtige Daten.
                     </flux:callout.text>
@@ -615,20 +620,21 @@ new class extends Component
                         Buzz Desktop App laden
                     </flux:button>
                     <div class="flex items-center gap-2">
-                        <code
-                            class="flex-1 text-xs bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded text-zinc-700 dark:text-zinc-300 font-mono cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors break-all"
+                        <button
+                            type="button"
+                            class="flex-1 text-left text-xs bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded text-zinc-700 dark:text-zinc-300 font-mono cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors break-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                             wire:click="copyBuzzRelayUrl"
                             title="Klicken zum Kopieren">
-                            wss://buzz.einundzwanzig.space
-                        </code>
+                            <code>wss://buzz.einundzwanzig.space</code>
+                        </button>
                         <flux:button wire:click="copyBuzzRelayUrl" size="sm" variant="ghost" icon="clipboard"
                                      aria-label="Buzz-Relay-Adresse kopieren"/>
                     </div>
                 </div>
 
-                <flux:accordion class="mt-auto pt-3">
+                <flux:accordion class="mt-4">
                     <flux:accordion.item heading="Was ist Buzz & wie starte ich?">
-                        <div class="space-y-3 text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                        <div class="space-y-3 max-w-[68ch] text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
                             <p>
                                 <flux:link href="https://github.com/block/buzz" target="_blank">Buzz</flux:link>
                                 ist eine quelloffene Arbeitsplattform von Block (Apache-2.0) – ungefähr „Slack plus
