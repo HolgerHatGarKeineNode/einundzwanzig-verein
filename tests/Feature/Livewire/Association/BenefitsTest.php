@@ -4,14 +4,16 @@ use App\Models\EinundzwanzigPleb;
 use App\Support\NostrAuth;
 use Livewire\Livewire;
 
-it('shows the locked state with all four services for guests', function () {
+it('shows the locked state with all services for guests', function () {
     Livewire::test('association.benefits')
         ->assertSet('currentYearIsPaid', false)
         ->assertSee('Dienste gesperrt')
         ->assertSee('Blossom-Medienserver')
         ->assertSee('5 GB Speicher')
         ->assertSee('max. 1 GB pro Datei')
-        ->assertDontSee('https://blossom.einundzwanzig.space');
+        ->assertSee('Buzz Relay')
+        ->assertDontSee('https://blossom.einundzwanzig.space')
+        ->assertDontSee('wss://buzz.einundzwanzig.space');
 });
 
 it('unlocks the blossom server for active paid members', function () {
@@ -50,5 +52,43 @@ it('copies the community relay url for active members', function () {
 
     Livewire::test('association.benefits')
         ->call('copyGroupRelayUrl')
+        ->assertHasNoErrors();
+});
+
+it('unlocks the buzz relay for active paid members', function () {
+    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
+    NostrAuth::login($pleb->pubkey);
+
+    Livewire::test('association.benefits')
+        ->assertSee('Buzz Relay')
+        ->assertSee('wss://buzz.einundzwanzig.space')
+        ->assertSee('https://github.com/block/buzz/releases/latest');
+});
+
+it('flags the buzz relay as experimental', function () {
+    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
+    NostrAuth::login($pleb->pubkey);
+
+    Livewire::test('association.benefits')
+        ->assertSee('Experimentell')
+        ->assertSee('Testbetrieb.')
+        ->assertSee('nicht als einzigen Ort für wichtige Daten', escape: false);
+});
+
+it('points buzz users to the group web app and the automatic nightly enrolment', function () {
+    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
+    NostrAuth::login($pleb->pubkey);
+
+    Livewire::test('association.benefits')
+        ->assertSee('group.einundzwanzig.space')
+        ->assertSee('in der Nacht darauf automatisch als Member des Buzz-Relays');
+});
+
+it('copies the buzz relay url for active members', function () {
+    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
+    NostrAuth::login($pleb->pubkey);
+
+    Livewire::test('association.benefits')
+        ->call('copyBuzzRelayUrl')
         ->assertHasNoErrors();
 });

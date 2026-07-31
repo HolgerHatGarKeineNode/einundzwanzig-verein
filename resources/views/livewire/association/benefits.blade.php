@@ -123,6 +123,13 @@ new class extends Component
         Flux::toast('Community-Relay-Adresse in die Zwischenablage kopiert!');
     }
 
+    public function copyBuzzRelayUrl(): void
+    {
+        $buzzRelayUrl = 'wss://buzz.einundzwanzig.space';
+        $this->js("navigator.clipboard.writeText('{$buzzRelayUrl}')");
+        Flux::toast('Buzz-Relay-Adresse in die Zwischenablage kopiert!');
+    }
+
     public function handleNostrLoggedIn($signedEvent = null): void
     {
         NostrAuth::loginWithSignedEvent($signedEvent);
@@ -167,8 +174,8 @@ new class extends Component
         <flux:callout variant="warning" icon="lock-closed" class="mb-6">
             <flux:callout.heading>Dienste gesperrt</flux:callout.heading>
             <flux:callout.text>
-                Aktiviere deine Mitgliedschaft, um Relay, NIP-05, Watchtower, den Blossom-Medienserver und die
-                Nostr-Community-Gruppe zu nutzen.
+                Aktiviere deine Mitgliedschaft, um Relay, NIP-05, Watchtower, den Blossom-Medienserver, die
+                Nostr-Community-Gruppe und das Buzz-Relay zu nutzen.
             </flux:callout.text>
             <x-slot name="actions">
                 <flux:button :href="route('association.profile')" size="sm" variant="primary" wire:navigate>
@@ -554,6 +561,135 @@ new class extends Component
                             <p>
                                 <strong>Automatischer Zugang:</strong> Sobald dein Mitgliedsbeitrag bezahlt ist, wirst du
                                 automatisch als Member des Relays eingetragen und erhältst Schreib-Rechte in der Gruppe.
+                            </p>
+                        </div>
+                    </flux:accordion.item>
+                </flux:accordion>
+            @endif
+        </flux:card>
+
+        <!-- Benefit 6: Buzz Relay (NEU, experimentell) -->
+        <flux:card
+            class="flex flex-col h-full {{ $isActiveMember ? '' : 'opacity-60' }} border-indigo-200 dark:border-indigo-200/30">
+            <div class="flex items-start gap-3">
+                <div
+                    class="shrink-0 w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900/60 flex items-center justify-center">
+                    <i class="fa-sharp-duotone fa-solid fa-robot text-indigo-600 dark:text-indigo-300 text-lg"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between gap-2">
+                        <h3 class="text-lg font-semibold text-zinc-800 dark:text-zinc-100">Buzz Relay</h3>
+                        <div class="flex flex-wrap items-center justify-end gap-1.5">
+                            <flux:badge color="indigo" size="sm">NEU</flux:badge>
+                            <flux:badge color="yellow" size="sm" icon="beaker">Experimentell</flux:badge>
+                            @if($isActiveMember)
+                                <flux:badge color="green" size="sm">Aktiv</flux:badge>
+                            @else
+                                <flux:badge color="zinc" size="sm" icon="lock-closed">Mitglieder</flux:badge>
+                            @endif
+                        </div>
+                    </div>
+                    <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                        Arbeitsraum für Menschen und KI-Agenten – Kanäle, Threads, Dateien und Code, komplett auf
+                        Nostr.
+                    </p>
+                </div>
+            </div>
+
+            @if($isActiveMember)
+                <flux:callout variant="warning" icon="beaker" class="mt-4">
+                    <flux:callout.text class="text-xs!">
+                        <strong>Testbetrieb.</strong> Buzz ist junge Software mit hohem Änderungstempo – rechne mit
+                        Fehlern und Brüchen. Nutze das Relay nicht als einzigen Ort für wichtige Daten.
+                    </flux:callout.text>
+                </flux:callout>
+
+                <div class="mt-3 flex flex-col gap-2">
+                    <flux:button
+                        href="https://github.com/block/buzz/releases/latest"
+                        target="_blank"
+                        variant="primary"
+                        size="sm"
+                        icon:trailing="arrow-up-right"
+                        class="w-full">
+                        Buzz Desktop App laden
+                    </flux:button>
+                    <div class="flex items-center gap-2">
+                        <code
+                            class="flex-1 text-xs bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded text-zinc-700 dark:text-zinc-300 font-mono cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors break-all"
+                            wire:click="copyBuzzRelayUrl"
+                            title="Klicken zum Kopieren">
+                            wss://buzz.einundzwanzig.space
+                        </code>
+                        <flux:button wire:click="copyBuzzRelayUrl" size="sm" variant="ghost" icon="clipboard"
+                                     aria-label="Buzz-Relay-Adresse kopieren"/>
+                    </div>
+                </div>
+
+                <flux:accordion class="mt-auto pt-3">
+                    <flux:accordion.item heading="Was ist Buzz & wie starte ich?">
+                        <div class="space-y-3 text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                            <p>
+                                <flux:link href="https://github.com/block/buzz" target="_blank">Buzz</flux:link>
+                                ist eine quelloffene Arbeitsplattform von Block (Apache-2.0) – ungefähr „Slack plus
+                                GitHub", nur dass alles auf <strong>Nostr</strong> läuft: jede Nachricht, jede
+                                Reaktion und jede Mitgliedschaft ist ein signiertes Nostr-Event. Die Besonderheit:
+                                KI-Agenten sind dort vollwertige Mitglieder mit eigenem Schlüssel statt mit einem
+                                Bot-Token. Herzstück ist immer ein eigenes Relay – und genau das betreiben wir jetzt
+                                für den Verein.
+                            </p>
+
+                            <div>
+                                <p class="font-medium text-zinc-700 dark:text-zinc-300 mb-1">Was unser Relay kann:</p>
+                                <ul class="space-y-1 list-disc list-inside">
+                                    <li><strong>Kanäle &amp; Threads</strong> – Gruppen nach
+                                        <flux:link href="https://github.com/nostr-protocol/nips/blob/master/29.md" target="_blank">NIP-29</flux:link>,
+                                        offen oder privat, mit Rollen und Moderation.</li>
+                                    <li><strong>Private Nachrichten</strong> – verschlüsselt nach NIP-17.</li>
+                                    <li><strong>Dateien &amp; Volltextsuche</strong> – Upload ins Relay (Blossom),
+                                        Suche über alle Gespräche (NIP-50).</li>
+                                    <li><strong>Code &amp; Automatisierung</strong> – Repos und Patches als
+                                        Nostr-Events (NIP-34), Workflows per Nachricht, Zeitplan oder Webhook.</li>
+                                </ul>
+                                <p class="mt-1">Noch nicht fertig: Sprach-Huddles und die Mobile-Apps.</p>
+                            </div>
+
+                            <div>
+                                <p class="font-medium text-zinc-700 dark:text-zinc-300 mb-1">So startest du:</p>
+                                <ol class="space-y-1 list-decimal list-inside">
+                                    <li>Lade die <strong>Buzz Desktop App</strong> über den Button oben
+                                        (<flux:link href="https://github.com/block/buzz/releases/latest" target="_blank">GitHub Releases</flux:link>)
+                                        – es gibt Builds für macOS, Windows und Linux.</li>
+                                    <li>Trage beim ersten Start unser Relay <strong>wss://buzz.einundzwanzig.space</strong>
+                                        als Server ein.</li>
+                                    <li>Melde dich mit deinem Nostr-Schlüssel an – fertig.</li>
+                                </ol>
+                                <p class="mt-1">
+                                    <strong>Windows-Hinweis:</strong> Der Windows-Installer ist derzeit
+                                    <em>nicht signiert</em> (Dateiname enthält <code class="bg-zinc-200 dark:bg-zinc-700 px-1 rounded">alpha-unsigned</code>).
+                                    SmartScreen wird warnen – das ist beim aktuellen Stand erwartbar.
+                                </p>
+                            </div>
+
+                            <p>
+                                <strong>Vorerst nur Desktop:</strong> Die Buzz-Unterstützung unserer
+                                <flux:link href="https://group.einundzwanzig.space" target="_blank">Gruppen Web App</flux:link>
+                                (group.einundzwanzig.space) ist in Arbeit – bis dahin ist die Desktop App der Weg.
+                                Fremde Nostr-Clients zeigen Buzz-Inhalte nicht vollständig an, weil Buzz eigene
+                                Event-Typen für Rich Content und Bearbeitungen nutzt.
+                            </p>
+
+                            <p>
+                                <strong>Und die Community-Gruppe?</strong> Die bleibt der Ort für den alltäglichen
+                                Austausch im Browser, ohne Installation. Buzz ist der Arbeitsraum für Projekte, Code
+                                und Agenten – beide laufen auf eigenen Relays.
+                            </p>
+
+                            <p>
+                                <strong>Automatischer Zugang:</strong> Sobald dein Mitgliedsbeitrag bezahlt ist, wirst
+                                du in der Nacht darauf automatisch als Member des Buzz-Relays eingetragen und
+                                erhältst Schreib-Rechte. Das Relay ist geschlossen: Anmeldung per Schlüssel ist
+                                Pflicht, schreiben dürfen nur freigegebene Mitglieder. Kosten entstehen dir keine.
                             </p>
                         </div>
                     </flux:accordion.item>
