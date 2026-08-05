@@ -50,9 +50,9 @@ function makeSignedLoginEvent(string $challenge, ?int $createdAt = null): array
 it('issues a fresh hex challenge and persists it to the session', function () {
     $challenge = NostrAuth::issueChallenge();
 
-    expect($challenge)->toBeNostrHexKey();
-    expect(Session::get('nostr_login_challenge'))->toBe($challenge);
-    expect(Session::get('nostr_login_challenge_expires_at'))->toBeGreaterThan(now()->timestamp);
+    expect($challenge)->toBeNostrHexKey()
+        ->and(Session::get('nostr_login_challenge'))->toBe($challenge)
+        ->and(Session::get('nostr_login_challenge_expires_at'))->toBeGreaterThan(now()->timestamp);
 });
 
 it('logs in via a valid signed login event and consumes the challenge', function () {
@@ -61,10 +61,10 @@ it('logs in via a valid signed login event and consumes the challenge', function
 
     $returned = NostrAuth::loginWithSignedEvent($signedEvent);
 
-    expect($returned)->toBe($pubkey);
-    expect(NostrAuth::check())->toBeTrue();
-    expect(NostrAuth::pubkey())->toBe($pubkey);
-    expect(Session::has('nostr_login_challenge'))->toBeFalse();
+    expect($returned)->toBe($pubkey)
+        ->and(NostrAuth::check())->toBeTrue()
+        ->and(NostrAuth::pubkey())->toBe($pubkey)
+        ->and(Session::has('nostr_login_challenge'))->toBeFalse();
 });
 
 it('rejects an event whose challenge does not match the session', function () {
@@ -72,8 +72,8 @@ it('rejects an event whose challenge does not match the session', function () {
     ['event' => $signedEvent] = makeSignedLoginEvent('deadbeef'.str_repeat('0', 56));
 
     expect(fn () => NostrAuth::loginWithSignedEvent($signedEvent))
-        ->toThrow(ValidationException::class);
-    expect(NostrAuth::check())->toBeFalse();
+        ->toThrow(ValidationException::class)
+        ->and(NostrAuth::check())->toBeFalse();
 });
 
 it('rejects an event of the wrong kind', function () {
@@ -91,8 +91,8 @@ it('rejects an event whose created_at is outside the TTL window', function () {
     ['event' => $signedEvent] = makeSignedLoginEvent($challenge, now()->subHour()->timestamp);
 
     expect(fn () => NostrAuth::loginWithSignedEvent($signedEvent))
-        ->toThrow(ValidationException::class);
-    expect(NostrAuth::check())->toBeFalse();
+        ->toThrow(ValidationException::class)
+        ->and(NostrAuth::check())->toBeFalse();
 });
 
 it('rejects an event with a tampered signature', function () {
@@ -102,8 +102,8 @@ it('rejects an event with a tampered signature', function () {
     $signedEvent['sig'] = ($signedEvent['sig'][0] === '0' ? '1' : '0').substr($signedEvent['sig'], 1);
 
     expect(fn () => NostrAuth::loginWithSignedEvent($signedEvent))
-        ->toThrow(ValidationException::class);
-    expect(NostrAuth::check())->toBeFalse();
+        ->toThrow(ValidationException::class)
+        ->and(NostrAuth::check())->toBeFalse();
 });
 
 it('rejects an event with a tampered pubkey (sig no longer matches)', function () {
@@ -113,17 +113,16 @@ it('rejects an event with a tampered pubkey (sig no longer matches)', function (
     $signedEvent['pubkey'] = str_repeat('a', 64);
 
     expect(fn () => NostrAuth::loginWithSignedEvent($signedEvent))
-        ->toThrow(ValidationException::class);
-    expect(NostrAuth::check())->toBeFalse();
+        ->toThrow(ValidationException::class)
+        ->and(NostrAuth::check())->toBeFalse();
 });
 
 it('rejects a non-array payload', function () {
     NostrAuth::issueChallenge();
 
     expect(fn () => NostrAuth::loginWithSignedEvent('not-an-event'))
-        ->toThrow(ValidationException::class);
-    expect(fn () => NostrAuth::loginWithSignedEvent(null))
-        ->toThrow(ValidationException::class);
+        ->toThrow(ValidationException::class)
+        ->and(fn () => NostrAuth::loginWithSignedEvent(null))->toThrow(ValidationException::class);
 });
 
 it('is idempotent for repeated calls with the same event within one session', function () {
@@ -135,8 +134,8 @@ it('is idempotent for repeated calls with the same event within one session', fu
     // receives the same dispatched event must still succeed.
     $returned = NostrAuth::loginWithSignedEvent($signedEvent);
 
-    expect($returned)->toBe($pubkey);
-    expect(NostrAuth::pubkey())->toBe($pubkey);
+    expect($returned)->toBe($pubkey)
+        ->and(NostrAuth::pubkey())->toBe($pubkey);
 });
 
 it('does not allow a replay from a different (unauthenticated) session', function () {
@@ -150,6 +149,6 @@ it('does not allow a replay from a different (unauthenticated) session', functio
     Session::forget(['nostr_login_challenge', 'nostr_login_challenge_expires_at']);
 
     expect(fn () => NostrAuth::loginWithSignedEvent($signedEvent))
-        ->toThrow(ValidationException::class);
-    expect(NostrAuth::check())->toBeFalse();
+        ->toThrow(ValidationException::class)
+        ->and(NostrAuth::check())->toBeFalse();
 });

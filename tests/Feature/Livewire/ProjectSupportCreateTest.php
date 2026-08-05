@@ -89,8 +89,8 @@ it('creates project proposal successfully', function () {
 
     expect(ProjectProposal::count())->toBe(1);
     $project = ProjectProposal::first();
-    expect($project->name)->toBe('Test Project');
-    expect($project->description)->toBe('<p>This is a test project for unit testing purposes.</p>');
+    expect($project->name)->toBe('Test Project')
+        ->and($project->description)->toBe('<p>This is a test project for unit testing purposes.</p>');
 });
 
 it('defaults to nostr dm contact and stores it that way when unchanged', function () {
@@ -106,8 +106,8 @@ it('defaults to nostr dm contact and stores it that way when unchanged', functio
         ->assertHasNoErrors();
 
     $project = ProjectProposal::first();
-    expect($project->contact_via_nostr_dm)->toBeTrue();
-    expect($project->contact_alternative)->toBeNull();
+    expect($project->contact_via_nostr_dm)->toBeTrue()
+        ->and($project->contact_alternative)->toBeNull();
 });
 
 it('saves opting out of nostr dm with no alternative channel without validation errors', function () {
@@ -126,8 +126,8 @@ it('saves opting out of nostr dm with no alternative channel without validation 
         ->assertHasNoErrors();
 
     $project = ProjectProposal::first();
-    expect($project->contact_via_nostr_dm)->toBeFalse();
-    expect($project->contact_alternative)->toBeNull();
+    expect($project->contact_via_nostr_dm)->toBeFalse()
+        ->and($project->contact_alternative)->toBeNull();
 });
 
 it('saves an alternative contact channel when dm is opted out', function () {
@@ -144,8 +144,8 @@ it('saves an alternative contact channel when dm is opted out', function () {
         ->assertHasNoErrors();
 
     $project = ProjectProposal::first();
-    expect($project->contact_via_nostr_dm)->toBeFalse();
-    expect($project->contact_alternative)->toBe('telegram:@example');
+    expect($project->contact_via_nostr_dm)->toBeFalse()
+        ->and($project->contact_alternative)->toBe('telegram:@example');
 });
 
 it('associates project proposal with current pleb', function () {

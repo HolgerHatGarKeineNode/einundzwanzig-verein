@@ -136,9 +136,9 @@ it('surfaces the paid sats once a payout is recorded, otherwise the requested am
         'sats_paid' => 392_613,
     ]);
 
-    expect($unpaid->displayedSats())->toBe(1_250_000);
-    expect($zeroPaid->displayedSats())->toBe(1_250_000);
-    expect($paid->displayedSats())->toBe(392_613);
+    expect($unpaid->displayedSats())->toBe(1_250_000)
+        ->and($zeroPaid->displayedSats())->toBe(1_250_000)
+        ->and($paid->displayedSats())->toBe(392_613);
 });
 
 it('does not let votes from non-board members reach the board threshold', function () {
@@ -153,6 +153,6 @@ it('does not let votes from non-board members reach the board threshold', functi
     ]));
     $project->load('votes');
 
-    expect($project->status())->toBe(ProjectProposalStatus::InVoting);
-    expect($project->supporters())->toBe($threshold);
+    expect($project->status())->toBe(ProjectProposalStatus::InVoting)
+        ->and($project->supporters())->toBe($threshold);
 });

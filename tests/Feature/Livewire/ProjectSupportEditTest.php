@@ -104,8 +104,8 @@ it('updates project proposal successfully', function () {
         ->assertHasNoErrors();
 
     $this->project->refresh();
-    expect($this->project->name)->toBe('Updated Name');
-    expect($this->project->description)->toBe('<p>Updated Description</p>');
+    expect($this->project->name)->toBe('Updated Name')
+        ->and($this->project->description)->toBe('<p>Updated Description</p>');
 });
 
 it('ignores accepted and sats_paid form keys even for board members — those fields no longer exist on the edit form', function () {
@@ -126,9 +126,9 @@ it('ignores accepted and sats_paid form keys even for board members — those fi
         ->assertHasNoErrors();
 
     $this->project->refresh();
-    expect($this->project->accepted)->toBeFalse();
-    expect($this->project->sats_paid)->toBe(0);
-    expect($this->project->name)->toBe('Updated by board');
+    expect($this->project->accepted)->toBeFalse()
+        ->and($this->project->sats_paid)->toBe(0)
+        ->and($this->project->name)->toBe('Updated by board');
 });
 
 it('saves opting out of nostr dm with no alternative channel without validation errors', function () {
@@ -143,8 +143,8 @@ it('saves opting out of nostr dm with no alternative channel without validation 
         ->assertHasNoErrors();
 
     $this->project->refresh();
-    expect($this->project->contact_via_nostr_dm)->toBeFalse();
-    expect($this->project->contact_alternative)->toBeNull();
+    expect($this->project->contact_via_nostr_dm)->toBeFalse()
+        ->and($this->project->contact_alternative)->toBeNull();
 });
 
 it('saves an alternative contact channel when dm is opted out', function () {
@@ -157,8 +157,8 @@ it('saves an alternative contact channel when dm is opted out', function () {
         ->assertHasNoErrors();
 
     $this->project->refresh();
-    expect($this->project->contact_via_nostr_dm)->toBeFalse();
-    expect($this->project->contact_alternative)->toBe('email@example.com');
+    expect($this->project->contact_via_nostr_dm)->toBeFalse()
+        ->and($this->project->contact_alternative)->toBe('email@example.com');
 });
 
 it('disables update button during save', function () {

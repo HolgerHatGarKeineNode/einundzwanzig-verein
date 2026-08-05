@@ -145,9 +145,9 @@ it('paginates beyond the first 12 projects', function () {
 
     $component = Livewire::test('association.project-support.index');
 
-    expect($component->get('projects')->total())->toBe(15);
-    expect($component->get('projects')->count())->toBe(12);
-    expect($component->get('projects')->lastPage())->toBe(2);
+    expect($component->get('projects')->total())->toBe(15)
+        ->and($component->get('projects')->count())->toBe(12)
+        ->and($component->get('projects')->lastPage())->toBe(2);
 });
 
 it('can confirm delete', function () {
@@ -561,8 +561,8 @@ it('separates board votes from the members sentiment', function () {
 
     $component = Livewire::test('association.project-support.show', ['projectProposal' => $project]);
 
-    expect($component->get('boardVotes'))->toHaveCount(1);
-    expect($component->get('otherVotes'))->toHaveCount(1);
+    expect($component->get('boardVotes'))->toHaveCount(1)
+        ->and($component->get('otherVotes'))->toHaveCount(1);
 });
 
 // recordPayout / revertPayout
@@ -700,8 +700,8 @@ it('lets a board member revert a recorded payout', function () {
     $component = Livewire::test('association.project-support.show', ['projectProposal' => $project])
         ->call('revertPayout');
 
-    expect($component->get('status'))->toBe(ProjectProposalStatus::InVoting);
-    expect($project->fresh()->sats_paid)->toBe(0);
+    expect($component->get('status'))->toBe(ProjectProposalStatus::InVoting)
+        ->and($project->fresh()->sats_paid)->toBe(0);
 });
 
 it('denies revertPayout to a non-board member and leaves the payout untouched', function () {
@@ -834,8 +834,8 @@ it('lets a board member create the chat room and persists the computed room id',
         ->assertHasNoErrors();
 
     $fresh = $project->fresh();
-    expect($fresh->nostr_group_h)->toBe($project->nostrGroupId());
-    expect($fresh->nostr_group_created_at)->not->toBeNull();
+    expect($fresh->nostr_group_h)->toBe($project->nostrGroupId())
+        ->and($fresh->nostr_group_created_at)->not->toBeNull();
 });
 
 it('rejects storeChatRoom for the submitter, even with the correctly computed room id — the endpoint itself must refuse, not just the button', function () {
@@ -849,8 +849,8 @@ it('rejects storeChatRoom for the submitter, even with the correctly computed ro
         ->assertForbidden();
 
     $fresh = $project->fresh();
-    expect($fresh->nostr_group_h)->toBeNull();
-    expect($fresh->nostr_group_created_at)->toBeNull();
+    expect($fresh->nostr_group_h)->toBeNull()
+        ->and($fresh->nostr_group_created_at)->toBeNull();
 });
 
 it('rejects storeChatRoom for an unrelated member', function () {
@@ -896,8 +896,8 @@ it('refuses a second storeChatRoom call once the room already exists, without ch
         ->assertForbidden();
 
     $fresh = $project->fresh();
-    expect($fresh->nostr_group_h)->toBe($storedAfterFirstCall);
-    expect($fresh->nostr_group_created_at->equalTo($createdAtAfterFirstCall))->toBeTrue();
+    expect($fresh->nostr_group_h)->toBe($storedAfterFirstCall)
+        ->and($fresh->nostr_group_created_at->equalTo($createdAtAfterFirstCall))->toBeTrue();
 });
 
 it('rejects storeChatRoom when the reported room id does not match the server-computed one, and writes nothing', function () {
@@ -914,9 +914,9 @@ it('rejects storeChatRoom when the reported room id does not match the server-co
         ->assertHasNoErrors();
 
     $fresh = $project->fresh();
-    expect($fresh->nostr_group_h)->toBeNull();
-    expect($fresh->nostr_group_created_at)->toBeNull();
-    expect($fresh->hasNostrGroup())->toBeFalse();
+    expect($fresh->nostr_group_h)->toBeNull()
+        ->and($fresh->nostr_group_created_at)->toBeNull()
+        ->and($fresh->hasNostrGroup())->toBeFalse();
 });
 
 it('hides the chat room panel entirely before it exists for a non-board, non-submitter viewer', function () {
@@ -1016,8 +1016,8 @@ it('delegates chatRoomMemberPubkeys to the model, including submitter and board'
 
     $component = Livewire::test('association.project-support.show', ['projectProposal' => $project]);
 
-    expect($component->get('chatRoomMemberPubkeys'))->toBe($project->nostrGroupMemberPubkeys());
-    expect($component->get('chatRoomMemberPubkeys'))->toContain($submitter->pubkey);
+    expect($component->get('chatRoomMemberPubkeys'))->toBe($project->nostrGroupMemberPubkeys())
+        ->and($component->get('chatRoomMemberPubkeys'))->toContain($submitter->pubkey);
 });
 
 // Eingebettete Chat-Insel auf der Detailseite.
@@ -1125,9 +1125,9 @@ it('lets a board member reset the chat room reference and unlocks the create act
         ->assertSee('Chatraum anlegen');
 
     $fresh = $project->fresh();
-    expect($fresh->nostr_group_h)->toBeNull();
-    expect($fresh->nostr_group_created_at)->toBeNull();
-    expect($fresh->hasNostrGroup())->toBeFalse();
+    expect($fresh->nostr_group_h)->toBeNull()
+        ->and($fresh->nostr_group_created_at)->toBeNull()
+        ->and($fresh->hasNostrGroup())->toBeFalse();
 });
 
 it('rejects resetChatRoom when no room is on file, even for a board member', function () {
@@ -1157,8 +1157,8 @@ it('rejects resetChatRoom for the submitter — the endpoint itself must refuse,
         ->assertForbidden();
 
     $fresh = $project->fresh();
-    expect($fresh->nostr_group_h)->toBe('p'.str_repeat('a', 12));
-    expect($fresh->nostr_group_created_at)->not->toBeNull();
+    expect($fresh->nostr_group_h)->toBe('p'.str_repeat('a', 12))
+        ->and($fresh->nostr_group_created_at)->not->toBeNull();
 });
 
 it('rejects resetChatRoom for an unrelated member', function () {
