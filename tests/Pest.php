@@ -21,6 +21,57 @@ uses(
 
 /*
 |--------------------------------------------------------------------------
+| Test Impact Analysis
+|--------------------------------------------------------------------------
+|
+| TIA replays cached results for tests unaffected by the current change and
+| re-runs the rest. Deliberately NOT calling ->locally() or ->always():
+| both auto-enable TIA for every run (locally() only skips it in CI —
+| see Environment::LOCAL check in vendor/pestphp/pest/src/Plugins/Tia.php,
+| handleArguments()/isEnabledForRun()), so either one would make even a
+| bare `./vendor/bin/pest --compact` run in TIA mode. TIA stays strictly
+| opt-in via the explicit `--tia` CLI flag. "filtered()" actually narrows
+| the selection instead of only skipping replay — applies whenever --tia
+| is passed.
+|
+| Most PHP source changes are resolved precisely by TIA's own coverage
+| graph — no watch() pattern is needed or wanted for them, since a pattern
+| can only broaden the selection back towards "whole directory", undoing
+| the graph's precision. Verified empirically (--tia --fresh, then a real
+| behavioural edit + `./vendor/bin/pest --tia`, reverted after each probe):
+| app/Livewire, app/Policies, app/Http/Controllers/Nostr and
+| config/einundzwanzig/config.php are all resolved to the exact dependent
+| test file(s) by the graph alone.
+|
+| The two exceptions below exist because some source files never execute a
+| single line during any test run (e.g. an Eloquent relation method nobody
+| calls directly, only via the query builder) and so never enter the
+| coverage graph. Unlike app/Policies, app/Providers, etc., "app/Models"
+| and "app/Auth" are not covered by Pest's own sibling-directory fallback
+| (see WatchDefaults and Graph::usesSiblingHeuristicForUnknownPhp() in
+| vendor/pestphp/pest), so an edit to such a file would otherwise select
+| zero affected tests. Confirmed live: a behavioural edit to
+| app/Models/Vote.php::einundzwanzigPleb() and to
+| app/Auth/NostrUserProvider.php::retrieveById() each produced an EMPTY
+| affected set under --tia before these patterns were added.
+|
+| The target is the whole test path, not a single subdirectory: a given
+| Model or Auth class is exercised from wherever it happens to be used
+| (e.g. App\Models\Vote is asserted against from Policies, Livewire and
+| rate-limiting tests alike), so a narrower target would just trade one
+| blind spot for another.
+|
+*/
+
+pest()->tia()
+    ->filtered()
+    ->watch([
+        'app/Models/**/*.php' => 'tests',
+        'app/Auth/**/*.php' => 'tests',
+    ]);
+
+/*
+|--------------------------------------------------------------------------
 | Expectations
 |--------------------------------------------------------------------------
 |
@@ -32,6 +83,16 @@ uses(
 
 expect()->extend('toBeOne', function () {
     return $this->toBe(1);
+});
+
+/*
+| toBeNostrHexKey(): a NIP-01 pubkey/id/sig must be exactly 64 lowercase hex
+| characters. toBeHexadecimal() alone accepts uppercase A-F (it wraps
+| ctype_xdigit()), which NIP-01 forbids — the trailing toMatch() keeps the
+| lowercase-only guarantee that toHaveLength()+toBeHexadecimal() would lose.
+*/
+expect()->extend('toBeNostrHexKey', function () {
+    return $this->toHaveLength(64)->toBeHexadecimal()->toMatch('/^[0-9a-f]+$/');
 });
 
 /*
