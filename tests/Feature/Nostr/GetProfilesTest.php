@@ -71,8 +71,11 @@ it('liefert die rohen kind-0-Events unter dem Schlüssel events', function () {
     loginPleb();
 
     // Echter ProfileCache, Treffer vorgewärmt → kein Relay-Zugriff.
+    // Der Schlüssel hängt an ProfileCache::cacheKey() (Relay-Quellen-Namensraum,
+    // s. dortiger Docblock) — nie von Hand nachbauen, sonst läuft der Test am
+    // Cache vorbei und fällt still auf einen echten Relay-Zugriff zurück.
     $pubkey = hex64('vorstand-1');
-    Cache::put('nostr:profile:'.$pubkey, rawProfileEvent($pubkey, 'Vorstand'), 60);
+    Cache::put(ProfileCache::cacheKey($pubkey), rawProfileEvent($pubkey, 'Vorstand'), 60);
 
     $response = $this->getJson('/nostr/profiles?pubkeys='.$pubkey);
 
