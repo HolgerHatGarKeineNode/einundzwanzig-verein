@@ -108,9 +108,7 @@ test('only returns npub, pubkey, and nip05_handle fields', function () {
     $response->assertStatus(200);
 
     $json = $response->json();
-    expect($json[0])->toHaveKeys(['id', 'npub', 'pubkey', 'nip05_handle']);
-
-    expect($json[0])->not->toHaveKeys([
+    expect($json[0])->toHaveKeys(['id', 'npub', 'pubkey', 'nip05_handle'])->not->toHaveKeys([
         'email',
         'association_status',
         'no_email',

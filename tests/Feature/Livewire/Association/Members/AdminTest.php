@@ -145,11 +145,10 @@ it('paginates the member list instead of loading everything', function () {
         ->assertSet('isAllowed', true);
 
     expect($component->instance()->plebs)
-        ->toBeInstanceOf(LengthAwarePaginator::class);
-
-    expect($component->instance()->plebs->perPage())->toBe(25);
-    expect($component->instance()->plebs->total())->toBe(31);
-    expect($component->instance()->plebs->count())->toBe(25);
+        ->toBeInstanceOf(LengthAwarePaginator::class)
+        ->and($component->instance()->plebs->perPage())->toBe(25)
+        ->and($component->instance()->plebs->total())->toBe(31)
+        ->and($component->instance()->plebs->count())->toBe(25);
 });
 
 it('resets to the first page when searching', function () {
@@ -178,8 +177,8 @@ it('filters the member list by npub via search', function () {
     $component = Livewire::test('association.members.admin')
         ->set('search', 'npubneedle');
 
-    expect($component->instance()->plebs->total())->toBe(1);
-    expect($component->instance()->plebs->first()->id)->toBe($needle->id);
+    expect($component->instance()->plebs->total())->toBe(1)
+        ->and($component->instance()->plebs->first()->id)->toBe($needle->id);
 });
 
 it('sorts by the profile name relation without breaking', function () {

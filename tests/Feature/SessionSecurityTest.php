@@ -23,8 +23,8 @@ it('defaults secure cookie to true in config', function () {
 it('has secure session defaults in env example', function () {
     $envExample = file_get_contents(base_path('.env.example'));
 
-    expect($envExample)->toContain('SESSION_ENCRYPT=true');
-    expect($envExample)->toContain('SESSION_SECURE_COOKIE=true');
+    expect($envExample)->toContain('SESSION_ENCRYPT=true')
+        ->toContain('SESSION_SECURE_COOKIE=true');
 });
 
 it('sets httponly and samesite flags on session cookie', function () {
@@ -33,7 +33,7 @@ it('sets httponly and samesite flags on session cookie', function () {
     $sessionCookie = collect($response->headers->getCookies())
         ->first(fn ($cookie) => $cookie->getName() === config('session.cookie'));
 
-    expect($sessionCookie)->not->toBeNull();
-    expect($sessionCookie->isHttpOnly())->toBeTrue('Session cookie should be HttpOnly');
-    expect($sessionCookie->getSameSite())->toBe('lax', 'Session cookie should have SameSite=lax');
+    expect($sessionCookie)->not->toBeNull()
+        ->and($sessionCookie->isHttpOnly())->toBeTrue('Session cookie should be HttpOnly')
+        ->and($sessionCookie->getSameSite())->toBe('lax', 'Session cookie should have SameSite=lax');
 });

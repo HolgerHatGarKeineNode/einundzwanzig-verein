@@ -82,8 +82,8 @@ it('ignores accepted and sats_paid form keys — those fields no longer exist on
         ->assertHasNoErrors();
 
     $project = ProjectProposal::where('name', 'Valid Project')->firstOrFail();
-    expect($project->accepted)->toBeFalse();
-    expect($project->sats_paid)->toBe(0);
+    expect($project->accepted)->toBeFalse()
+        ->and($project->sats_paid)->toBe(0);
 });
 
 it('has correct default values', function () {

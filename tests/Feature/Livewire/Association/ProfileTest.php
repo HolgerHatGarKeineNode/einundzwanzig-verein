@@ -257,8 +257,8 @@ it('removes expired invoices so a fresh payment event is available', function ()
 
     $pleb->refresh();
 
-    expect($pleb->paymentEvents()->count())->toBe(1);
-    expect($pleb->paymentEvents()->first()->btc_pay_invoice)->toBeNull();
+    expect($pleb->paymentEvents()->count())->toBe(1)
+        ->and($pleb->paymentEvents()->first()->btc_pay_invoice)->toBeNull();
 });
 
 it('shows invoice status details including remaining validity', function () {
@@ -287,8 +287,8 @@ it('shows invoice status details including remaining validity', function () {
         ->assertSet('invoiceStatus', 'New')
         ->assertSet('invoiceStatusVariant', 'info');
 
-    expect($component->get('invoiceExpiresAt'))->not->toBeNull();
-    expect($component->get('invoiceExpiresIn'))->not->toBeNull();
+    expect($component->get('invoiceExpiresAt'))->not->toBeNull()
+        ->and($component->get('invoiceExpiresIn'))->not->toBeNull();
 });
 
 it('handles settled invoice with numeric expiration timestamps', function () {

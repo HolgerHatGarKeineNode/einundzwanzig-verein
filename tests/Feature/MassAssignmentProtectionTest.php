@@ -100,13 +100,12 @@ it('verifies EinundzwanzigPleb fillable does not contain application_for', funct
     $instance = $reflection->newInstanceWithoutConstructor();
     $fillable = $property->getValue($instance);
 
-    expect($fillable)->not->toContain('application_for');
-    expect($fillable)->not->toContain('id');
-    expect($fillable)->toContain('npub');
-    expect($fillable)->toContain('pubkey');
-    expect($fillable)->toContain('email');
-    expect($fillable)->toContain('no_email');
-    expect($fillable)->toContain('nip05_handle');
+    expect($fillable)->not->toContain('application_for')->not->toContain('id')
+        ->toContain('npub')
+        ->toContain('pubkey')
+        ->toContain('email')
+        ->toContain('no_email')
+        ->toContain('nip05_handle');
 });
 
 it('blocks mass assignment of accepted and sats_paid on ProjectProposal', function () {
@@ -119,11 +118,11 @@ it('blocks mass assignment of accepted and sats_paid on ProjectProposal', functi
         'slug' => 'injected-slug',
     ]);
 
-    expect($proposal->accepted)->toBeNull();
-    expect($proposal->sats_paid)->toBeNull();
-    expect($proposal->einundzwanzig_pleb_id)->toBeNull();
-    expect($proposal->slug)->toBeNull();
-    expect($proposal->name)->toBe('Test');
+    expect($proposal->accepted)->toBeNull()
+        ->and($proposal->sats_paid)->toBeNull()
+        ->and($proposal->einundzwanzig_pleb_id)->toBeNull()
+        ->and($proposal->slug)->toBeNull()
+        ->and($proposal->name)->toBe('Test');
 });
 
 it('blocks mass assignment of all fields on Election', function () {
@@ -141,9 +140,9 @@ it('blocks mass assignment of created_by and slug on Venue', function () {
         'slug' => 'injected-slug',
     ]);
 
-    expect($venue->name)->toBe('Test Venue');
-    expect($venue->created_by)->toBeNull();
-    expect($venue->slug)->toBeNull();
+    expect($venue->name)->toBe('Test Venue')
+        ->and($venue->created_by)->toBeNull()
+        ->and($venue->slug)->toBeNull();
 });
 
 it('blocks mass assignment of meetup_id and created_by on MeetupEvent', function () {
@@ -155,10 +154,10 @@ it('blocks mass assignment of meetup_id and created_by on MeetupEvent', function
         'attendees' => ['a'],
     ]);
 
-    expect($event->start)->not->toBeNull();
-    expect($event->meetup_id)->toBeNull();
-    expect($event->created_by)->toBeNull();
-    expect($event->attendees)->toBeNull();
+    expect($event->start)->not->toBeNull()
+        ->and($event->meetup_id)->toBeNull()
+        ->and($event->created_by)->toBeNull()
+        ->and($event->attendees)->toBeNull();
 });
 
 it('blocks mass assignment of course_id venue_id and created_by on CourseEvent', function () {
@@ -171,11 +170,11 @@ it('blocks mass assignment of course_id venue_id and created_by on CourseEvent',
         'created_by' => 999,
     ]);
 
-    expect($event->from)->not->toBeNull();
-    expect($event->to)->not->toBeNull();
-    expect($event->course_id)->toBeNull();
-    expect($event->venue_id)->toBeNull();
-    expect($event->created_by)->toBeNull();
+    expect($event->from)->not->toBeNull()
+        ->and($event->to)->not->toBeNull()
+        ->and($event->course_id)->toBeNull()
+        ->and($event->venue_id)->toBeNull()
+        ->and($event->created_by)->toBeNull();
 });
 
 it('blocks mass assignment of lecturer_id and created_by on Course', function () {
@@ -187,10 +186,10 @@ it('blocks mass assignment of lecturer_id and created_by on Course', function ()
         'created_by' => 999,
     ]);
 
-    expect($course->name)->toBe('Test Course');
-    expect($course->description)->toBe('Test');
-    expect($course->lecturer_id)->toBeNull();
-    expect($course->created_by)->toBeNull();
+    expect($course->name)->toBe('Test Course')
+        ->and($course->description)->toBe('Test')
+        ->and($course->lecturer_id)->toBeNull()
+        ->and($course->created_by)->toBeNull();
 });
 
 it('blocks mass assignment of city_id created_by and slug on Meetup', function () {
@@ -204,10 +203,10 @@ it('blocks mass assignment of city_id created_by and slug on Meetup', function (
         'simplified_geojson' => '{}',
     ]);
 
-    expect($meetup->name)->toBe('Test Meetup');
-    expect($meetup->city_id)->toBeNull();
-    expect($meetup->created_by)->toBeNull();
-    expect($meetup->slug)->toBeNull();
+    expect($meetup->name)->toBe('Test Meetup')
+        ->and($meetup->city_id)->toBeNull()
+        ->and($meetup->created_by)->toBeNull()
+        ->and($meetup->slug)->toBeNull();
 });
 
 it('blocks mass assignment of active created_by and slug on Lecturer', function () {
@@ -219,10 +218,10 @@ it('blocks mass assignment of active created_by and slug on Lecturer', function 
         'slug' => 'injected',
     ]);
 
-    expect($lecturer->name)->toBe('Test Lecturer');
-    expect($lecturer->active)->toBeNull();
-    expect($lecturer->created_by)->toBeNull();
-    expect($lecturer->slug)->toBeNull();
+    expect($lecturer->name)->toBe('Test Lecturer')
+        ->and($lecturer->active)->toBeNull()
+        ->and($lecturer->created_by)->toBeNull()
+        ->and($lecturer->slug)->toBeNull();
 });
 
 it('blocks mass assignment of country_id created_by and slug on City', function () {
@@ -236,10 +235,10 @@ it('blocks mass assignment of country_id created_by and slug on City', function 
         'simplified_geojson' => '{}',
     ]);
 
-    expect($city->name)->toBe('Test City');
-    expect($city->country_id)->toBeNull();
-    expect($city->created_by)->toBeNull();
-    expect($city->slug)->toBeNull();
+    expect($city->name)->toBe('Test City')
+        ->and($city->country_id)->toBeNull()
+        ->and($city->created_by)->toBeNull()
+        ->and($city->slug)->toBeNull();
 });
 
 it('blocks mass assignment of einundzwanzig_pleb_id and category on Notification', function () {
@@ -251,10 +250,10 @@ it('blocks mass assignment of einundzwanzig_pleb_id and category on Notification
         'category' => 1,
     ]);
 
-    expect($notification->name)->toBe('Test News');
-    expect($notification->description)->toBe('Test');
-    expect($notification->einundzwanzig_pleb_id)->toBeNull();
-    expect($notification->category)->toBeNull();
+    expect($notification->name)->toBe('Test News')
+        ->and($notification->description)->toBe('Test')
+        ->and($notification->einundzwanzig_pleb_id)->toBeNull()
+        ->and($notification->category)->toBeNull();
 });
 
 it('blocks mass assignment of code and language_codes on Country', function () {
@@ -265,9 +264,9 @@ it('blocks mass assignment of code and language_codes on Country', function () {
         'language_codes' => ['en'],
     ]);
 
-    expect($country->name)->toBe('Test');
-    expect($country->code)->toBeNull();
-    expect($country->language_codes)->toBeNull();
+    expect($country->name)->toBe('Test')
+        ->and($country->code)->toBeNull()
+        ->and($country->language_codes)->toBeNull();
 });
 
 it('allows fillable fields on PaymentEvent', function () {
@@ -280,9 +279,9 @@ it('allows fillable fields on PaymentEvent', function () {
         'btc_pay_invoice' => 'inv-123',
     ]);
 
-    expect($paymentEvent->year)->toBe(2025);
-    expect($paymentEvent->event_id)->toBe('test-event');
-    expect($paymentEvent->amount)->toBe(21000);
-    expect($paymentEvent->paid)->toBeTrue();
-    expect($paymentEvent->btc_pay_invoice)->toBe('inv-123');
+    expect($paymentEvent->year)->toBe(2025)
+        ->and($paymentEvent->event_id)->toBe('test-event')
+        ->and($paymentEvent->amount)->toBe(21000)
+        ->and($paymentEvent->paid)->toBeTrue()
+        ->and($paymentEvent->btc_pay_invoice)->toBe('inv-123');
 });

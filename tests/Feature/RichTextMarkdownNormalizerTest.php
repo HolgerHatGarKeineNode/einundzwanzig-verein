@@ -7,9 +7,9 @@ beforeEach(function () {
 });
 
 it('returns null and empty values untouched', function () {
-    expect($this->normalizer->normalize(null))->toBeNull();
-    expect($this->normalizer->normalize(''))->toBe('');
-    expect($this->normalizer->normalize('   '))->toBe('   ');
+    expect($this->normalizer->normalize(null))->toBeNull()
+        ->and($this->normalizer->normalize(''))->toBe('')
+        ->and($this->normalizer->normalize('   '))->toBe('   ');
 });
 
 it('converts heading markdown wrapped in paragraph tags', function () {
@@ -17,11 +17,11 @@ it('converts heading markdown wrapped in paragraph tags', function () {
 
     $result = $this->normalizer->normalize($html);
 
-    expect($result)->toContain('<h1');
-    expect($result)->toContain('EINUNDZWANZIG STANDUP');
-    expect($result)->toContain('<h2');
-    expect($result)->toContain('Wer ich bin');
-    expect($result)->toContain('Regular text.');
+    expect($result)->toContain('<h1')
+        ->toContain('EINUNDZWANZIG STANDUP')
+        ->toContain('<h2')
+        ->toContain('Wer ich bin')
+        ->toContain('Regular text.');
 });
 
 it('converts bullet list markdown wrapped in paragraph tags', function () {
@@ -29,11 +29,11 @@ it('converts bullet list markdown wrapped in paragraph tags', function () {
 
     $result = $this->normalizer->normalize($html);
 
-    expect($result)->toContain('<ul>');
-    expect($result)->toContain('first item');
-    expect($result)->toContain('second item');
-    expect($result)->toContain('third item');
-    expect(substr_count($result, '<li>'))->toBe(3);
+    expect($result)->toContain('<ul>')
+        ->toContain('first item')
+        ->toContain('second item')
+        ->toContain('third item')
+        ->and(substr_count($result, '<li>'))->toBe(3);
 });
 
 it('leaves structural html untouched when headings already exist', function () {
@@ -59,8 +59,8 @@ it('renders pure plain text with paragraph breaks as html paragraphs', function 
 
     $result = $this->normalizer->normalize($text);
 
-    expect($result)->toContain('<p>First paragraph with some text.</p>');
-    expect($result)->toContain('<p>Second paragraph follows.</p>');
+    expect($result)->toContain('<p>First paragraph with some text.</p>')
+        ->toContain('<p>Second paragraph follows.</p>');
 });
 
 it('renders plain text markdown (headings, lists, images) as html', function () {
@@ -68,12 +68,12 @@ it('renders plain text markdown (headings, lists, images) as html', function () 
 
     $result = $this->normalizer->normalize($text);
 
-    expect($result)->toContain('<h2');
-    expect($result)->toContain('Heading Two');
-    expect($result)->toContain('<ul>');
-    expect($result)->toContain('<li>first</li>');
-    expect($result)->toContain('<img');
-    expect($result)->toContain('https://example.com/img.png');
+    expect($result)->toContain('<h2')
+        ->toContain('Heading Two')
+        ->toContain('<ul>')
+        ->toContain('<li>first</li>')
+        ->toContain('<img')
+        ->toContain('https://example.com/img.png');
 });
 
 it('is idempotent when re-run on already-rendered output', function () {
@@ -92,11 +92,11 @@ it('preserves inline bold, code and links when converting pasted markdown', func
 
     $result = $this->normalizer->normalize($html);
 
-    expect($result)->toContain('<h1');
-    expect($result)->toContain('Heading');
-    expect($result)->toContain('<strong>Antragsteller:</strong>');
-    expect($result)->toContain('<code>user@example.com</code>');
-    expect($result)->toContain('<a href="https://example.com">Website</a>');
+    expect($result)->toContain('<h1')
+        ->toContain('Heading')
+        ->toContain('<strong>Antragsteller:</strong>')
+        ->toContain('<code>user@example.com</code>')
+        ->toContain('<a href="https://example.com">Website</a>');
 });
 
 it('preserves images embedded via img tags', function () {
@@ -104,8 +104,8 @@ it('preserves images embedded via img tags', function () {
 
     $result = $this->normalizer->normalize($html);
 
-    expect($result)->toContain('<h1');
-    expect($result)->toContain('<img');
-    expect($result)->toContain('src="https://example.com/i.png"');
-    expect($result)->toContain('alt="caption"');
+    expect($result)->toContain('<h1')
+        ->toContain('<img')
+        ->toContain('src="https://example.com/i.png"')
+        ->toContain('alt="caption"');
 });

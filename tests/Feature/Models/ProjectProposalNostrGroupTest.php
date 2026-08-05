@@ -64,8 +64,8 @@ it('keeps the room id stable when the proposal is renamed, even though the slug 
     $project->update(['name' => 'Ein ganz anderer Name']);
     $project->refresh();
 
-    expect($project->slug)->not->toBe($originalSlug);
-    expect($project->nostrGroupId())->toBe($roomId);
+    expect($project->slug)->not->toBe($originalSlug)
+        ->and($project->nostrGroupId())->toBe($roomId);
 });
 
 // hasNostrGroup()
@@ -119,10 +119,7 @@ it('returns exactly one 64 character hex pubkey per configured board npub', func
 
     $pubkeys = ProjectProposal::boardPubkeys();
 
-    expect($pubkeys)->toHaveCount(3);
-    foreach ($pubkeys as $pubkey) {
-        expect($pubkey)->toBeNostrHexKey();
-    }
+    expect($pubkeys)->toHaveCount(3)->each->toBeNostrHexKey();
 });
 
 it('deduplicates a board npub that appears twice in the config', function () {
@@ -137,7 +134,7 @@ it('reports no undecodable board npubs when the configured board is valid', func
     [$npubB] = generateNpubHexPair();
     config(['einundzwanzig.config.current_board' => [$npubA, $npubB]]);
 
-    expect(ProjectProposal::boardNpubsUndecodable())->toBe([]);
+    expect(ProjectProposal::boardNpubsUndecodable())->toBeEmpty();
 });
 
 it('lists a board npub as undecodable when it fails bech32 decoding', function () {
@@ -160,10 +157,10 @@ it('includes every configured board npub (decoded to hex) and the submitter', fu
 
     $pubkeys = $project->nostrGroupMemberPubkeys();
 
-    expect($pubkeys)->toContain($hexA);
-    expect($pubkeys)->toContain($hexB);
-    expect($pubkeys)->toContain($submitter->pubkey);
-    expect($pubkeys)->toHaveCount(3);
+    expect($pubkeys)->toContain($hexA)
+        ->toContain($hexB)
+        ->toContain($submitter->pubkey)
+        ->toHaveCount(3);
 });
 
 it('includes a board member even when no pleb record exists for their npub', function () {
@@ -213,9 +210,9 @@ it('drops a board npub that fails to decode from the room membership too', funct
 
     $pubkeys = $project->nostrGroupMemberPubkeys();
 
-    expect($pubkeys)->toContain($goodHex);
-    expect($pubkeys)->toContain($submitter->pubkey);
-    expect($pubkeys)->toHaveCount(2);
+    expect($pubkeys)->toContain($goodHex)
+        ->toContain($submitter->pubkey)
+        ->toHaveCount(2);
 });
 
 // Mass assignment
@@ -228,9 +225,9 @@ it('blocks mass assignment of nostr_group_h and nostr_group_created_at on Projec
         'nostr_group_created_at' => now(),
     ]);
 
-    expect($proposal->nostr_group_h)->toBeNull();
-    expect($proposal->nostr_group_created_at)->toBeNull();
-    expect($proposal->name)->toBe('Test');
+    expect($proposal->nostr_group_h)->toBeNull()
+        ->and($proposal->nostr_group_created_at)->toBeNull()
+        ->and($proposal->name)->toBe('Test');
 });
 
 it('blocks mass assignment of nostr_group_h and nostr_group_created_at via create()', function () {
@@ -247,6 +244,6 @@ it('blocks mass assignment of nostr_group_h and nostr_group_created_at via creat
     ]);
     $proposal->save();
 
-    expect($proposal->fresh()->nostr_group_h)->toBeNull();
-    expect($proposal->fresh()->nostr_group_created_at)->toBeNull();
+    expect($proposal->fresh()->nostr_group_h)->toBeNull()
+        ->and($proposal->fresh()->nostr_group_created_at)->toBeNull();
 });

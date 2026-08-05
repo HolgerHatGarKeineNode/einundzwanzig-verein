@@ -35,7 +35,7 @@ it('lässt eine bereits normalisierte Adresse unverändert', function () {
 });
 
 it('erzeugt aus einer leeren Adresse keinen nackten Schrägstrich', function (?string $leer) {
-    expect(registerGroupPackage($leer))->toBe('');
+    expect(registerGroupPackage($leer))->toBeEmpty();
 })->with([
     'nicht gesetzt' => null,
     'leer' => '',
