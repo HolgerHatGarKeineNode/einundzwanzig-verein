@@ -121,7 +121,7 @@ it('returns exactly one 64 character hex pubkey per configured board npub', func
 
     expect($pubkeys)->toHaveCount(3);
     foreach ($pubkeys as $pubkey) {
-        expect($pubkey)->toMatch('/^[0-9a-f]{64}$/');
+        expect($pubkey)->toBeNostrHexKey();
     }
 });
 

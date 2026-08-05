@@ -50,7 +50,7 @@ function makeSignedLoginEvent(string $challenge, ?int $createdAt = null): array
 it('issues a fresh hex challenge and persists it to the session', function () {
     $challenge = NostrAuth::issueChallenge();
 
-    expect($challenge)->toMatch('/^[0-9a-f]{64}$/');
+    expect($challenge)->toBeNostrHexKey();
     expect(Session::get('nostr_login_challenge'))->toBe($challenge);
     expect(Session::get('nostr_login_challenge_expires_at'))->toBeGreaterThan(now()->timestamp);
 });
