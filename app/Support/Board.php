@@ -9,7 +9,7 @@ use Throwable;
  * The single source of truth for "who is on the board".
  *
  * The list lives in `config/einundzwanzig.config.current_board` as npubs.
- * Everything that needs an answer — the election and proposal policies via
+ * Everything that needs an answer — the proposal policies via
  * `EinundzwanzigPleb::isBoardMember()`, and the member admin screen, which
  * only ever sees the hex pubkey of the Nostr session — asks this class, so
  * npub and hex encodings can never disagree.

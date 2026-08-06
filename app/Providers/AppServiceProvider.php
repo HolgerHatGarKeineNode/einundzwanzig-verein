@@ -2,10 +2,8 @@
 
 namespace App\Providers;
 
-use App\Models\Election;
 use App\Models\ProjectProposal;
 use App\Models\Vote;
-use App\Policies\ElectionPolicy;
 use App\Policies\ProjectProposalPolicy;
 use App\Policies\VotePolicy;
 use App\Support\ApiIdentity;
@@ -33,14 +31,9 @@ class AppServiceProvider extends ServiceProvider
     {
         Gate::policy(ProjectProposal::class, ProjectProposalPolicy::class);
         Gate::policy(Vote::class, VotePolicy::class);
-        Gate::policy(Election::class, ElectionPolicy::class);
 
         RateLimiter::for('api', function (Request $request) {
             return Limit::perMinute(60)->by($request->ip());
-        });
-
-        RateLimiter::for('voting', function (Request $request) {
-            return Limit::perMinute(10)->by($request->ip());
         });
 
         // Profil-Seed (GET /nostr/profiles): jede Anfrage kann bis zu 100 pubkeys

@@ -74,10 +74,6 @@ Route::post('logout', function () {
 Route::livewire('/association/profile', 'association.profile')->name('association.profile');
 Route::livewire('/association/benefits', 'association.benefits')->name('association.benefits');
 
-Route::livewire('/association/election', 'association.election.index')->name('association.elections');
-Route::livewire('/association/election/{election:year}', 'association.election.show')->name('association.election');
-Route::livewire('/association/election/admin/{election:year}', 'association.election.admin')->name('association.election.admin');
-
 Route::livewire('/association/members/admin', 'association.members.admin')->name('association.members.admin');
 
 Route::livewire('/association/news', 'association.news')->name('association.news');

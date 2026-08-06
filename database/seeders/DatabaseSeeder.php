@@ -17,7 +17,6 @@ class DatabaseSeeder extends Seeder
         $this->call([
             PlebSeeder::class,
             ProjectProposalSeeder::class,
-            ElectionSeeder::class,
             NostrSeeder::class,
             MeetupSeeder::class,
             CourseSeeder::class,
