@@ -58,6 +58,21 @@ pest()->extend(TestCase::class)->use(RefreshDatabase::class)->in('Feature');
 | rate-limiting tests alike), so a narrower target would just trade one
 | blind spot for another.
 |
+| No ->baselined() on purpose. It fetches a dependency graph recorded by CI
+| so a team can share one instead of each machine building its own — and it
+| is wired specifically to GitHub Actions: BaselineSync expects a workflow
+| named tia-baseline.yml producing an artifact "pest-tia-baseline" and pulls
+| it via the `gh` CLI. This repo has no CI at all (no .github/, deployment
+| runs through Forge), and the locally recorded graph already delivers the
+| full ~22-25x replay speedup. Revisit only if CI is introduced.
+|
+| One trap worth knowing: TIA does NOT follow the symlinked sibling package
+| vendor/einundzwanzig/group. An edit over in einundzwanzig-group selects
+| zero affected tests here, so --tia would report a green replay that never
+| exercised the change. Cause is a symlink/realpath mismatch between PHPUnit
+| and Pest that no config in this repo fixes; use --no-tia (or a full run)
+| while working on that package.
+|
 */
 
 pest()->tia()
