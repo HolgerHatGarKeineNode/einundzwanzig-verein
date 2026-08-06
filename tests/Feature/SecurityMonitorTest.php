@@ -140,7 +140,18 @@ it('still forwards non-security exceptions to the default log stack', function (
     Log::shouldHaveReceived('error');
 });
 
-it('handles X-Forwarded-For header', function () {
+/*
+ * Replaces "it handles X-Forwarded-For header", which asserted the exact
+ * behaviour this phase had to remove: the monitor read the header
+ * unconditionally and stored its first entry, so every caller could choose
+ * the address recorded against them — in the one table whose purpose is to
+ * name attackers, and which `security:attempts --ip` and `--top-ips` report
+ * on. It also disagreed with the rate limiters, which count $request->ip():
+ * the address we blocked was never the address we logged. The old expectation
+ * is not merely outdated, it described the defect (see git show
+ * master:tests/Feature/SecurityMonitorTest.php, lines 143-161).
+ */
+it('does not let a forged X-Forwarded-For decide the recorded ip', function () {
     $exception = new CannotUpdateLockedPropertyException('test');
 
     $request = Request::create('/livewire/update', 'POST', [
@@ -148,7 +159,7 @@ it('handles X-Forwarded-For header', function () {
             ['snapshot' => '{}', 'updates' => []],
         ],
     ], server: [
-        'REMOTE_ADDR' => '127.0.0.1',
+        'REMOTE_ADDR' => '198.51.100.7',
         'HTTP_X_FORWARDED_FOR' => '203.0.113.50, 70.41.3.18',
     ]);
 
@@ -157,5 +168,37 @@ it('handles X-Forwarded-For header', function () {
     $this->monitor->recordFromException($exception, $request);
 
     $attempt = SecurityAttempt::first();
-    expect($attempt->ip_address)->toBe('203.0.113.50');
+
+    expect($attempt->ip_address)
+        ->toBe('198.51.100.7')
+        ->not->toBe('203.0.113.50');
+});
+
+it('honours a forwarded address only when a trusted proxy sent it', function () {
+    // Same request, but the peer is now declared a trusted proxy. This is the
+    // control case: the fix is "believe the header only from someone entitled
+    // to set it", not "never believe it" — otherwise the day a CDN is put in
+    // front, every attempt would be logged against the CDN.
+    Request::setTrustedProxies(['198.51.100.7'], Request::HEADER_X_FORWARDED_FOR);
+
+    $exception = new CannotUpdateLockedPropertyException('test');
+
+    $request = Request::create('/livewire/update', 'POST', [
+        'components' => [
+            ['snapshot' => '{}', 'updates' => []],
+        ],
+    ], server: [
+        'REMOTE_ADDR' => '198.51.100.7',
+        'HTTP_X_FORWARDED_FOR' => '203.0.113.50',
+    ]);
+
+    $request->setRouteResolver(fn () => null);
+
+    try {
+        $this->monitor->recordFromException($exception, $request);
+
+        expect(SecurityAttempt::first()->ip_address)->toBe('203.0.113.50');
+    } finally {
+        Request::setTrustedProxies([], Request::HEADER_X_FORWARDED_FOR);
+    }
 });
