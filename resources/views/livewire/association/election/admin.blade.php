@@ -80,14 +80,6 @@ new class extends Component {
         $this->isAllowed = false;
     }
 
-    public function handleNewVote(): void
-    {
-        $this->loadEvents();
-        $this->loadBoardEvents();
-        $this->loadVotes();
-        $this->loadBoardVotes();
-    }
-
     public function loadVotes(): void
     {
         $this->votes = collect($this->events)

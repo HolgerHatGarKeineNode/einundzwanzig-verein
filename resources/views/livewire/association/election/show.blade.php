@@ -248,12 +248,6 @@ new class extends Component {
             ->toArray();
     }
 
-    public function handleNewVote(): void
-    {
-        $this->loadEvents();
-        $this->loadBoardEvents();
-    }
-
     public function loadEvents(): void
     {
         $this->events = $this->loadNostrEvents([32122]);
