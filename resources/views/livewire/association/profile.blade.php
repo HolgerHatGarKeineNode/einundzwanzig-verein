@@ -506,11 +506,16 @@ new class extends Component {
         $this->invoiceExpiresIn = null;
     }
 
-    public function save($type): void
+    /**
+     * Records the application. It takes no status argument on purpose — the
+     * membership starts with the paid annual fee, not with this click.
+     */
+    public function save(): void
     {
         try {
-            $this->form->apply($type);
-            Flux::toast('Mitgliedschaft erfolgreich beantragt!', variant: 'success');
+            $this->form->apply();
+            $this->currentPleb = $this->currentPleb?->fresh() ?? $this->currentPleb;
+            Flux::toast('Antrag erfasst — Mitglied wirst du mit der Zahlung des Jahresbeitrags.', variant: 'success');
         } catch (\Illuminate\Validation\ValidationException $e) {
             if (!$this->form->check) {
                 $this->js('alert("Du musst den Statuten zustimmen.")');
@@ -1028,15 +1033,31 @@ new class extends Component {
                             </p>
                         </div>
 
+                        @if($currentPleb->applied_at)
+                            <flux:callout variant="warning" icon="clock">
+                                <flux:callout.heading>Antrag erfasst — noch kein Mitglied</flux:callout.heading>
+                                <flux:callout.text>
+                                    Deinem Antrag vom {{ $currentPleb->applied_at->format('d.m.Y') }} fehlt nur noch
+                                    die Zahlung: Die Mitgliedschaft beginnt mit dem Eingang des Jahresbeitrags,
+                                    nicht mit dem Antrag. Den Beitrag zahlst du weiter unten unter
+                                    „Mitgliedsbeitrag“.
+                                </flux:callout.text>
+                            </flux:callout>
+                        @endif
+
                         <div class="flex flex-col gap-4 max-w-2xl">
                             <flux:field variant="inline">
                                 <flux:checkbox wire:model="form.check" label="Ich stimme den Vereins-Statuten zu"/>
                                 <flux:error name="form.check"/>
                             </flux:field>
+                            <p class="text-sm text-text-secondary">
+                                Der Antrag erfasst deine Daten und deine Zustimmung zu den Statuten. Mitglied
+                                wirst du erst mit der Zahlung des Jahresbeitrags — der Vorstand muss nichts
+                                genehmigen.
+                            </p>
                             <div class="flex flex-col sm:flex-row gap-3">
-                                <flux:button wire:click="save({{ \App\Enums\AssociationStatus::PASSIVE() }})"
-                                             variant="primary">
-                                    Mit deinem aktuellen Nostr-Profil Mitglied werden
+                                <flux:button wire:click="save" variant="primary">
+                                    Antrag mit deinem aktuellen Nostr-Profil stellen
                                 </flux:button>
                                 <flux:button href="https://einundzwanzig.space/verein/" target="_blank"
                                              variant="outline">
@@ -1128,8 +1149,14 @@ new class extends Component {
                 </flux:card>
             @endif
 
-            <!-- Payment Section -->
-            @if($currentPleb && $currentPleb->association_status->value > 1)
+            {{--
+                Payment Section — also open to applicants who are not members yet
+                ($applied_at set, status still DEFAULT). Since the paid fee is what
+                constitutes the membership, gating this on "status > 1" alone would
+                deadlock every new application. The gate is cosmetic either way:
+                Livewire exposes pay()/createPaymentEvent() directly regardless.
+            --}}
+            @if($currentPleb && ($currentPleb->association_status->value > 1 || $currentPleb->applied_at))
                 <flux:card wire:poll.20s="listenForPayment">
                     <div class="space-y-6">
                         <!-- Payment Info -->

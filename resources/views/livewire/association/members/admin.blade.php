@@ -3,6 +3,7 @@
 use App\Enums\AssociationStatus;
 use App\Models\EinundzwanzigPleb;
 use App\Models\PaymentEvent;
+use App\Support\Board;
 use App\Support\NostrAuth;
 use Flux\Flux;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -27,23 +28,6 @@ new class extends Component
     private const SORTABLE_COLUMNS = [
         'name' => 'profiles.name',
         'association_status' => 'einundzwanzig_plebs.association_status',
-    ];
-
-    /**
-     * Pubkeys permitted to manage members. Authorization is re-checked
-     * server-side on every sensitive action — gating the view on $isAllowed
-     * is cosmetic only, because Livewire exposes every public method as a
-     * directly callable endpoint regardless of what the view renders.
-     *
-     * @var array<int, string>
-     */
-    private const ALLOWED_PUBKEYS = [
-        '0adf67475ccc5ca456fd3022e46f5d526eb0af6284bf85494c0dd7847f3e5033',
-        '430169631f2f0682c60cebb4f902d68f0c71c498fd1711fd982f052cf1fd4279',
-        '7acf30cf60b85c62b8f654556cc21e4016df8f5604b3b6892794f88bb80d7a1d',
-        'f240be2b684f85cc81566f2081386af81d7427ea86250c8bde6b7a8500c761ba',
-        '19e358b8011f5f4fc653c565c6d4c2f33f32661f4f90982c9eedc292a8774ec3',
-        'acbcec475a1a4f9481939ecfbd1c3d111f5b5a474a39ae039bbc720fdd305bec',
     ];
 
     #[Locked]
@@ -110,10 +94,21 @@ new class extends Component
         unset($this->plebs);
     }
 
+    /**
+     * Managing members is a board task, so the board list in
+     * `config/einundzwanzig.config.current_board` is the single source —
+     * the same one `EinundzwanzigPleb::isBoardMember()` and the election
+     * and proposal policies use. `App\Support\Board` resolves the configured
+     * npubs to hex pubkeys, because a Nostr session only ever carries the
+     * hex form. Authorization is re-checked server-side on every sensitive
+     * action — gating the view on $isAllowed is cosmetic only, because
+     * Livewire exposes every public method as a directly callable endpoint
+     * regardless of what the view renders.
+     */
     private function isAuthorized(): bool
     {
         return NostrAuth::check()
-            && in_array(NostrAuth::pubkey(), self::ALLOWED_PUBKEYS, true);
+            && Board::containsPubkey(NostrAuth::pubkey());
     }
 
     private function ensureAuthorized(): void
@@ -232,23 +227,48 @@ new class extends Component
         Flux::modal('confirm-delete-pleb')->show();
     }
 
+    /**
+     * The board path PASSIVE → ACTIVE/HONORARY. It never grants the
+     * membership itself — that follows from the paid annual fee.
+     *
+     * Two guards, both load-bearing:
+     * - `application_for` may be null (no application pending, or one that was
+     *   already handled). `AssociationStatus::from(null)` is fatal, so nothing
+     *   happens at all in that case.
+     * - The target status is never allowed to fall below the current one. A
+     *   stale application row must not demote an honorary member back to
+     *   passive; a demotion is a deliberate act, not a side effect of
+     *   confirming an application.
+     */
     public function acceptPleb(): void
     {
         $this->ensureAuthorized();
 
-        if ($this->confirmAcceptId) {
-            $pleb = EinundzwanzigPleb::query()->findOrFail($this->confirmAcceptId);
-            $for = $pleb->application_for;
-            $text = $pleb->application_text;
-            $pleb->association_status = AssociationStatus::from($for);
-            $pleb->application_for = null;
-            $pleb->archived_application_text = $text;
-            $pleb->application_text = null;
-            $pleb->save();
+        if (! $this->confirmAcceptId) {
+            return;
+        }
 
+        $pleb = EinundzwanzigPleb::query()->findOrFail($this->confirmAcceptId);
+        $target = AssociationStatus::tryFrom((int) $pleb->application_for);
+
+        if ($pleb->application_for === null || $target === null) {
             $this->confirmAcceptId = null;
             Flux::modal('confirm-accept-pleb')->close();
+
+            return;
         }
+
+        if ($target->value > $pleb->association_status->value) {
+            $pleb->association_status = $target;
+        }
+
+        $pleb->archived_application_text = $pleb->application_text;
+        $pleb->application_for = null;
+        $pleb->application_text = null;
+        $pleb->save();
+
+        $this->confirmAcceptId = null;
+        Flux::modal('confirm-accept-pleb')->close();
     }
 
     public function deletePleb(): void

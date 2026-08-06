@@ -29,12 +29,19 @@ test('api routes include rate limit headers', function () {
     $response->assertHeader('X-RateLimit-Remaining');
 });
 
+/*
+ * Die Schluessel muessen echte NIP-01-Pubkeys sein (64 Zeichen Kleinbuchstaben-Hex):
+ * seit der Route-Constraint in `routes/api.php` faellt alles andere schon im Router
+ * als 404 heraus — und ein Router-404 laeuft an der Throttle-Middleware vorbei, der
+ * Zaehler wuerde also nie steigen. Die frueheren Platzhalter ("testkey0" …) haetten
+ * den Test in ein gruenes Nichts verwandelt.
+ */
 test('nostr profile api route is rate limited', function () {
     for ($i = 0; $i < 60; $i++) {
-        $this->getJson('/api/nostr/profile/testkey'.$i);
+        $this->getJson('/api/nostr/profile/'.hash('sha256', 'testkey'.$i));
     }
 
-    $this->getJson('/api/nostr/profile/testkey')->assertStatus(429);
+    $this->getJson('/api/nostr/profile/'.hash('sha256', 'testkey'))->assertStatus(429);
 });
 
 test('voting actions are rate limited after 10 attempts', function () {

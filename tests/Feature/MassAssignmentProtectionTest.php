@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Enums\AssociationStatus;
 use App\Models\Category;
 use App\Models\City;
 use App\Models\Country;
@@ -94,18 +95,61 @@ it('blocks mass assignment of einundzwanzig_pleb_id on PaymentEvent', function (
     expect($paymentEvent->einundzwanzig_pleb_id)->toBeNull();
 });
 
-it('verifies EinundzwanzigPleb fillable does not contain application_for', function () {
+it('verifies EinundzwanzigPleb fillable does not contain application_for or association_status', function () {
     $reflection = new ReflectionClass(EinundzwanzigPleb::class);
     $property = $reflection->getProperty('fillable');
     $instance = $reflection->newInstanceWithoutConstructor();
     $fillable = $property->getValue($instance);
 
-    expect($fillable)->not->toContain('application_for')->not->toContain('id')
+    expect($fillable)->not->toContain('application_for')
+        ->not->toContain('association_status')
+        ->not->toContain('id')
         ->toContain('npub')
         ->toContain('pubkey')
         ->toContain('email')
         ->toContain('no_email')
-        ->toContain('nip05_handle');
+        ->toContain('nip05_handle')
+        ->toContain('statutes_accepted_at')
+        ->toContain('applied_at');
+});
+
+it('blocks mass assignment of association_status on EinundzwanzigPleb via fill', function () {
+    $pleb = new EinundzwanzigPleb;
+    $pleb->fill([
+        'npub' => 'npub1test',
+        'association_status' => AssociationStatus::HONORARY->value,
+        'application_for' => AssociationStatus::HONORARY->value,
+    ]);
+
+    expect($pleb->npub)->toBe('npub1test')
+        ->and($pleb->getAttributes())->not->toHaveKey('association_status')
+        ->and($pleb->getAttributes())->not->toHaveKey('application_for');
+});
+
+it('blocks mass assignment of association_status on EinundzwanzigPleb via create', function () {
+    $pleb = EinundzwanzigPleb::query()->create([
+        'npub' => 'npub1masscreate',
+        'pubkey' => str_repeat('a', 64),
+        'association_status' => AssociationStatus::HONORARY->value,
+    ]);
+
+    expect($pleb->fresh()->association_status)->toBe(AssociationStatus::DEFAULT);
+});
+
+it('blocks mass assignment of association_status on EinundzwanzigPleb via update', function () {
+    $pleb = EinundzwanzigPleb::factory()->create([
+        'association_status' => AssociationStatus::DEFAULT,
+    ]);
+
+    $pleb->update([
+        'nip05_handle' => 'someone@example.com',
+        'association_status' => AssociationStatus::HONORARY->value,
+    ]);
+
+    $fresh = $pleb->fresh();
+
+    expect($fresh->nip05_handle)->toBe('someone@example.com')
+        ->and($fresh->association_status)->toBe(AssociationStatus::DEFAULT);
 });
 
 it('blocks mass assignment of accepted and sats_paid on ProjectProposal', function () {

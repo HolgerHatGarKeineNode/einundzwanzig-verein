@@ -69,7 +69,7 @@ it('denies non-board member from deleting an election', function () {
 
 // vote
 it('allows active member to vote in an election', function () {
-    $pleb = EinundzwanzigPleb::factory()->active()->create();
+    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
     $election = Election::factory()->create();
     $nostrUser = new NostrUser($pleb->pubkey);
 
@@ -77,13 +77,46 @@ it('allows active member to vote in an election', function () {
 });
 
 it('allows honorary member to vote in an election', function () {
-    $pleb = EinundzwanzigPleb::factory()->create([
+    $pleb = EinundzwanzigPleb::factory()->withPaidCurrentYear()->create([
         'association_status' => AssociationStatus::HONORARY,
     ]);
     $election = Election::factory()->create();
     $nostrUser = new NostrUser($pleb->pubkey);
 
     expect(Gate::forUser($nostrUser)->allows('vote', $election))->toBeTrue();
+});
+
+it('denies an active member whose current year is unpaid', function () {
+    $pleb = EinundzwanzigPleb::factory()->active()->create();
+    $election = Election::factory()->create();
+    $nostrUser = new NostrUser($pleb->pubkey);
+
+    expect($pleb->hasPaidMembership())->toBeFalse()
+        ->and(Gate::forUser($nostrUser)->allows('vote', $election))->toBeFalse();
+});
+
+it('denies an honorary member whose current year is unpaid', function () {
+    $pleb = EinundzwanzigPleb::factory()->create([
+        'association_status' => AssociationStatus::HONORARY,
+    ]);
+    $election = Election::factory()->create();
+    $nostrUser = new NostrUser($pleb->pubkey);
+
+    expect(Gate::forUser($nostrUser)->allows('vote', $election))->toBeFalse();
+});
+
+it('denies an active member who only paid a previous year', function () {
+    $pleb = EinundzwanzigPleb::factory()->active()->create();
+    $pleb->paymentEvents()->create([
+        'year' => (int) date('Y') - 1,
+        'amount' => 21000,
+        'paid' => true,
+        'event_id' => 'test_event_previous_year',
+    ]);
+    $election = Election::factory()->create();
+    $nostrUser = new NostrUser($pleb->pubkey);
+
+    expect(Gate::forUser($nostrUser)->allows('vote', $election))->toBeFalse();
 });
 
 it('denies passive member from voting in an election', function () {

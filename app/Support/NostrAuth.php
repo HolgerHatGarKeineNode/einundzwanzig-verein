@@ -3,10 +3,13 @@
 namespace App\Support;
 
 use App\Auth\NostrUser;
+use App\Models\EinundzwanzigPleb;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Validation\ValidationException;
 use swentel\nostr\Event\Event as NostrEvent;
+use swentel\nostr\Key\Key;
 
 class NostrAuth
 {
@@ -71,11 +74,41 @@ class NostrAuth
     {
         $pubkey = self::verifySignedEvent($signedEvent);
 
+        self::ensurePleb($pubkey);
+
         if (! self::check() || self::pubkey() !== $pubkey) {
             self::login($pubkey);
         }
 
         return $pubkey;
+    }
+
+    /**
+     * Create the member record for a pubkey whose signature was just verified.
+     *
+     * This used to be a side effect of `GET /api/nostr/profile/{key}`, which the
+     * login frontend happened to call before dispatching. That was an
+     * unauthenticated GET writing to the member table: any hex string created a
+     * row that fed the board overview and the CSV export. The record now comes
+     * into being here — after `verifySignedEvent()` has proven that the caller
+     * holds the private key — so nobody can create a member record for a pubkey
+     * they do not own.
+     *
+     * Idempotent by `pubkey` (uniquely indexed), and it writes nothing but the
+     * identity: `association_status` is left to the column default DEFAULT(1),
+     * because only a paid fee may raise it.
+     */
+    private static function ensurePleb(string $pubkey): void
+    {
+        try {
+            EinundzwanzigPleb::query()->firstOrCreate(
+                ['pubkey' => $pubkey],
+                ['npub' => (new Key)->convertPublicKeyToBech32($pubkey)]
+            );
+        } catch (UniqueConstraintViolationException) {
+            // A concurrent login won the race; the unique index on `pubkey`
+            // settled it and the record we wanted exists either way.
+        }
     }
 
     /**

@@ -52,7 +52,12 @@ class ElectionPolicy
 
     /**
      * Determine whether the user can vote in the election.
-     * Requires: authenticated pleb with active or honorary status.
+     *
+     * Requires an active or honorary pleb whose fee for the current year is
+     * actually paid. The status alone is not enough: it is now a consequence
+     * of a payment, so a status without a paid year would let someone vote on
+     * a membership that has lapsed — or, before the mass-assignment fix, on
+     * one they had assigned to themselves.
      */
     public function vote(NostrUser $user, Election $election): bool
     {
@@ -62,6 +67,7 @@ class ElectionPolicy
             return false;
         }
 
-        return $pleb->association_status->value >= 3;
+        return $pleb->association_status->value >= 3
+            && $pleb->hasPaidMembership();
     }
 }

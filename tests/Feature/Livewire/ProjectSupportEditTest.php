@@ -11,8 +11,10 @@ beforeEach(function () {
     $this->pleb = EinundzwanzigPleb::query()->create([
         'pubkey' => 'test_pubkey_'.Str::random(20),
         'npub' => 'test_npub_'.Str::random(20),
-        'association_status' => AssociationStatus::ACTIVE->value,
     ]);
+
+    $this->pleb->association_status = AssociationStatus::ACTIVE;
+    $this->pleb->save();
 
     // Create payment event for the current year
     $this->pleb->paymentEvents()->create([
@@ -36,8 +38,10 @@ beforeEach(function () {
     $this->boardMember = EinundzwanzigPleb::query()->create([
         'pubkey' => 'board_pubkey_'.Str::random(20),
         'npub' => 'board_npub_'.Str::random(20),
-        'association_status' => AssociationStatus::HONORARY->value,
     ]);
+
+    $this->boardMember->association_status = AssociationStatus::HONORARY;
+    $this->boardMember->save();
 
     // Simulate board member by temporarily updating config for testing
     config(['einundzwanzig.config.current_board' => [$this->boardMember->npub]]);
@@ -65,8 +69,10 @@ it('does not render edit form for unauthorized users', function () {
     $unauthorizedPleb = EinundzwanzigPleb::query()->create([
         'pubkey' => 'test_pubkey_'.Str::random(20),
         'npub' => 'test_npub_'.Str::random(20),
-        'association_status' => AssociationStatus::ACTIVE->value,
     ]);
+
+    $unauthorizedPleb->association_status = AssociationStatus::ACTIVE;
+    $unauthorizedPleb->save();
 
     NostrAuth::login($unauthorizedPleb->pubkey);
 
