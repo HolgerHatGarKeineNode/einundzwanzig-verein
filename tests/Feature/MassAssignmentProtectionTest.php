@@ -9,7 +9,6 @@ use App\Models\Country;
 use App\Models\Course;
 use App\Models\CourseEvent;
 use App\Models\EinundzwanzigPleb;
-use App\Models\Election;
 use App\Models\Event;
 use App\Models\Lecturer;
 use App\Models\Meetup;
@@ -21,7 +20,6 @@ use App\Models\ProjectProposal;
 use App\Models\RenderedEvent;
 use App\Models\Venue;
 use App\Models\Vote;
-use Illuminate\Database\Eloquent\MassAssignmentException;
 
 it('ensures no model uses guarded empty array', function () {
     $models = [
@@ -29,7 +27,6 @@ it('ensures no model uses guarded empty array', function () {
         EinundzwanzigPleb::class,
         Vote::class,
         ProjectProposal::class,
-        Election::class,
         Venue::class,
         MeetupEvent::class,
         CourseEvent::class,
@@ -62,7 +59,6 @@ it('ensures all models have explicit fillable arrays', function () {
         EinundzwanzigPleb::class,
         Vote::class,
         ProjectProposal::class,
-        Election::class,
         Venue::class,
         MeetupEvent::class,
         CourseEvent::class,
@@ -167,13 +163,6 @@ it('blocks mass assignment of accepted and sats_paid on ProjectProposal', functi
         ->and($proposal->einundzwanzig_pleb_id)->toBeNull()
         ->and($proposal->slug)->toBeNull()
         ->and($proposal->name)->toBe('Test');
-});
-
-it('blocks mass assignment of all fields on Election', function () {
-    $election = new Election;
-
-    expect(fn () => $election->fill(['year' => 2025]))
-        ->toThrow(MassAssignmentException::class);
 });
 
 it('blocks mass assignment of created_by and slug on Venue', function () {

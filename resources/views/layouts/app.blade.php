@@ -49,10 +49,6 @@
                 <flux:navlist.item icon="gift" :href="route('association.benefits')"
                                    :current="request()->routeIs('association.benefits')"
                                    wire:navigate>Vorteile</flux:navlist.item>
-                {{-- Wahlen: vorübergehend DEAKTIVIERT — Nav-Eintrag auskommentiert, Feature vorerst nicht verlinkt. Zum Reaktivieren einkommentieren. --}}
-                {{-- <flux:navlist.item icon="hand-raised" :href="route('association.elections')"
-                                   :current="request()->routeIs('association.election*')"
-                                   wire:navigate>Wahlen</flux:navlist.item> --}}
                 <flux:navlist.item icon="heart" :href="route('association.projectSupport')"
                                    :current="request()->routeIs('association.projectSupport*')"
                                    wire:navigate>Projekt-Unterstützungen</flux:navlist.item>

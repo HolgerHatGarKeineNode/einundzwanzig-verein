@@ -97,8 +97,8 @@ new class extends Component
     /**
      * Managing members is a board task, so the board list in
      * `config/einundzwanzig.config.current_board` is the single source —
-     * the same one `EinundzwanzigPleb::isBoardMember()` and the election
-     * and proposal policies use. `App\Support\Board` resolves the configured
+     * the same one `EinundzwanzigPleb::isBoardMember()` and the proposal
+     * policies use. `App\Support\Board` resolves the configured
      * npubs to hex pubkeys, because a Nostr session only ever carries the
      * hex form. Authorization is re-checked server-side on every sensitive
      * action — gating the view on $isAllowed is cosmetic only, because
