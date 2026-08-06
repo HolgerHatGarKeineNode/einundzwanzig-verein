@@ -1,6 +1,23 @@
 <?php
 
 return [
+    /*
+     * Jahresbeitrag und Waehrung — die EINZIGE Quelle fuer beides.
+     *
+     * Vorher stand der Betrag zweimal als
+     * `config('app.env') === 'production' ? 21000 : 1` im Volt-Component. Das
+     * band den Preis an den Umgebungsnamen statt an eine Einstellung: unter
+     * APP_ENV=staging kostete die Mitgliedschaft 1 Satoshi.
+     *
+     * Die Waehrung ging bisher gar nicht an BTCPay — der Betrag wurde nackt
+     * gesendet und BTCPay setzte die Store-Default-Waehrung ein. Aendert die
+     * sich dort, aendert sich der Beitrag stillschweigend um Groessenordnungen.
+     * "SATS" ist der BTCPay-Code fuer Satoshis und passt zu Betrag (21000) und
+     * Beschriftung ("Pay 21000 Sats") der bisherigen Oberflaeche.
+     */
+    'membership_fee' => (int) env('MEMBERSHIP_FEE', 21000),
+    'currency' => (string) env('MEMBERSHIP_CURRENCY', 'SATS'),
+
     'current_board' => [
         'npub1pt0kw36ue3w2g4haxq3wgm6a2fhtptmzsjlc2j2vphtcgle72qesgpjyc6',
         'npub1gvqkjccl9urg93svaw60jqkk3ux8r3ycl5t3rlvc9uzjeu0agfuss8x8qy',

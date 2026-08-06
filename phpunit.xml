@@ -25,6 +25,11 @@
         <env name="DB_CONNECTION" value="sqlite"/>
         <env name="DB_DATABASE" value=":memory:"/>
         <env name="MAIL_MAILER" value="array"/>
+        <!-- Testbetrag, wie vor der Extraktion: der Beitrag hing frueher am
+             Umgebungsnamen (production ? 21000 : 1). Jetzt haengt er an dieser
+             Einstellung, damit kein Testlauf den Produktionsbetrag annimmt und
+             kein Umgebungsvergleich mehr im Code steht. -->
+        <env name="MEMBERSHIP_FEE" value="1"/>
         <env name="NOSTR_RELAY" value=""/>
         <!-- Kein Testlauf baut echte Verbindungen nach draussen auf. Leer =
              fetchProfile() verbindet gar nicht erst. -->
