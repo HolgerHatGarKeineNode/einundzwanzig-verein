@@ -11,8 +11,10 @@ beforeEach(function () {
     $this->pleb = EinundzwanzigPleb::query()->create([
         'pubkey' => 'test_pubkey_'.Str::random(20),
         'npub' => 'test_npub_'.Str::random(20),
-        'association_status' => AssociationStatus::ACTIVE->value,
     ]);
+
+    $this->pleb->association_status = AssociationStatus::ACTIVE;
+    $this->pleb->save();
 
     // Create payment event for the current year
     $this->pleb->paymentEvents()->create([
@@ -35,8 +37,10 @@ it('does not render create form for unauthorized users', function () {
     $unauthorizedPleb = EinundzwanzigPleb::query()->create([
         'pubkey' => 'test_pubkey_'.Str::random(20),
         'npub' => 'test_npub_'.Str::random(20),
-        'association_status' => AssociationStatus::DEFAULT->value,
     ]);
+
+    $unauthorizedPleb->association_status = AssociationStatus::DEFAULT;
+    $unauthorizedPleb->save();
 
     NostrAuth::login($unauthorizedPleb->pubkey);
 

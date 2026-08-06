@@ -1,11 +1,19 @@
 <?php
 
+use App\Auth\NostrUser;
+use App\Enums\AssociationStatus;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Profile;
+use App\Support\Board;
 use App\Support\NostrAuth;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Livewire\Livewire;
 
+/**
+ * Derived from the one board source instead of being spelled out again —
+ * a second literal list in the tests would reintroduce exactly the drift
+ * the production code just got rid of.
+ */
 const ALLOWED_ADMIN_PUBKEY = '0adf67475ccc5ca456fd3022e46f5d526eb0af6284bf85494c0dd7847f3e5033';
 
 it('denies access to unauthorized users', function () {
@@ -18,24 +26,52 @@ it('denies access to unauthorized users', function () {
         ->assertSee('Mitglieder können nicht bearbeitet werden');
 });
 
-it('grants access to authorized pubkeys', function () {
-    $allowedPubkeys = [
-        '0adf67475ccc5ca456fd3022e46f5d526eb0af6284bf85494c0dd7847f3e5033',
-        '430169631f2f0682c60cebb4f902d68f0c71c498fd1711fd982f052cf1fd4279',
-        '7acf30cf60b85c62b8f654556cc21e4016df8f5604b3b6892794f88bb80d7a1d',
-        'f240be2b684f85cc81566f2081386af81d7427ea86250c8bde6b7a8500c761ba',
-        '19e358b8011f5f4fc653c565c6d4c2f33f32661f4f90982c9eedc292a8774ec3',
-        'acbcec475a1a4f9481939ecfbd1c3d111f5b5a474a39ae039bbc720fdd305bec',
-    ];
+it('grants access to every configured board pubkey', function () {
+    $pubkeys = Board::pubkeys();
 
-    $pleb = EinundzwanzigPleb::factory()->create([
-        'pubkey' => $allowedPubkeys[0],
-    ]);
+    expect($pubkeys)->not->toBeEmpty()
+        ->and($pubkeys)->toHaveCount(count(Board::npubs()));
+
+    foreach ($pubkeys as $pubkey) {
+        $pleb = EinundzwanzigPleb::factory()->create([
+            'pubkey' => $pubkey,
+        ]);
+
+        NostrAuth::login($pleb->pubkey);
+
+        Livewire::test('association.members.admin')
+            ->assertSet('isAllowed', true);
+    }
+});
+
+it('answers board membership identically for the model, the policy user and the admin screen', function () {
+    foreach (Board::npubs() as $index => $npub) {
+        $pubkey = Board::pubkeys()[$index];
+
+        $pleb = EinundzwanzigPleb::factory()->create([
+            'npub' => $npub,
+            'pubkey' => $pubkey,
+        ]);
+
+        NostrAuth::login($pubkey);
+
+        expect($pleb->isBoardMember())->toBeTrue()
+            ->and((new NostrUser($pubkey))->isBoardMember())->toBeTrue();
+
+        Livewire::test('association.members.admin')
+            ->assertSet('isAllowed', true);
+    }
+});
+
+it('denies the member admin screen to a pubkey that is not on the board', function () {
+    $pleb = EinundzwanzigPleb::factory()->active()->create();
 
     NostrAuth::login($pleb->pubkey);
 
     Livewire::test('association.members.admin')
-        ->assertSet('isAllowed', true);
+        ->assertSet('isAllowed', false)
+        ->call('exportCsv')
+        ->assertForbidden();
 });
 
 it('reflects an authorized nostr session on mount', function () {
@@ -133,6 +169,100 @@ it('lets an authorized member pass the authorization guard', function () {
         ->call('acceptPleb')
         ->assertStatus(200)
         ->assertHasNoErrors();
+});
+
+it('does nothing when accepting a pleb without a pending application', function () {
+    EinundzwanzigPleb::factory()->create(['pubkey' => ALLOWED_ADMIN_PUBKEY]);
+
+    $applicant = EinundzwanzigPleb::factory()->create([
+        'association_status' => AssociationStatus::PASSIVE,
+    ]);
+
+    expect($applicant->application_for)->toBeNull();
+
+    NostrAuth::login(ALLOWED_ADMIN_PUBKEY);
+
+    Livewire::test('association.members.admin')
+        ->call('accept', $applicant->id)
+        ->call('acceptPleb')
+        ->assertStatus(200)
+        ->assertHasNoErrors()
+        ->assertSet('confirmAcceptId', null);
+
+    $fresh = $applicant->fresh();
+
+    expect($fresh->association_status)->toBe(AssociationStatus::PASSIVE)
+        ->and($fresh->application_for)->toBeNull()
+        ->and($fresh->archived_application_text)->toBeNull();
+});
+
+it('raises the status of a pleb with a pending application', function () {
+    EinundzwanzigPleb::factory()->create(['pubkey' => ALLOWED_ADMIN_PUBKEY]);
+
+    $applicant = EinundzwanzigPleb::factory()->create([
+        'association_status' => AssociationStatus::PASSIVE,
+        'application_for' => AssociationStatus::ACTIVE->value,
+        'application_text' => 'Ich moechte aktiv mitarbeiten.',
+    ]);
+
+    NostrAuth::login(ALLOWED_ADMIN_PUBKEY);
+
+    Livewire::test('association.members.admin')
+        ->call('accept', $applicant->id)
+        ->call('acceptPleb')
+        ->assertHasNoErrors();
+
+    $fresh = $applicant->fresh();
+
+    expect($fresh->association_status)->toBe(AssociationStatus::ACTIVE)
+        ->and($fresh->application_for)->toBeNull()
+        ->and($fresh->application_text)->toBeNull()
+        ->and($fresh->archived_application_text)->toBe('Ich moechte aktiv mitarbeiten.');
+});
+
+it('never demotes a pleb below the status they already hold', function (int $applicationFor) {
+    EinundzwanzigPleb::factory()->create(['pubkey' => ALLOWED_ADMIN_PUBKEY]);
+
+    $honorary = EinundzwanzigPleb::factory()->create([
+        'association_status' => AssociationStatus::HONORARY,
+        'application_for' => $applicationFor,
+    ]);
+
+    NostrAuth::login(ALLOWED_ADMIN_PUBKEY);
+
+    Livewire::test('association.members.admin')
+        ->call('accept', $honorary->id)
+        ->call('acceptPleb')
+        ->assertHasNoErrors();
+
+    expect($honorary->fresh()->association_status)->toBe(AssociationStatus::HONORARY);
+})->with([
+    'default' => AssociationStatus::DEFAULT->value,
+    'passive' => AssociationStatus::PASSIVE->value,
+    'active' => AssociationStatus::ACTIVE->value,
+    'honorary' => AssociationStatus::HONORARY->value,
+]);
+
+it('ignores an application for a status value that does not exist', function () {
+    EinundzwanzigPleb::factory()->create(['pubkey' => ALLOWED_ADMIN_PUBKEY]);
+
+    $applicant = EinundzwanzigPleb::factory()->create([
+        'association_status' => AssociationStatus::PASSIVE,
+        'application_for' => 99,
+    ]);
+
+    NostrAuth::login(ALLOWED_ADMIN_PUBKEY);
+
+    Livewire::test('association.members.admin')
+        ->call('accept', $applicant->id)
+        ->call('acceptPleb')
+        ->assertStatus(200)
+        ->assertHasNoErrors();
+
+    $fresh = $applicant->fresh();
+
+    expect($fresh->association_status)->toBe(AssociationStatus::PASSIVE)
+        ->and($fresh->application_for)->toBe(99);
 });
 
 it('paginates the member list instead of loading everything', function () {

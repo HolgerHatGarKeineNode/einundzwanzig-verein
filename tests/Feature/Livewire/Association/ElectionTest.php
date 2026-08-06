@@ -92,7 +92,7 @@ it('handles search in election show', function () {
 
 it('can create vote event', function () {
     $election = Election::factory()->create();
-    $pleb = EinundzwanzigPleb::factory()->active()->create();
+    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
     $candidatePubkey = 'test-candidate-pubkey';
 
     NostrAuth::login($pleb->pubkey);
@@ -115,7 +115,7 @@ it('checks election closure status', function () {
 });
 
 it('displays log for authorized users', function () {
-    $pleb = EinundzwanzigPleb::factory()->active()->create();
+    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
     $election = Election::factory()->create();
 
     NostrAuth::login($pleb->pubkey);

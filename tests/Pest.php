@@ -1,6 +1,9 @@
 <?php
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use swentel\nostr\Event\Event;
+use swentel\nostr\Key\Key;
+use swentel\nostr\Sign\Sign;
 use Tests\TestCase;
 
 /*
@@ -117,6 +120,53 @@ expect()->extend('toBeNostrHexKey', function () {
 | global functions to help you to reduce the number of lines of code in your test files.
 |
 */
+
+/**
+ * Build a NIP-42-style kind-22242 login event signed with a freshly generated
+ * keypair. Returns the signed event as the plain array that the frontend
+ * dispatches to Livewire (post-JSON round-trip), plus the pubkey for assertions.
+ *
+ * Lives here rather than in a single test file because more than one suite
+ * needs a genuinely signed login: the auth tests themselves, and every test
+ * that has to reach the state "logged in the way a real browser does".
+ *
+ * Pass `$privkey` to sign a second, different challenge with the same identity —
+ * that is what a returning member's browser does on the next login.
+ *
+ * @return array{event: array<string, mixed>, pubkey: string, privkey: string}
+ */
+function makeSignedLoginEvent(string $challenge, ?int $createdAt = null, ?string $privkey = null): array
+{
+    $key = new Key;
+    $privkey ??= $key->generatePrivateKey();
+    $pubkey = $key->getPublicKey($privkey);
+
+    $event = new Event;
+    $event->setKind(22242);
+    $event->setCreatedAt($createdAt ?? time());
+    $event->setTags([['challenge', $challenge]]);
+    $event->setContent('');
+
+    (new Sign)->signEvent($event, $privkey);
+
+    $array = $event->toArray();
+
+    // Match the shape produced by JSON.parse(JSON.stringify(signedEvent)) in
+    // nostrLogin.js — plain arrays, integer kind/created_at, string sig/id.
+    return [
+        'event' => [
+            'id' => $array['id'],
+            'pubkey' => $array['pubkey'],
+            'created_at' => $array['created_at'],
+            'kind' => $array['kind'],
+            'tags' => $array['tags'],
+            'content' => $array['content'],
+            'sig' => $array['sig'],
+        ],
+        'pubkey' => $pubkey,
+        'privkey' => $privkey,
+    ];
+}
 
 function something()
 {

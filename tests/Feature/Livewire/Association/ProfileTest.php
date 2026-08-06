@@ -185,10 +185,14 @@ it('can save membership application', function () {
 
     Livewire::test('association.profile')
         ->set('form.check', true)
-        ->call('save', AssociationStatus::PASSIVE->value)
+        ->call('save')
         ->assertHasNoErrors();
 
-    expect($pleb->fresh()->association_status)->toBe(AssociationStatus::PASSIVE);
+    $fresh = $pleb->fresh();
+
+    expect($fresh->applied_at)->not->toBeNull()
+        ->and($fresh->statutes_accepted_at)->not->toBeNull()
+        ->and($fresh->association_status)->toBe(AssociationStatus::DEFAULT);
 });
 
 it('creates payment event when pleb becomes active', function () {

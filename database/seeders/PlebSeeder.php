@@ -68,13 +68,14 @@ class PlebSeeder extends Seeder
                 'pubkey' => $member['pubkey'],
                 'email' => $member['email'],
                 'nip05_handle' => $member['nip05'],
-                'association_status' => $member['status'],
                 'application_text' => 'Ich bin Teil des Einundzwanzig Vorstands und unterstütze die Mission, Bitcoin in den deutschsprachigen Raum zu bringen.',
             ]);
 
+            $pleb->association_status = $member['status'];
+            $pleb->save();
+
             foreach ($member['paid_years'] as $year) {
-                PaymentEvent::query()->create([
-                    'einundzwanzig_pleb_id' => $pleb->id,
+                $pleb->paymentEvents()->create([
                     'year' => $year,
                     'amount' => 21000,
                     'paid' => true,

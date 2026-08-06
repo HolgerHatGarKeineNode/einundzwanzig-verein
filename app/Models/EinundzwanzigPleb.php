@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\AssociationStatus;
+use App\Support\Board;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use ParagonIE\CipherSweet\BlindIndex;
@@ -15,22 +16,32 @@ class EinundzwanzigPleb extends Authenticatable implements CipherSweetEncrypted
     use HasFactory;
     use UsesCipherSweet;
 
-    /** @var list<string> */
+    /**
+     * `association_status` is deliberately absent: the payment constitutes the
+     * membership, so the status is only ever assigned explicitly and never
+     * through mass assignment from request data. `application_for` is absent
+     * for the same reason — it only serves the board path PASSIVE → ACTIVE.
+     *
+     * @var list<string>
+     */
     protected $fillable = [
         'npub',
         'pubkey',
         'email',
         'no_email',
         'nip05_handle',
-        'association_status',
         'application_text',
         'archived_application_text',
+        'statutes_accepted_at',
+        'applied_at',
     ];
 
     protected function casts(): array
     {
         return [
             'association_status' => AssociationStatus::class,
+            'statutes_accepted_at' => 'datetime',
+            'applied_at' => 'datetime',
         ];
     }
 
@@ -53,7 +64,7 @@ class EinundzwanzigPleb extends Authenticatable implements CipherSweetEncrypted
 
     public function isBoardMember(): bool
     {
-        return in_array($this->npub, config('einundzwanzig.config.current_board', []), true);
+        return Board::containsNpub($this->npub) || Board::containsPubkey($this->pubkey);
     }
 
     public function hasPaidMembership(?int $year = null): bool

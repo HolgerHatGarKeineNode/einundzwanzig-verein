@@ -2,7 +2,6 @@
 
 namespace App\Livewire\Forms;
 
-use App\Enums\AssociationStatus;
 use App\Models\EinundzwanzigPleb;
 use Livewire\Attributes\Validate;
 use Livewire\Form;
@@ -22,14 +21,23 @@ class ApplicationForm extends Form
         $this->currentPleb = $pleb;
     }
 
-    public function apply(AssociationStatus|int $status): void
+    /**
+     * Record the application. It deliberately takes no status argument and
+     * writes none: the payment of the annual fee constitutes the membership,
+     * the application only records the data and the consent to the statutes.
+     *
+     * Livewire exposes every public method as a directly callable endpoint,
+     * so any status value accepted here would be a client-supplied one.
+     */
+    public function apply(): void
     {
         $this->validate();
 
-        $status = $status instanceof AssociationStatus ? $status : AssociationStatus::from($status);
+        $now = now();
 
         $this->currentPleb->update([
-            'association_status' => $status,
+            'applied_at' => $now,
+            'statutes_accepted_at' => $this->currentPleb->statutes_accepted_at ?? $now,
         ]);
 
         $this->reset('check');
