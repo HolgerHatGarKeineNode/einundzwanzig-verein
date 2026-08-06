@@ -13,11 +13,9 @@
         "chartjs-adapter-date-fns": "^3.0.0",
         "date-fns": "^4.4.0",
         "flatpickr": "^4.6.13",
-        "laravel-echo": "^2.3.0",
         "laravel-vite-plugin": "^3.0.0",
         "nostr-tools": "^2.23.0",
         "postcss": "^8.4.41",
-        "pusher-js": "^8.4.0",
         "tailwindcss": "^4.1.18",
         "vite": "^8.0.0"
     },

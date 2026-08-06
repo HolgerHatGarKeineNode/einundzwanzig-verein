@@ -53,7 +53,6 @@ new class extends Component {
     protected $listeners = [
         'nostrLoggedIn' => 'handleNostrLoggedIn',
         'nostrLoggedOut' => 'handleNostrLoggedOut',
-        'echo:votes,.newVote' => 'handleNewVote',
     ];
 
     #[Computed]
@@ -365,7 +364,6 @@ new class extends Component {
         $relay = new Relay($relayUrl);
         $relay->setMessage($eventMessage);
         $relay->send();
-        \App\Support\Broadcast::on('votes')->as('newVote')->sendNow();
     }
 
 };

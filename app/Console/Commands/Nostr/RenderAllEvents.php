@@ -5,7 +5,6 @@ namespace App\Console\Commands\Nostr;
 use App\Models\Event;
 use App\Traits\NostrEventRendererTrait;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Broadcast;
 
 class RenderAllEvents extends Command
 {
@@ -28,7 +27,7 @@ class RenderAllEvents extends Command
     /**
      * Execute the console command.
      */
-    public function handle()
+    public function handle(): void
     {
         $events = Event::query()
             ->get();
@@ -36,12 +35,5 @@ class RenderAllEvents extends Command
         foreach ($events as $event) {
             $this->renderContentToHtml($event);
         }
-
-        Broadcast::on('events')
-            ->as('newEvents')
-            ->with([
-                'test' => 'test',
-            ])
-            ->sendNow();
     }
 }

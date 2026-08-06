@@ -41,7 +41,6 @@ new class extends Component {
     protected $listeners = [
         'nostrLoggedOut' => 'handleNostrLoggedOut',
         'nostrLoggedIn' => 'handleNostrLoggedIn',
-        'echo:votes,.newVote' => 'handleNewVote',
     ];
 
     public function mount(Election $election): void
