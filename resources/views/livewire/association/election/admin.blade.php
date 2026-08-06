@@ -41,7 +41,6 @@ new class extends Component {
     protected $listeners = [
         'nostrLoggedOut' => 'handleNostrLoggedOut',
         'nostrLoggedIn' => 'handleNostrLoggedIn',
-        'echo:votes,.newVote' => 'handleNewVote',
     ];
 
     public function mount(Election $election): void
@@ -79,14 +78,6 @@ new class extends Component {
         $this->currentPubkey = null;
         $this->currentPleb = null;
         $this->isAllowed = false;
-    }
-
-    public function handleNewVote(): void
-    {
-        $this->loadEvents();
-        $this->loadBoardEvents();
-        $this->loadVotes();
-        $this->loadBoardVotes();
     }
 
     public function loadVotes(): void

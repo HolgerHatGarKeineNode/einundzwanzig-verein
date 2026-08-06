@@ -53,7 +53,6 @@ new class extends Component {
     protected $listeners = [
         'nostrLoggedIn' => 'handleNostrLoggedIn',
         'nostrLoggedOut' => 'handleNostrLoggedOut',
-        'echo:votes,.newVote' => 'handleNewVote',
     ];
 
     #[Computed]
@@ -249,12 +248,6 @@ new class extends Component {
             ->toArray();
     }
 
-    public function handleNewVote(): void
-    {
-        $this->loadEvents();
-        $this->loadBoardEvents();
-    }
-
     public function loadEvents(): void
     {
         $this->events = $this->loadNostrEvents([32122]);
@@ -365,7 +358,6 @@ new class extends Component {
         $relay = new Relay($relayUrl);
         $relay->setMessage($eventMessage);
         $relay->send();
-        \App\Support\Broadcast::on('votes')->as('newVote')->sendNow();
     }
 
 };
