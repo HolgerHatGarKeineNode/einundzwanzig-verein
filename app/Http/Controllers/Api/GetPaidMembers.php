@@ -15,11 +15,13 @@ use Illuminate\Http\Request;
  * offen; die neue `/api/v1`-Flaeche fuehrt dieses Muster NICHT fort.
  *
  * Offengelegt wird damit nicht der npub — der ist auf Nostr ohnehin oeffentlich —,
- * sondern die VERKNUEPFUNG "dieser Pubkey ist Mitglied im Einundzwanzig e.V. und hat
+ * sondern die VERKNUEPFUNG "dieser Pubkey ist Mitglied bei EINUNDZWANZIG und hat
  * fuer Jahr X bezahlt". Wer den Endpunkt aufruft, kann fuer jeden beliebigen Pubkey
  * genau das nachschlagen. Die Frage nach Rechtsgrundlage bzw. Opt-in pro Mitglied ist
  * ausdruecklich noch offen (Plan `docs/plans/2026-08-06T1114-mitgliedschafts-api.md`,
- * Offene Frage 6) — die Entscheidung, den Endpunkt offen zu lassen, ist davon unberuehrt.
+ * Offene Frage 1) — die Entscheidung, den Endpunkt offen zu lassen, ist davon unberuehrt.
+ * Zu pruefen ist sie nach revDSG: EINUNDZWANZIG ist ein Schweizer Verein nach
+ * Art. 60 ff. ZGB mit Sitz in Zug, KEIN eingetragener Verein deutschen Rechts.
  *
  * DIE `select()`-ZEILE IST DER EINZIGE SCHUTZ DER PERSONENDATEN und darf nicht
  * erweitert werden. `EinundzwanzigPleb` hat kein `$hidden`; CipherSweet verschluesselt
