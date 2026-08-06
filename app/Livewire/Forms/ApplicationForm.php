@@ -3,6 +3,7 @@
 namespace App\Livewire\Forms;
 
 use App\Models\EinundzwanzigPleb;
+use App\Services\MembershipService;
 use Livewire\Attributes\Validate;
 use Livewire\Form;
 
@@ -28,17 +29,15 @@ class ApplicationForm extends Form
      *
      * Livewire exposes every public method as a directly callable endpoint,
      * so any status value accepted here would be a client-supplied one.
+     *
+     * The write itself lives in MembershipService so the Volt UI and the
+     * public API record an application through exactly the same code.
      */
     public function apply(): void
     {
         $this->validate();
 
-        $now = now();
-
-        $this->currentPleb->update([
-            'applied_at' => $now,
-            'statutes_accepted_at' => $this->currentPleb->statutes_accepted_at ?? $now,
-        ]);
+        app(MembershipService::class)->apply($this->currentPleb);
 
         $this->reset('check');
     }

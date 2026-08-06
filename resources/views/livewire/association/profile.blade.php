@@ -4,23 +4,19 @@ use App\Livewire\Forms\ApplicationForm;
 use App\Livewire\Forms\ProfileForm;
 use App\Models\EinundzwanzigPleb;
 use App\Models\PaymentEvent;
+use App\Services\BtcPayClient;
+use App\Services\MembershipService;
 use App\Support\NostrAuth;
 use App\Traits\NostrFetcherTrait;
 use Carbon\Carbon;
 use Flux\Flux;
-use Illuminate\Database\UniqueConstraintViolationException;
-use Illuminate\Support\Collection;
-use Illuminate\Support\Str;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
-use swentel\nostr\Event\Event as NostrEvent;
 use swentel\nostr\Filter\Filter;
-use swentel\nostr\Message\EventMessage;
 use swentel\nostr\Message\RequestMessage;
 use swentel\nostr\Relay\Relay;
 use swentel\nostr\Relay\RelaySet;
 use swentel\nostr\Request\Request;
-use swentel\nostr\Sign\Sign;
 use swentel\nostr\Subscription\Subscription;
 
 new class extends Component {
@@ -79,7 +75,7 @@ new class extends Component {
     public ?string $invoiceExpiresIn = null;
 
     #[Locked]
-    public int $amountToPay = 21000;
+    public int $amountToPay = 0;
 
     #[Locked]
     public bool $currentYearIsPaid = false;
@@ -133,7 +129,7 @@ new class extends Component {
         }
         $this->no = $this->currentPleb->no_email;
         $this->showEmail = !$this->no;
-        $this->amountToPay = config('app.env') === 'production' ? 21000 : 1;
+        $this->amountToPay = $this->membership()->fee();
         $this->resolveCurrentPaymentEvent();
         $this->loadEvents();
         $this->listenForPayment();
@@ -200,7 +196,7 @@ new class extends Component {
             }
         }
 
-        $this->amountToPay = config('app.env') === 'production' ? 21000 : 1;
+        $this->amountToPay = $this->membership()->fee();
         $this->resolveCurrentPaymentEvent();
         $this->loadEvents();
         $this->listenForPayment();
@@ -246,46 +242,22 @@ new class extends Component {
 
         $paymentEvent = $this->resolveCurrentPaymentEvent();
         $this->resetInvoiceMeta();
-        $paymentEvent = $this->syncPaymentEventStatus($paymentEvent);
+        $this->syncPaymentEventStatus($paymentEvent);
 
-        if ($paymentEvent->btc_pay_invoice) {
-            return redirect()->away('https://pay.einundzwanzig.space/i/'.$paymentEvent->btc_pay_invoice);
-        }
         try {
-            $response = \Illuminate\Support\Facades\Http::withHeaders([
-                'Authorization' => 'token '.config('services.btc_pay.api_key'),
-            ])->post(
-                'https://pay.einundzwanzig.space/api/v1/stores/98PF86BoMd3C8P1nHHyFdoeznCwtcm5yehcAgoCYDQ2a/invoices',
-                [
-                    'amount' => $this->amountToPay,
-                    'metadata' => [
-                        'orderId' => $comment,
-                        'orderUrl' => url()->route('association.profile'),
-                        'itemDesc' => 'Mitgliedsbeitrag '.date('Y').' von nostr:'.$this->currentPleb->npub,
-                        'posData' => [
-                            'event' => $paymentEvent->event_id,
-                            'pubkey' => $this->currentPleb->pubkey,
-                            'npub' => $this->currentPleb->npub,
-                        ],
-                    ],
-                    'checkout' => [
-                        'expirationMinutes' => 60 * 24,
-                        'redirectURL' => url()->route('association.profile'),
-                        'redirectAutomatically' => true,
-                        'defaultLanguage' => 'de',
-                    ],
-                ],
-            )->throw();
+            $result = $this->membership()->createInvoice(
+                $this->currentPleb,
+                (int) date('Y'),
+                (string) $comment,
+            );
 
-            $invoice = $response->json();
-            $paymentEvent->btc_pay_invoice = $invoice['id'];
-            $paymentEvent->save();
+            if ($result['created']) {
+                $this->applyInvoiceMeta($result['invoice']);
+                $this->invoiceStatusVariant = 'info';
+                $this->invoiceStatusMessage = 'Rechnung erstellt. Bitte bezahle sie vor Ablauf.';
+            }
 
-            $this->applyInvoiceMeta($invoice);
-            $this->invoiceStatusVariant = 'info';
-            $this->invoiceStatusMessage = 'Rechnung erstellt. Bitte bezahle sie vor Ablauf.';
-
-            return redirect()->away($invoice['checkoutLink']);
+            return redirect()->away($result['checkout_url']);
         } catch (\Throwable $e) {
             Flux::toast(
                 'Fehler beim Erstellen der Rechnung. Bitte versuche es später erneut: '.$e->getMessage(),
@@ -317,27 +289,7 @@ new class extends Component {
 
     protected function resolveCurrentPaymentEvent(): PaymentEvent
     {
-        $paymentEvents = $this->currentPleb
-            ->paymentEvents()
-            ->where('year', date('Y'))
-            ->orderByDesc('id')
-            ->get();
-
-        if ($paymentEvents->count() > 1) {
-            $this->pruneDuplicatePaymentEvents($paymentEvents);
-
-            $paymentEvents = $this->currentPleb
-                ->paymentEvents()
-                ->where('year', date('Y'))
-                ->orderByDesc('id')
-                ->get();
-        }
-
-        if ($paymentEvents->isEmpty()) {
-            $paymentEvent = $this->createPaymentEvent();
-        } else {
-            $paymentEvent = $paymentEvents->first();
-        }
+        $paymentEvent = $this->membership()->resolvePaymentEvent($this->currentPleb, (int) date('Y'));
 
         $this->currentPleb->setRelation(
             'paymentEvents',
@@ -349,26 +301,6 @@ new class extends Component {
         );
 
         return $paymentEvent;
-    }
-
-    protected function pruneDuplicatePaymentEvents(Collection $paymentEvents): void
-    {
-        $eventToKeep = $paymentEvents
-            ->sortByDesc(fn (PaymentEvent $event) => [
-                (int) $event->paid,
-                $event->updated_at?->timestamp ?? 0,
-            ])
-            ->first();
-
-        $idsToDelete = $paymentEvents
-            ->where('id', '!=', $eventToKeep?->id)
-            ->pluck('id');
-
-        if ($idsToDelete->isNotEmpty()) {
-            PaymentEvent::query()
-                ->whereIn('id', $idsToDelete)
-                ->delete();
-        }
     }
 
     protected function syncPaymentEventStatus(PaymentEvent $paymentEvent): PaymentEvent
@@ -396,16 +328,28 @@ new class extends Component {
             $this->invoiceStatusLabel = $this->statusLabel($status);
 
             if ($this->invoiceIsExpired($status)) {
-                $paymentEvent->delete();
-                $this->currentYearIsPaid = false;
+                $release = $this->membership()->releaseExpiredInvoice($paymentEvent);
+                $paymentEvent = $release['payment_event'];
+                $this->currentYearIsPaid = (bool) $paymentEvent->paid;
 
-                $paymentEvent = $this->createPaymentEvent();
-                $this->loadEvents();
+                if ($release['released']) {
+                    $this->loadEvents();
 
-                $this->invoiceStatusVariant = 'warning';
-                $this->invoiceStatusMessage = 'Die Rechnung ist abgelaufen und wurde entfernt. Starte eine neue Zahlung.';
+                    $this->invoiceStatusVariant = 'warning';
+                    $this->invoiceStatusMessage = 'Die Rechnung ist abgelaufen und wurde entfernt. Starte eine neue Zahlung.';
+                } else {
+                    /*
+                     * A settled fee is never dropped because BTCPay reports the
+                     * invoice as expired or invalid — that would destroy the
+                     * only proof of payment. The record stays, the state is
+                     * reported for manual review instead.
+                     */
+                    $this->invoiceStatusVariant = 'warning';
+                    $this->invoiceStatusMessage = 'Die Rechnung ist abgelaufen oder ungültig, der bezahlte Beitrag bleibt aber erfasst. Bitte melde dich beim Vorstand.';
+                }
             } elseif ($status === 'Settled') {
-                $paymentEvent->update(['paid' => true]);
+                $paymentEvent = $this->membership()->markPaid($paymentEvent);
+                $this->currentPleb->refresh();
                 $this->currentYearIsPaid = true;
                 $this->invoiceStatusVariant = 'success';
                 $this->invoiceStatusMessage = 'Zahlung bestätigt. Danke!';
@@ -435,12 +379,12 @@ new class extends Component {
 
     protected function fetchInvoice(string $invoiceId): array
     {
-        return \Illuminate\Support\Facades\Http::withHeaders([
-            'Authorization' => 'token '.config('services.btc_pay.api_key'),
-        ])
-            ->get(
-                'https://pay.einundzwanzig.space/api/v1/stores/98PF86BoMd3C8P1nHHyFdoeznCwtcm5yehcAgoCYDQ2a/invoices/'.$invoiceId,
-            )->throw()->json();
+        return app(BtcPayClient::class)->getInvoice($invoiceId);
+    }
+
+    protected function membership(): MembershipService
+    {
+        return app(MembershipService::class);
     }
 
     protected function applyInvoiceMeta(array $invoice): void
@@ -524,59 +468,15 @@ new class extends Component {
         }
     }
 
+    /**
+     * Kept as a public entry point because the component has always exposed it;
+     * it now only delegates. The kind-32121 publication is queued by the
+     * service, so an unreachable relay no longer decides whether a fee record
+     * comes into existence.
+     */
     public function createPaymentEvent(): PaymentEvent
     {
-        $existing = $this->currentPleb
-            ->paymentEvents()
-            ->where('year', date('Y'))
-            ->first();
-
-        if ($existing) {
-            return $existing;
-        }
-
-        if (app()->environment('testing')) {
-            try {
-                return $this->currentPleb->paymentEvents()->create([
-                    'year' => date('Y'),
-                    'event_id' => 'test_event_'.Str::uuid(),
-                    'amount' => $this->amountToPay,
-                ]);
-            } catch (UniqueConstraintViolationException) {
-                return $this->currentPleb->paymentEvents()->where('year', date('Y'))->firstOrFail();
-            }
-        }
-
-        $note = new NostrEvent;
-        $note->setKind(32121);
-        $note->setContent(
-            'Dieses Event dient der Zahlung des Mitgliedsbeitrags für das Jahr '.date(
-                'Y',
-            ).'. Bitte bezahle den Betrag von '.number_format($this->amountToPay, 0, ',', '.').' Satoshis.',
-        );
-        $note->setTags([
-            ['d', $this->currentPleb->pubkey.','.date('Y')],
-            ['zap', 'daf83d92768b5d0005373f83e30d4203c0b747c170449e02fea611a0da125ee6', config('services.relay'), '1'],
-        ]);
-        $signer = new Sign;
-        $signer->signEvent($note, config('services.nostr'));
-
-        $eventMessage = new EventMessage($note);
-
-        $relayUrl = config('services.relay');
-        $relay = new Relay($relayUrl);
-        $relay->setMessage($eventMessage);
-        $result = $relay->send();
-
-        try {
-            return $this->currentPleb->paymentEvents()->create([
-                'year' => date('Y'),
-                'event_id' => $result->eventId,
-                'amount' => $this->amountToPay,
-            ]);
-        } catch (UniqueConstraintViolationException) {
-            return $this->currentPleb->paymentEvents()->where('year', date('Y'))->firstOrFail();
-        }
+        return $this->membership()->resolvePaymentEvent($this->currentPleb, (int) date('Y'));
     }
 
     public function loadEvents(): void
@@ -1165,12 +1065,12 @@ new class extends Component {
                                 Mitgliedsbeitrag
                             </h3>
 
-                            @if($currentPleb->paymentEvents->last())
+                            @if($currentPleb->paymentEvents->last()?->event_id)
                                 <flux:callout variant="info" class="mb-6">
                                     <p class="text-sm">
                                         Nostr Event für die Zahlung des Mitgliedsbeitrags:
                                         <span
-                                            class="block mt-2 font-mono text-xs break-all">{{ $currentPleb->paymentEvents->last()->event_id }}</span>
+                                            class="block mt-2 font-mono text-xs break-all">{{ $currentPleb->paymentEvents->last()?->event_id }}</span>
                                     </p>
                                 </flux:callout>
                             @endif
@@ -1284,7 +1184,7 @@ new class extends Component {
                                                 <td class="px-2 first:pl-5 last:pr-5 py-3 whitespace-nowrap">
                                                     @if($payment->btc_pay_invoice)
                                                         <flux:button
-                                                            href="https://pay.einundzwanzig.space/i/{{ $payment->btc_pay_invoice }}/receipt"
+                                                            href="{{ app(\App\Services\BtcPayClient::class)->receiptUrl($payment->btc_pay_invoice) }}"
                                                             target="_blank"
                                                             size="xs"
                                                             variant="subtle">
@@ -1322,7 +1222,7 @@ new class extends Component {
                                                 </div>
                                                 @if($payment->btc_pay_invoice)
                                                     <flux:button
-                                                        href="https://pay.einundzwanzig.space/i/{{ $payment->btc_pay_invoice }}/receipt"
+                                                        href="{{ app(\App\Services\BtcPayClient::class)->receiptUrl($payment->btc_pay_invoice) }}"
                                                         target="_blank"
                                                         variant="subtle"
                                                         class="w-full text-sm">

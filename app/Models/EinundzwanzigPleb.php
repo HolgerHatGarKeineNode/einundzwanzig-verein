@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Enums\AssociationStatus;
 use App\Support\Board;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use ParagonIE\CipherSweet\BlindIndex;
 use ParagonIE\CipherSweet\EncryptedRow;
@@ -60,6 +61,15 @@ class EinundzwanzigPleb extends Authenticatable implements CipherSweetEncrypted
     public function paymentEvents()
     {
         return $this->hasMany(PaymentEvent::class);
+    }
+
+    /**
+     * Audit trail of every membership granted by a paid annual fee — it names
+     * the payment event that caused each promotion.
+     */
+    public function membershipGrants(): HasMany
+    {
+        return $this->hasMany(MembershipGrant::class);
     }
 
     public function isBoardMember(): bool

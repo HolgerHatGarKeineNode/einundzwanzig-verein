@@ -41,6 +41,7 @@ return [
     ],
 
     'btc_pay' => [
+        'base_url' => rtrim((string) env('BTC_PAY_BASE_URL', 'https://pay.einundzwanzig.space'), '/'),
         'api_key' => env('BTC_PAY_API_KEY'),
         'store_id' => env('BTC_PAY_STORE_ID', '98PF86BoMd3C8P1nHHyFdoeznCwtcm5yehcAgoCYDQ2a'),
         'webhook_secret' => env('BTC_PAY_WEBHOOK_SECRET'),
