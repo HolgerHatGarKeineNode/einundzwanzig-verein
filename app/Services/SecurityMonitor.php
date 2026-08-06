@@ -191,18 +191,24 @@ class SecurityMonitor
         return self::SEVERITY_LOW;
     }
 
+    /**
+     * The IP a security attempt is recorded against.
+     *
+     * This used to read `X-Forwarded-For` unconditionally and store its first
+     * entry. That let every caller pick the IP that would end up in
+     * `security_attempts.ip_address` — in a table whose whole purpose is to
+     * name attackers, and which `security:attempts --ip` and `--top-ips`
+     * report on. Worse, it disagreed with the rate limiters, which count
+     * `$request->ip()`: the address we blocked was never the address we
+     * logged.
+     *
+     * `$request->ip()` respects the forwarded headers exactly when a trusted
+     * proxy sent them (see trustProxies() in bootstrap/app.php) and otherwise
+     * reports the peer that actually opened the connection. One source, one
+     * answer, and only trusted parties can influence it.
+     */
     private function getIpAddress(Request $request): string
     {
-        // Handle proxied requests
-        $ip = $request->header('X-Forwarded-For');
-
-        if ($ip) {
-            // Take the first IP if there are multiple
-            $ips = explode(',', $ip);
-
-            return trim($ips[0]);
-        }
-
         return $request->ip() ?? 'unknown';
     }
 

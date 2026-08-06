@@ -1,6 +1,12 @@
 <?php
 
+use App\Http\Middleware\ThrottleApiV1;
+use App\Models\EinundzwanzigPleb;
+use App\Support\ApiIdentity;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+use Mdanter\Ecc\Crypto\Signature\SchnorrSignature;
 use swentel\nostr\Event\Event;
 use swentel\nostr\Key\Key;
 use swentel\nostr\Sign\Sign;
@@ -166,6 +172,197 @@ function makeSignedLoginEvent(string $challenge, ?int $createdAt = null, ?string
         'pubkey' => $pubkey,
         'privkey' => $privkey,
     ];
+}
+
+/**
+ * Build a NIP-98 kind-27235 HTTP-Auth event, signed with a freshly generated
+ * keypair unless `$privkey` is passed.
+ *
+ * Deliberately a SECOND helper rather than a parameter on
+ * makeSignedLoginEvent(): that one builds a kind-22242 login event bound to a
+ * session challenge, the P1 auth tests depend on its exact shape, and the two
+ * events share nothing but the signing call. Widening the login helper would
+ * couple two mechanisms that P3 went out of its way to keep apart.
+ *
+ * The event is returned unencoded so a test can tamper with any single field
+ * before handing it to nip98Header(). A random `nonce` tag keeps two events
+ * for the same URL, method and second from colliding into one id — which the
+ * replay lock would (correctly) reject; real signers face the same problem.
+ *
+ * @return array{event: array<string, mixed>, pubkey: string, privkey: string, header: string}
+ */
+function makeNip98Event(
+    string $url,
+    string $method = 'GET',
+    ?string $body = null,
+    ?int $createdAt = null,
+    ?string $privkey = null,
+    int $kind = 27235,
+): array {
+    $key = new Key;
+    $privkey ??= $key->generatePrivateKey();
+    $pubkey = $key->getPublicKey($privkey);
+
+    $tags = [
+        ['u', $url],
+        ['method', strtoupper($method)],
+        ['nonce', bin2hex(random_bytes(8))],
+    ];
+
+    if ($body !== null && $body !== '') {
+        $tags[] = ['payload', hash('sha256', $body)];
+    }
+
+    $event = new Event;
+    $event->setKind($kind);
+    $event->setCreatedAt($createdAt ?? time());
+    $event->setTags($tags);
+    $event->setContent('');
+
+    (new Sign)->signEvent($event, $privkey);
+
+    $array = $event->toArray();
+
+    $normalized = [
+        'id' => $array['id'],
+        'pubkey' => $array['pubkey'],
+        'created_at' => $array['created_at'],
+        'kind' => $array['kind'],
+        'tags' => $array['tags'],
+        'content' => $array['content'],
+        'sig' => $array['sig'],
+    ];
+
+    return [
+        'event' => $normalized,
+        'pubkey' => $pubkey,
+        'privkey' => $privkey,
+        'header' => nip98Header($normalized),
+    ];
+}
+
+/**
+ * Wrap an event array in the `Authorization: Nostr <base64(JSON)>` form.
+ *
+ * @param  array<string, mixed>  $event
+ */
+function nip98Header(array $event): string
+{
+    return 'Nostr '.base64_encode(json_encode($event, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+}
+
+/**
+ * A NIP-98 event whose pubkey is spelled in UPPERCASE hex and which is
+ * nevertheless cryptographically valid end to end.
+ *
+ * Built by hand rather than through swentel's Event, because that class
+ * derives the pubkey from the private key and always emits it lowercase. The
+ * id is computed over the serialised payload exactly as NIP-01 prescribes —
+ * including the uppercase pubkey string — and then signed, so `Event::verify()`
+ * accepts it: the id matches its own payload and the Schnorr verifier does not
+ * care about hex case.
+ *
+ * That is precisely why case has to be rejected explicitly: one private key
+ * would otherwise yield arbitrarily many valid identities, each with its own
+ * rate-limiter bucket.
+ *
+ * @return array{event: array<string, mixed>, pubkey: string, privkey: string, header: string}
+ */
+function makeUppercasePubkeyNip98Event(string $url, ?string $privkey = null, string $method = 'GET'): array
+{
+    $key = new Key;
+    $privkey ??= $key->generatePrivateKey();
+    $pubkey = strtoupper($key->getPublicKey($privkey));
+
+    $tags = [
+        ['u', $url],
+        ['method', strtoupper($method)],
+        ['nonce', bin2hex(random_bytes(8))],
+    ];
+    $createdAt = time();
+
+    $serialized = json_encode(
+        [0, $pubkey, $createdAt, 27235, $tags, ''],
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+    );
+    $id = hash('sha256', $serialized);
+
+    $event = [
+        'id' => $id,
+        'pubkey' => $pubkey,
+        'created_at' => $createdAt,
+        'kind' => 27235,
+        'tags' => $tags,
+        'content' => '',
+        'sig' => (new SchnorrSignature)->sign($privkey, $id)['signature'],
+    ];
+
+    return [
+        'event' => $event,
+        'pubkey' => $pubkey,
+        'privkey' => $privkey,
+        'header' => nip98Header($event),
+    ];
+}
+
+/**
+ * Register the placeholder routes the api.v1 middleware group is tested
+ * against.
+ *
+ * P3 builds the auth layer, not the surface — the real /api/v1 endpoints are
+ * P4. Rather than shipping a production endpoint nobody asked for, the tests
+ * register their own. They are attached to BOTH the framework's `api` group
+ * and `api.v1`, which is exactly what a route declared in routes/api.php with
+ * `->middleware('api.v1')` will get: the prepended ThrottleRequests:api from
+ * bootstrap/app.php first, then VerifyApiClient, VerifyNip98 and
+ * ThrottleRequests:api-v1. The chain is therefore the real one, not a
+ * hand-assembled imitation — ApiV1RouteWiringTest asserts as much by proving
+ * both the outer throttle headers and the inner 401 are present.
+ *
+ * The handler writes to the database on purpose: it makes "the client key is
+ * checked BEFORE any data operation" an observable fact rather than a claim
+ * about middleware order.
+ */
+function registerApiV1TestRoutes(): void
+{
+    Route::prefix('api')->middleware(['api', 'api.v1'])->group(function () {
+        Route::match(['get', 'post'], '/v1/_ping', function (Request $request) {
+            $pubkey = ApiIdentity::pubkey($request);
+
+            EinundzwanzigPleb::query()->firstOrCreate(
+                ['pubkey' => $pubkey],
+                ['npub' => (new Key)->convertPublicKeyToBech32($pubkey)]
+            );
+
+            return response()->json([
+                'client' => ApiIdentity::client($request),
+                'pubkey' => $pubkey,
+            ]);
+        })->name('api.v1.test.ping');
+
+        Route::post('/v1/_ping/{pubkey}', fn (Request $request) => response()->json([
+            'pubkey' => ApiIdentity::pubkey($request),
+        ]))->name('api.v1.test.ping-subject');
+
+        Route::post('/v1/_ping-invoice', fn (Request $request) => response()->json([
+            'pubkey' => ApiIdentity::pubkey($request),
+        ]))
+            ->middleware(ThrottleApiV1::class.':api-v1-invoice')
+            ->name('api.v1.test.ping-invoice');
+    });
+}
+
+/**
+ * The absolute URL a NIP-98 event must be signed for.
+ *
+ * Built with url() rather than hardcoded: the test client derives the request
+ * URL from APP_URL too, and APP_URL differs per machine (":8000" locally).
+ * A literal here would make the `u` comparison pass or fail depending on
+ * whose checkout it runs in.
+ */
+function apiV1PingUrl(string $suffix = ''): string
+{
+    return url('/api/v1/_ping'.$suffix);
 }
 
 function something()
