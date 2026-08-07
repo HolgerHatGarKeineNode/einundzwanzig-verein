@@ -1,12 +1,15 @@
 <?php
 
+use App\Exceptions\Nip98Exception;
 use App\Http\Middleware\ThrottleApiV1;
 use App\Http\Middleware\VerifyApiClient;
 use App\Http\Middleware\VerifyNip98;
 use App\Services\SecurityMonitor;
+use App\Support\ApiAuthLog;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Request;
 use Illuminate\Routing\Middleware\ThrottleRequests;
 use Sentry\Laravel\Integration;
 
@@ -124,6 +127,27 @@ return Application::configure(basePath: dirname(__DIR__))
             }
 
             return true;
+        });
+
+        /*
+         * Jede abgewiesene NIP-98-Pruefung hinterlaesst eine Spur.
+         *
+         * Als `renderable` und NICHT als `report`: Nip98Exception erbt von
+         * HttpException, und die steht in Handler::$internalDontReport — ein
+         * report()-Callback wuerde fuer sie nie feuern. Der renderable-Callback
+         * laeuft dagegen genau dann, wenn die Ausnahme zu einer Antwort wird,
+         * also bei jeder abgewiesenen Anfrage.
+         *
+         * Er gibt `null` zurueck und aendert damit die Antwort nicht: Laravel
+         * geht die Callbacks durch, bis einer eine Antwort liefert, und ein
+         * `null` faellt zur Standarddarstellung durch. Die in P3 abgenommene
+         * Auth-Schicht bleibt so unangetastet — protokolliert wird daneben,
+         * nicht darin.
+         */
+        $exceptions->renderable(function (Nip98Exception $e, Request $request): null {
+            ApiAuthLog::nip98Failure($e, $request);
+
+            return null;
         });
 
         Integration::handles($exceptions);

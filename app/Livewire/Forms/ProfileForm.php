@@ -12,7 +12,15 @@ class ProfileForm extends Form
     #[Validate('nullable|email')]
     public ?string $email = '';
 
-    #[Validate('nullable|string|max:255|regex:/^[a-z0-9_-]+$/|unique:einundzwanzig_plebs,nip05_handle')]
+    /**
+     * The handle rules come from the model so that this path, the benefits
+     * screen and the API cannot drift apart — see
+     * `EinundzwanzigPleb::NIP05_HANDLE_RULES`. The literal regex that stood
+     * here was missing `/D` (a trailing newline slipped through the rule and
+     * was only removed by middleware) and allowed the reserved name `_`, with
+     * which one appears as the association itself.
+     */
+    #[Validate('nullable|'.EinundzwanzigPleb::NIP05_HANDLE_RULES.'|unique:einundzwanzig_plebs,nip05_handle')]
     public ?string $nip05Handle = '';
 
     public ?EinundzwanzigPleb $currentPleb;

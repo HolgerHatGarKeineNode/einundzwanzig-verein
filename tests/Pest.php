@@ -6,6 +6,7 @@ use App\Support\ApiIdentity;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Testing\TestResponse;
 use Mdanter\Ecc\Crypto\Signature\SchnorrSignature;
 use swentel\nostr\Event\Event;
 use swentel\nostr\Key\Key;
@@ -363,6 +364,110 @@ function registerApiV1TestRoutes(): void
 function apiV1PingUrl(string $suffix = ''): string
 {
     return url('/api/v1/_ping'.$suffix);
+}
+
+/**
+ * Sign and send a GET to a real /api/v1 route the way a third-party client
+ * would: client key in `X-Api-Key`, a freshly signed kind-27235 event in
+ * `Authorization`.
+ *
+ * `$path` may carry a query string — it has to travel into the `u` tag as well
+ * as into the request, because Nip98::expectedUrl() builds the signed URL from
+ * the origin plus the full request URI. Signing the bare path and requesting
+ * the one with the query would fail on `url_mismatch`, i.e. for a reason no
+ * test here is about.
+ *
+ * `created_at` comes from now() rather than time() so the helper survives
+ * travelTo(): the freshness window is measured against Carbon's clock, and a
+ * real timestamp inside a test that has travelled a year would be refused as
+ * stale before the endpoint was ever reached.
+ *
+ * Sent with get() and an Accept header, NOT with getJson(): getJson() encodes
+ * its (empty) data array and ships a body of "[]". Nip98::carriesInput() then
+ * correctly reports that the request carries something, demands the `payload`
+ * tag over those two bytes, and every case here would fail on
+ * `payload_mismatch` — green or red for a reason that has nothing to do with
+ * what is being tested. A real client's GET has no body either.
+ *
+ * @return array{response: TestResponse, pubkey: string, privkey: string}
+ */
+function apiV1SignedGet(string $path, string $clientKey, ?string $privkey = null): array
+{
+    $signed = makeNip98Event(
+        url($path),
+        'GET',
+        createdAt: now()->timestamp,
+        privkey: $privkey,
+    );
+
+    $response = test()->withHeaders([
+        'X-Api-Key' => $clientKey,
+        'Authorization' => $signed['header'],
+        'Accept' => 'application/json',
+    ])->get($path);
+
+    return [
+        'response' => $response,
+        'pubkey' => $signed['pubkey'],
+        'privkey' => $signed['privkey'],
+    ];
+}
+
+/**
+ * The writing counterpart of apiV1SignedGet(): sign and send a POST or DELETE
+ * to a real /api/v1 route the way a third-party client would.
+ *
+ * The body is encoded ONCE and the `payload` tag is built over exactly those
+ * bytes, because that is what the signature covers — `Nip98::assertPayload()`
+ * hashes the raw body, not the parsed array, and two different byte strings
+ * can parse to the same array. `json()` re-encodes the same array with the
+ * same flags, so what is signed and what is sent are byte-identical.
+ *
+ * `$body === null` means a request with NO body at all, which is what a client
+ * sends to `/invoice`, `/refresh` and `DELETE /me`. It has to go through
+ * post()/delete() rather than postJson()/deleteJson(): those encode their
+ * (empty) data array and ship a body of "[]", whereupon carriesInput() quite
+ * correctly demands a `payload` tag over those two bytes and every such test
+ * fails on `payload_mismatch` instead of on what it was written to prove.
+ *
+ * @param  array<string, mixed>|null  $body
+ * @return array{response: TestResponse, pubkey: string, privkey: string}
+ */
+function apiV1SignedRequest(
+    string $method,
+    string $path,
+    string $clientKey,
+    ?string $privkey = null,
+    ?array $body = null,
+): array {
+    $method = strtoupper($method);
+    $content = $body === null ? null : json_encode($body);
+
+    $signed = makeNip98Event(
+        url($path),
+        $method,
+        $content,
+        createdAt: now()->timestamp,
+        privkey: $privkey,
+    );
+
+    $request = test()->withHeaders([
+        'X-Api-Key' => $clientKey,
+        'Authorization' => $signed['header'],
+        'Accept' => 'application/json',
+    ]);
+
+    $response = match (true) {
+        $body !== null => $request->json($method, $path, $body),
+        $method === 'DELETE' => $request->delete($path),
+        default => $request->post($path),
+    };
+
+    return [
+        'response' => $response,
+        'pubkey' => $signed['pubkey'],
+        'privkey' => $signed['privkey'],
+    ];
 }
 
 function something()

@@ -355,3 +355,38 @@ it('does not show stale settled status when invoice check fails', function () {
         ->assertSet('invoiceStatusMessage', 'Die Rechnung konnte nicht überprüft werden. Bitte versuche es später erneut.')
         ->assertSet('currentYearIsPaid', true);
 });
+
+it('refuses the reserved NIP-05 name on the profile screen', function () {
+    /*
+     * NIP-05 gives the name `_` a special meaning: clients render
+     * `_@einundzwanzig.space` as the bare domain `einundzwanzig.space`, so
+     * whoever holds that handle appears AS THE ASSOCIATION ITSELF. All three
+     * write paths read the same rule from
+     * `EinundzwanzigPleb::NIP05_HANDLE_RULES`; this is that rule arriving here.
+     */
+    $pleb = EinundzwanzigPleb::factory()->active()->create();
+
+    NostrAuth::login($pleb->pubkey);
+
+    Livewire::test('association.profile')
+        ->set('profileForm.nip05Handle', '_')
+        ->call('saveNip05Handle')
+        ->assertHasErrors(['profileForm.nip05Handle']);
+
+    expect($pleb->fresh()->nip05_handle)->toBeNull();
+});
+
+it('still allows an underscore inside a handle on the profile screen', function () {
+    // Only the name consisting of nothing but `_` is reserved — refusing the
+    // character outright would lock existing handles out of every future save.
+    $pleb = EinundzwanzigPleb::factory()->active()->create();
+
+    NostrAuth::login($pleb->pubkey);
+
+    Livewire::test('association.profile')
+        ->set('profileForm.nip05Handle', 'alice_bob')
+        ->call('saveNip05Handle')
+        ->assertHasNoErrors();
+
+    expect($pleb->fresh()->nip05_handle)->toBe('alice_bob');
+});
