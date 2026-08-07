@@ -369,3 +369,64 @@ it('returns only the allowed fields and never personal data', function () {
         // own posData are nobody else's business.
         ->not->toContain('test-store');
 });
+
+it('refuses to create an invoice when the fee is not configured', function (int|string|null $fee) {
+    /*
+     * DoD 7. Measured before the guard existed: an empty `MEMBERSHIP_FEE`
+     * casts to 0 and the payload that went out to BTCPay carried `amount: 0`.
+     * BTCPay settles a zero-amount invoice on sight, and since P2 a settled
+     * fee IS the membership — so a missing environment variable handed out
+     * free memberships.
+     *
+     * Two assertions, and the second is the one that matters: the refusal
+     * happens BEFORE the first request leaves the house. A 503 raised after
+     * the call would still have created the invoice at BTCPay.
+     */
+    config(['einundzwanzig.config.membership_fee' => $fee]);
+
+    invFakeBtcPay(['id' => 'inv-should-not-exist', 'status' => 'New']);
+
+    $privkey = (new Key)->generatePrivateKey();
+    $pleb = invMemberFor($privkey);
+
+    invoiceCall($privkey)['response']->assertStatus(503);
+
+    Http::assertNothingSent();
+
+    // And no zero-amount fee year is left behind on this side either.
+    expect($pleb->paymentEvents()->count())->toBe(0);
+})->with([
+    'empty string' => '',
+    'zero' => 0,
+    'null' => null,
+    'negative' => -1,
+]);
+
+it('still refuses when a fee year already exists, so no zero payload goes out', function () {
+    /*
+     * The discriminating variant. A guard placed only where a payment event is
+     * CREATED passes the test above and lets this one through: the record is
+     * already there, resolvePaymentEvent() never reaches its guard, and
+     * `invoicePayload()` happily asks BTCPay for `amount: 0`.
+     */
+    $privkey = (new Key)->generatePrivateKey();
+    $pleb = invMemberFor($privkey);
+
+    PaymentEvent::factory()->create([
+        'einundzwanzig_pleb_id' => $pleb->id,
+        'year' => (int) now()->year,
+        'amount' => 21000,
+        'paid' => false,
+        'btc_pay_invoice' => null,
+    ]);
+
+    config(['einundzwanzig.config.membership_fee' => 0]);
+
+    invFakeBtcPay(['id' => 'inv-should-not-exist', 'status' => 'New']);
+
+    invoiceCall($privkey)['response']->assertStatus(503);
+
+    Http::assertNothingSent();
+
+    expect($pleb->paymentEvents()->where('year', (int) now()->year)->value('btc_pay_invoice'))->toBeNull();
+});

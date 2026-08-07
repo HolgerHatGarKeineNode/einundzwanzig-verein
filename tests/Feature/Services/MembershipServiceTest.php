@@ -4,6 +4,7 @@ use App\Enums\AssociationStatus;
 use App\Models\EinundzwanzigPleb;
 use App\Models\PaymentEvent;
 use App\Services\MembershipService;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
 function paidEventFor(EinundzwanzigPleb $pleb): PaymentEvent
@@ -136,9 +137,21 @@ it('books a settled payment and grants the membership in one step', function () 
         'btc_pay_invoice' => 'invoice-settled',
     ]);
 
-    app(MembershipService::class)->markPaid($paymentEvent);
+    /*
+     * The invoice is handed in, which is what a caller that has just fetched
+     * it does. Passing nothing would make the service fetch it itself — the
+     * same checks either way; there is no call shape that skips them.
+     */
+    $result = app(MembershipService::class)->markPaid($paymentEvent, [
+        'id' => 'invoice-settled',
+        'status' => 'Settled',
+        'amount' => '21000',
+        'currency' => 'SATS',
+    ]);
 
-    expect((bool) $paymentEvent->fresh()->paid)->toBeTrue()
+    expect($result['settled'])->toBeTrue()
+        ->and($result['review'])->toBeNull()
+        ->and((bool) $paymentEvent->fresh()->paid)->toBeTrue()
         ->and($pleb->fresh()->association_status)->toBe(AssociationStatus::PASSIVE);
 });
 
@@ -211,4 +224,111 @@ it('reports fee and currency from the config in the status', function () {
         ->and($status['paid'])->toBeTrue()
         ->and($status['is_member'])->toBeTrue()
         ->and($status['year'])->toBe((int) date('Y'));
+});
+
+it('refuses an invoice that belongs to a different fee', function () {
+    /*
+     * F5. The amount was checked against a number in an array nobody had
+     * confirmed belonged to this payment event. The docblock promised "there
+     * is no way to call this and skip the check" — which held for the amount
+     * and not for the identity of the thing being checked.
+     */
+    $pleb = EinundzwanzigPleb::factory()->create([
+        'association_status' => AssociationStatus::DEFAULT,
+        'statutes_accepted_at' => now(),
+    ]);
+
+    $paymentEvent = $pleb->paymentEvents()->create([
+        'year' => (int) date('Y'),
+        'amount' => 21000,
+        'paid' => false,
+        'btc_pay_invoice' => 'invoice-ours',
+    ]);
+
+    $result = app(MembershipService::class)->markPaid($paymentEvent, [
+        'id' => 'invoice-somebody-elses',
+        'status' => 'Settled',
+        'amount' => '21000',
+        'currency' => 'SATS',
+    ]);
+
+    expect($result['settled'])->toBeFalse()
+        ->and((bool) $paymentEvent->fresh()->paid)->toBeFalse()
+        ->and($pleb->fresh()->association_status)->toBe(AssociationStatus::DEFAULT);
+});
+
+it('refuses an invoice that is not settled', function () {
+    $pleb = EinundzwanzigPleb::factory()->create([
+        'association_status' => AssociationStatus::DEFAULT,
+        'statutes_accepted_at' => now(),
+    ]);
+
+    $paymentEvent = $pleb->paymentEvents()->create([
+        'year' => (int) date('Y'),
+        'amount' => 21000,
+        'paid' => false,
+        'btc_pay_invoice' => 'invoice-ours',
+    ]);
+
+    $result = app(MembershipService::class)->markPaid($paymentEvent, [
+        'id' => 'invoice-ours',
+        'status' => 'Processing',
+        'amount' => '21000',
+        'currency' => 'SATS',
+    ]);
+
+    expect($result['settled'])->toBeFalse()
+        ->and((bool) $paymentEvent->fresh()->paid)->toBeFalse();
+});
+
+it('will not let a delete drag the Storno away with it', function () {
+    /*
+     * The schema half of the F1 fix. `releaseExpiredInvoice()` now refuses on
+     * a settlement history, and that is the guard with a good error message —
+     * but it only protects the callers that go through it. `cascadeOnDelete`
+     * meant ANY delete of the fee row silently erased the proof of the
+     * reversal, including one written by code that does not exist yet.
+     *
+     * A record that a delete can take with it is not a record, so the database
+     * refuses instead.
+     */
+    $pleb = EinundzwanzigPleb::factory()->create(['statutes_accepted_at' => now()]);
+
+    $paymentEvent = $pleb->paymentEvents()->create([
+        'year' => (int) date('Y'),
+        'amount' => 21000,
+        'paid' => true,
+        'btc_pay_invoice' => 'invoice-reversed',
+    ]);
+
+    app(MembershipService::class)->reversePayment($paymentEvent, 'InvoiceInvalid', 'test');
+
+    expect(fn () => $paymentEvent->delete())->toThrow(QueryException::class);
+
+    expect(PaymentEvent::query()->find($paymentEvent->id))->not->toBeNull()
+        ->and(DB::table('payment_reversals')->where('payment_event_id', $paymentEvent->id)->count())->toBe(1);
+});
+
+it('refuses to release an invoice on a fee that was ever settled', function () {
+    /*
+     * The application-side half, isolated from the endpoint. `paid` is false
+     * here — the Storno set it back — and that used to be the whole test.
+     */
+    $pleb = EinundzwanzigPleb::factory()->create(['statutes_accepted_at' => now()]);
+
+    $paymentEvent = $pleb->paymentEvents()->create([
+        'year' => (int) date('Y'),
+        'amount' => 21000,
+        'paid' => true,
+        'btc_pay_invoice' => 'invoice-reversed',
+    ]);
+
+    app(MembershipService::class)->reversePayment($paymentEvent, 'InvoiceInvalid', 'test');
+
+    expect((bool) $paymentEvent->fresh()->paid)->toBeFalse();
+
+    $result = app(MembershipService::class)->releaseExpiredInvoice($paymentEvent->fresh());
+
+    expect($result['released'])->toBeFalse()
+        ->and(PaymentEvent::query()->find($paymentEvent->id))->not->toBeNull();
 });

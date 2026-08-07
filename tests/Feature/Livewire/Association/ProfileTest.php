@@ -314,6 +314,7 @@ it('handles settled invoice with numeric expiration timestamps', function () {
             'expirationTime' => now()->addHour()->timestamp,
             'createdTime' => now()->subDay()->timestamp,
             'amount' => '21000',
+            'currency' => 'SATS',
             'paidAmount' => '21000',
         ], 200),
     ]);

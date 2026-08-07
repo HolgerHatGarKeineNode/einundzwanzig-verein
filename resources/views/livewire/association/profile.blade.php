@@ -348,11 +348,25 @@ new class extends Component {
                     $this->invoiceStatusMessage = 'Die Rechnung ist abgelaufen oder ungültig, der bezahlte Beitrag bleibt aber erfasst. Bitte melde dich beim Vorstand.';
                 }
             } elseif ($status === 'Settled') {
-                $paymentEvent = $this->membership()->markPaid($paymentEvent);
+                /*
+                 * The invoice fetched above is passed on, so markPaid() checks
+                 * the amount and the currency against what was billed without
+                 * asking BTCPay a second time. It may REFUSE — a mismatch is
+                 * filed for manual review and nothing is booked — which is why
+                 * the outcome is read from the result instead of assumed.
+                 */
+                $result = $this->membership()->markPaid($paymentEvent, $invoice, source: 'volt');
+                $paymentEvent = $result['payment_event'];
                 $this->currentPleb->refresh();
-                $this->currentYearIsPaid = true;
-                $this->invoiceStatusVariant = 'success';
-                $this->invoiceStatusMessage = 'Zahlung bestätigt. Danke!';
+                $this->currentYearIsPaid = (bool) $paymentEvent->fresh()?->paid;
+
+                if ($result['settled']) {
+                    $this->invoiceStatusVariant = 'success';
+                    $this->invoiceStatusMessage = 'Zahlung bestätigt. Danke!';
+                } else {
+                    $this->invoiceStatusVariant = 'warning';
+                    $this->invoiceStatusMessage = 'Die Zahlung weicht vom Mitgliedsbeitrag ab und wird geprüft. Bitte melde dich beim Vorstand.';
+                }
             } elseif ($status === 'Processing') {
                 $this->currentYearIsPaid = $paymentEvent->paid;
                 $this->invoiceStatusVariant = 'info';

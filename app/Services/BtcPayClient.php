@@ -60,10 +60,63 @@ class BtcPayClient
      */
     public function getInvoice(string $invoiceId): array
     {
+        /*
+         * The `?? []` is not cosmetic. A 200 with an empty or non-JSON body
+         * makes json() return null, and the declared array return type turned
+         * that into a TypeError deep inside the payment verification — an
+         * upstream oddity surfacing as an internal error instead of as "this
+         * invoice cannot be verified". An empty array reaches the checks and
+         * is refused there, which is the answer that belongs to it.
+         */
         return $this->request()
             ->get($this->storeEndpoint('/invoices/'.$invoiceId))
             ->throw()
-            ->json();
+            ->json() ?? [];
+    }
+
+    /**
+     * Invoices of the store, newest first.
+     *
+     * The only way to find an invoice that exists at BTCPay and nowhere here:
+     * an orphan is by definition unreachable from this database.
+     *
+     * @param  array<string, mixed>  $query
+     * @return list<array<string, mixed>>
+     */
+    public function listInvoices(array $query = []): array
+    {
+        $invoices = $this->request()
+            ->get($this->storeEndpoint('/invoices'), $query)
+            ->throw()
+            ->json() ?? [];
+
+        return array_values(array_filter($invoices, 'is_array'));
+    }
+
+    /**
+     * Replace an invoice's metadata.
+     *
+     * Used by the reconciliation command to strip the pubkey, the npub and the
+     * naming itemDesc out of invoices belonging to erased members —
+     * `erasePersonalData()` drops this side's pointer but cannot reach into
+     * the payment provider, and the erasure must not fail because BTCPay is
+     * down (see the residual gaps documented there).
+     *
+     * The store-scoped path is used deliberately, matching `getInvoice()`: it
+     * is the form this installation's BTCPay is known to answer. Newer
+     * versions also accept `/api/v1/invoices/{id}` and resolve the store
+     * themselves, but switching a verified call site to an unverified one to
+     * chase a shorter URL would be a change with no upside.
+     *
+     * @param  array<string, mixed>  $metadata
+     * @return array<string, mixed>
+     */
+    public function updateInvoiceMetadata(string $invoiceId, array $metadata): array
+    {
+        return $this->request()
+            ->put($this->storeEndpoint('/invoices/'.$invoiceId), ['metadata' => $metadata])
+            ->throw()
+            ->json() ?? [];
     }
 
     protected function storeEndpoint(string $path): string

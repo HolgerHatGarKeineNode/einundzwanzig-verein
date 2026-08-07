@@ -11,10 +11,19 @@ function fakeBtcPayStatus(string $status): void
 {
     config()->set('services.btc_pay.base_url', 'https://btcpay.test');
 
+    /*
+     * `amount` and `currency` are what BTCPay really answers with, and since
+     * P5 they are also what decides whether a settlement may be booked at all
+     * — an invoice whose amount cannot be read is refused rather than trusted.
+     * Leaving them out would have made every test here quietly measure the
+     * refusal path instead of the case it names.
+     */
     Http::fake([
         'btcpay.test/*' => Http::response([
             'id' => 'invoice-under-test',
             'status' => $status,
+            'amount' => '21000',
+            'currency' => 'SATS',
             'expirationTime' => now()->subMinutes(5)->toIso8601String(),
         ], 200),
     ]);
