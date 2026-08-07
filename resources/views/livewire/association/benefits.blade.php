@@ -83,8 +83,16 @@ new class extends Component
 
     public function saveNip05Handle(): void
     {
+        /*
+         * Regeln aus dem Model, damit dieser Weg, ProfileForm und die API
+         * nicht auseinanderlaufen — Begruendung der einzelnen Teile in
+         * `EinundzwanzigPleb::NIP05_HANDLE_RULES`. Das Literal hier fehlte
+         * `/D` (ein abschliessender Zeilenumbruch kam durch die Regel und
+         * wurde nur von der Middleware entfernt) und liess den reservierten
+         * Namen `_` zu, mit dem man als der Verein selbst auftritt.
+         */
         $this->validate([
-            'nip05Handle' => 'required|string|max:255|regex:/^[a-z0-9_-]+$/|unique:einundzwanzig_plebs,nip05_handle',
+            'nip05Handle' => 'required|'.EinundzwanzigPleb::NIP05_HANDLE_RULES.'|unique:einundzwanzig_plebs,nip05_handle',
         ]);
 
         $nip05Handle = strtolower($this->nip05Handle);

@@ -36,15 +36,12 @@ class FetchEvents extends Command
      */
     public function handle()
     {
-        $plebs = EinundzwanzigPleb::query()
-            ->get();
-
         $subscription = new Subscription;
         $subscriptionId = $subscription->setId();
 
         $filter1 = new Filter;
         $filter1->setKinds([1]); // You can add multiple kind numbers
-        $filter1->setAuthors($plebs->pluck('pubkey')->toArray()); // You can add multiple authors
+        $filter1->setAuthors($this->subjectPubkeys()); // You can add multiple authors
         $filter1->setLimit(25); // Limit to fetch only a maximum of 25 events
         $filters = [$filter1]; // You can add multiple filters.
 
@@ -87,6 +84,35 @@ class FetchEvents extends Command
 
             $this->renderContentToHtml($event);
         }
+    }
+
+    /**
+     * Die Pubkeys, nach denen bei den Relays gefragt wird.
+     *
+     * Eigene Methode, damit genau dieser Wert pruefbar ist, ohne die
+     * Subskription wirklich aufzubauen — `handle()` verbindet sich mit drei
+     * echten Relays, ein Test darf das nicht.
+     *
+     * OHNE GELOESCHTE MITGLIEDER, aus zwei unabhaengig ausreichenden Gruenden:
+     *
+     * 1. Datenschutz — die Anfrage traegt die Pubkeys nach draussen an fremde
+     *    Relays. Ein Tombstone einer Person, die verlangt hat, nicht mehr
+     *    gefuehrt zu werden, gehoert dort nicht hin.
+     * 2. Wohlgeformtheit — NIP-01 verlangt im `authors`-Filter 64-stelliges
+     *    Kleinbuchstaben-Hex. `deleted-6cf4d58ac8f2…` ist keines. Wie ein Relay
+     *    auf einen spezifikationswidrigen Eintrag reagiert, ist UNGEPRUEFT: es
+     *    kann ihn ignorieren oder das ganze REQ ablehnen — und das REQ ist die
+     *    gemeinsame Subskription fuer ALLE Mitglieder, ein abgelehntes traefe
+     *    also jeden.
+     *
+     * @return array<int, string>
+     */
+    protected function subjectPubkeys(): array
+    {
+        return EinundzwanzigPleb::query()
+            ->notErased()
+            ->pluck('pubkey')
+            ->all();
     }
 
     private function getParentEventId($event)

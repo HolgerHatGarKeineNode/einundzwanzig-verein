@@ -3,11 +3,14 @@
 use App\Auth\NostrUser;
 use App\Enums\AssociationStatus;
 use App\Models\EinundzwanzigPleb;
+use App\Models\PaymentEvent;
 use App\Models\Profile;
+use App\Services\MembershipService;
 use App\Support\Board;
 use App\Support\NostrAuth;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Livewire\Livewire;
+use swentel\nostr\Key\Key as NostrKey;
 
 /**
  * Derived from the one board source instead of being spelled out again —
@@ -352,4 +355,109 @@ it('forbids unauthorized members from reading the paginated list', function () {
     Livewire::test('association.members.admin')
         ->call('sort', 'name')
         ->assertForbidden();
+});
+
+/*
+|--------------------------------------------------------------------------
+| Erased members
+|--------------------------------------------------------------------------
+|
+| `DELETE /api/v1/membership/me` anonymises instead of deleting, because the
+| annual fees are a booking the association has to be able to produce. The row
+| therefore survives — and it goes on matching every filter this screen builds
+| on payments, so without an explicit exclusion it stays in the board's
+| overview and in the downloaded member file with its tombstone in place of the
+| npub.
+*/
+
+it('keeps an erased member out of the board overview and the export', function () {
+    EinundzwanzigPleb::factory()->create(['pubkey' => ALLOWED_ADMIN_PUBKEY]);
+
+    $erasedPubkey = (new NostrKey)->getPublicKey((new NostrKey)->generatePrivateKey());
+
+    $erased = EinundzwanzigPleb::factory()->create([
+        'pubkey' => $erasedPubkey,
+        'npub' => (new NostrKey)->convertPublicKeyToBech32($erasedPubkey),
+        'association_status' => AssociationStatus::PASSIVE,
+        'email' => 'erase-me@example.test',
+    ]);
+
+    PaymentEvent::factory()->paid()->create([
+        'einundzwanzig_pleb_id' => $erased->id,
+        'year' => (int) date('Y'),
+        'amount' => 21000,
+    ]);
+
+    $kept = EinundzwanzigPleb::factory()->create([
+        'association_status' => AssociationStatus::PASSIVE,
+        'npub' => 'npub1keptmember',
+    ]);
+
+    PaymentEvent::factory()->paid()->create([
+        'einundzwanzig_pleb_id' => $kept->id,
+        'year' => (int) date('Y'),
+        'amount' => 21000,
+    ]);
+
+    app(MembershipService::class)->erasePersonalData($erased);
+
+    NostrAuth::login(ALLOWED_ADMIN_PUBKEY);
+
+    $component = Livewire::test('association.members.admin');
+
+    $ids = $component->instance()->plebs->pluck('id')->all();
+
+    expect($ids)->not->toContain($erased->id)
+        // The discriminating half: an exclusion that emptied the list would
+        // pass the assertion above and break the screen.
+        ->and($ids)->toContain($kept->id);
+
+    // Same for the paid-only filter, which is the one an erased row keeps
+    // matching by construction — its settled fee is exactly what survives.
+    $paidOnly = Livewire::test('association.members.admin')->set('showPaidOnly', true);
+
+    expect($paidOnly->instance()->plebs->pluck('id')->all())
+        ->not->toContain($erased->id)
+        ->toContain($kept->id);
+
+    // Read the stream itself: no Livewire assertion reaches the body of a
+    // StreamedResponse, and the body is the point here.
+    ob_start();
+    $component->instance()->exportCsv()->sendContent();
+    $content = (string) ob_get_clean();
+
+    expect($content)->not->toContain(EinundzwanzigPleb::TOMBSTONE_PREFIX)
+        ->not->toContain($erased->fresh()->npub)
+        ->and($content)->toContain('npub1keptmember');
+});
+
+it('cannot promote an erased member through acceptPleb', function () {
+    /*
+     * Not a new guard but a consequence worth pinning: the erasure clears
+     * `application_for`, and `acceptPleb()` returns early without it. Since
+     * `confirmAcceptId` is a client-settable property, the filtered list alone
+     * would not stop a request naming the row directly — this is what does.
+     */
+    EinundzwanzigPleb::factory()->create(['pubkey' => ALLOWED_ADMIN_PUBKEY]);
+
+    $erased = EinundzwanzigPleb::factory()->create([
+        'association_status' => AssociationStatus::PASSIVE,
+        'application_for' => AssociationStatus::ACTIVE->value,
+    ]);
+
+    app(MembershipService::class)->erasePersonalData($erased);
+
+    NostrAuth::login(ALLOWED_ADMIN_PUBKEY);
+
+    /*
+     * Through the real path: `confirmAcceptId` is #[Locked] — a client cannot
+     * assign it at all — so a promotion has to go through `accept($rowId)`,
+     * which does take an id from the request.
+     */
+    Livewire::test('association.members.admin')
+        ->call('accept', $erased->id)
+        ->call('acceptPleb')
+        ->assertHasNoErrors();
+
+    expect($erased->fresh()->association_status)->toBe(AssociationStatus::PASSIVE);
 });

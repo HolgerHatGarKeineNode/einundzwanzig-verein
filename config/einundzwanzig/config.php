@@ -19,6 +19,29 @@ return [
     'currency' => (string) env('MEMBERSHIP_CURRENCY', 'SATS'),
 
     /*
+     * Die Statuten, auf die sich ein Antrag bezieht — Adresse UND Fassung.
+     *
+     * Konfigurierbar und nicht einbetoniert, weil sich beides bei der
+     * naechsten Mitgliederversammlung aendert: Die Fassung v1.3 wurde am
+     * 20.10.2024 angenommen, eine v1.4 braucht dann eine neue Datei und eine
+     * neue Nummer. Stuende die URL im Code, waere eine Satzungsaenderung ein
+     * Deploy mit Codeaenderung — und bis dahin verwiese `GET /membership/config`
+     * jeden Antragsteller auf eine Fassung, die nicht mehr gilt.
+     *
+     * `version` ist bewusst ein eigener Wert und nicht aus dem Dateinamen
+     * geraten: ein Client, der die Zustimmung protokolliert, muss festhalten
+     * koennen, WELCHER Fassung zugestimmt wurde.
+     */
+    'statutes' => [
+        'url' => (string) env(
+            'MEMBERSHIP_STATUTES_URL',
+            'https://einundzwanzig.space/files/Statuten_v1.3.pdf'
+        ),
+        'version' => (string) env('MEMBERSHIP_STATUTES_VERSION', '1.3'),
+        'adopted_at' => (string) env('MEMBERSHIP_STATUTES_ADOPTED_AT', '2024-10-20'),
+    ],
+
+    /*
      * Server-zu-Server-Schluessel der /api/v1-Clients, als Abbildung
      * Name -> Key. Format der Env-Variable:
      *

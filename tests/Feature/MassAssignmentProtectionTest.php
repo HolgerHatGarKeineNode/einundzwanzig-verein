@@ -20,6 +20,8 @@ use App\Models\ProjectProposal;
 use App\Models\RenderedEvent;
 use App\Models\Venue;
 use App\Models\Vote;
+use Illuminate\Support\Facades\Http;
+use swentel\nostr\Key\Key as NostrKey;
 
 it('ensures no model uses guarded empty array', function () {
     $models = [
@@ -300,6 +302,178 @@ it('blocks mass assignment of code and language_codes on Country', function () {
     expect($country->name)->toBe('Test')
         ->and($country->code)->toBeNull()
         ->and($country->language_codes)->toBeNull();
+});
+
+/*
+|--------------------------------------------------------------------------
+| The same guarantees, one layer out: through the public /api/v1 endpoints.
+|--------------------------------------------------------------------------
+|
+| The tests above prove the MODEL refuses these fields. These prove the
+| ENDPOINTS never hand them over — a controller that passed `validated()`
+| wholesale into `fill()` would still be stopped by `$fillable`, but a
+| controller that assigned an attribute explicitly would not, and the writing
+| surface is where that mistake gets made.
+*/
+
+const MASS_CLIENT_KEY = 'mass111111111111111111111111111111111111111111111111111mass111';
+
+/**
+ * @return array{privkey: string, pubkey: string, pleb: EinundzwanzigPleb}
+ */
+function massSubject(): array
+{
+    config(['einundzwanzig.config.api_client_keys' => ['einundzwanzig-group' => MASS_CLIENT_KEY]]);
+
+    $privkey = (new NostrKey)->generatePrivateKey();
+    $pubkey = (new NostrKey)->getPublicKey($privkey);
+
+    $pleb = EinundzwanzigPleb::factory()->create([
+        'pubkey' => $pubkey,
+        'npub' => (new NostrKey)->convertPublicKeyToBech32($pubkey),
+        'association_status' => AssociationStatus::DEFAULT,
+        'statutes_accepted_at' => now(),
+    ]);
+
+    return ['privkey' => $privkey, 'pubkey' => $pubkey, 'pleb' => $pleb];
+}
+
+it('ignores paid and association_status sent to POST /api/v1/membership/applications', function () {
+    $subject = massSubject();
+
+    PaymentEvent::factory()->create([
+        'einundzwanzig_pleb_id' => $subject['pleb']->id,
+        'year' => (int) now()->year,
+        'paid' => false,
+    ]);
+
+    $response = apiV1SignedRequest(
+        'POST',
+        '/api/v1/membership/applications',
+        MASS_CLIENT_KEY,
+        $subject['privkey'],
+        [
+            'statutes_accepted' => true,
+            'association_status' => AssociationStatus::HONORARY->value,
+            'application_for' => AssociationStatus::HONORARY->value,
+            'paid' => true,
+        ],
+    )['response'];
+
+    $response->assertOk();
+
+    $pleb = $subject['pleb']->fresh();
+
+    expect($pleb->association_status)->toBe(AssociationStatus::DEFAULT)
+        ->and($pleb->application_for)->toBeNull()
+        ->and((bool) $pleb->paymentEvents()->where('year', (int) now()->year)->value('paid'))->toBeFalse();
+});
+
+it('refuses an application naming a foreign pubkey and writes nothing', function () {
+    $subject = massSubject();
+    $victim = EinundzwanzigPleb::factory()->create([
+        'application_text' => 'the victim’s own prose',
+    ]);
+
+    $response = apiV1SignedRequest(
+        'POST',
+        '/api/v1/membership/applications',
+        MASS_CLIENT_KEY,
+        $subject['privkey'],
+        [
+            'statutes_accepted' => true,
+            'pubkey' => $victim->pubkey,
+            'application_text' => 'written in somebody else’s name',
+        ],
+    )['response'];
+
+    $response->assertForbidden();
+
+    expect($victim->fresh()->application_text)->toBe('the victim’s own prose')
+        ->and($subject['pleb']->fresh()->application_text)->toBeNull()
+        ->and($subject['pleb']->fresh()->applied_at)->toBeNull();
+});
+
+it('refuses an application naming a foreign npub and writes nothing', function () {
+    $subject = massSubject();
+    $strangerPubkey = (new NostrKey)->getPublicKey((new NostrKey)->generatePrivateKey());
+
+    $response = apiV1SignedRequest(
+        'POST',
+        '/api/v1/membership/applications',
+        MASS_CLIENT_KEY,
+        $subject['privkey'],
+        [
+            'statutes_accepted' => true,
+            'npub' => (new NostrKey)->convertPublicKeyToBech32($strangerPubkey),
+        ],
+    )['response'];
+
+    $response->assertForbidden();
+
+    expect($subject['pleb']->fresh()->applied_at)->toBeNull();
+});
+
+it('keeps the signed pubkey and npub on the record an application creates', function () {
+    $privkey = (new NostrKey)->generatePrivateKey();
+    $pubkey = (new NostrKey)->getPublicKey($privkey);
+
+    config(['einundzwanzig.config.api_client_keys' => ['einundzwanzig-group' => MASS_CLIENT_KEY]]);
+
+    /*
+     * The identity of a new record comes from the signature. Sending one's OWN
+     * pubkey passes the claim guard, so this is the case where a controller
+     * could quietly take the identity from the body instead — and where a
+     * differing npub in the same body would end up on the record.
+     */
+    $response = apiV1SignedRequest(
+        'POST',
+        '/api/v1/membership/applications',
+        MASS_CLIENT_KEY,
+        $privkey,
+        [
+            'statutes_accepted' => true,
+            'pubkey' => $pubkey,
+            'npub' => 'npub1thisisnotmyrealnpubatall',
+        ],
+    )['response'];
+
+    // The npub does not start with the signer's, so the claim guard refuses
+    // before anything is written.
+    $response->assertForbidden();
+
+    expect(EinundzwanzigPleb::query()->where('pubkey', $pubkey)->exists())->toBeFalse();
+});
+
+it('ignores paid and association_status sent to the invoice endpoint', function () {
+    $subject = massSubject();
+
+    config([
+        'services.btc_pay.base_url' => 'https://pay.einundzwanzig.space',
+        'services.btc_pay.store_id' => 'test-store',
+    ]);
+
+    Http::fake(['pay.einundzwanzig.space/*' => Http::response([
+        'id' => 'inv-new',
+        'checkoutLink' => 'https://pay.einundzwanzig.space/i/inv-new',
+    ])]);
+
+    $response = apiV1SignedRequest(
+        'POST',
+        '/api/v1/membership/payments/'.now()->year.'/invoice',
+        MASS_CLIENT_KEY,
+        $subject['privkey'],
+        [
+            'paid' => true,
+            'association_status' => AssociationStatus::HONORARY->value,
+        ],
+    )['response'];
+
+    $response->assertOk()->assertJsonPath('data.payment.paid', false);
+
+    expect($subject['pleb']->fresh()->association_status)->toBe(AssociationStatus::DEFAULT)
+        ->and((bool) PaymentEvent::query()->where('einundzwanzig_pleb_id', $subject['pleb']->id)->value('paid'))
+        ->toBeFalse();
 });
 
 it('allows fillable fields on PaymentEvent', function () {

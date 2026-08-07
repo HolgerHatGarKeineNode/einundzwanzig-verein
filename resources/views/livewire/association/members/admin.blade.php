@@ -128,7 +128,15 @@ new class extends Component
      */
     private function plebsQuery(): Builder
     {
+        /*
+         * Geloeschte Mitglieder erscheinen nicht mehr im Vorstands-Screen.
+         * Ihr Beitragssatz bleibt bestehen — sie passten sonst weiter auf
+         * jeden Filter dieser Liste und stuenden mit ihrem Tombstone in
+         * Uebersicht und Export. `notErased()` kapselt seine Bedingung selbst,
+         * kollidiert also nicht mit dem `orWhere`-Suchblock weiter unten.
+         */
         $query = EinundzwanzigPleb::query()
+            ->notErased()
             ->with([
                 'profile',
                 'paymentEvents' => fn ($query) => $query
@@ -311,7 +319,10 @@ new class extends Component
         }
         sort($years);
 
+        // Wie in plebsQuery(): eine geloeschte Person gehoert in keine
+        // Mitgliederdatei, auch nicht in eine heruntergeladene.
         $plebs = EinundzwanzigPleb::query()
+            ->notErased()
             ->with([
                 'profile',
                 'paymentEvents' => fn ($query) => $query->where('paid', true)->where('year', '>=', 2025),

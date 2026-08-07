@@ -32,6 +32,11 @@ use Illuminate\Http\Request;
  *
  * Der Regressionsschutz dazu steht in `tests/Feature/GetPaidMembersTest.php` (Allowlist
  * nach dem Muster `toHaveKeys()->not->toHaveKeys()`).
+ *
+ * DIE AUSGEGEBENE `id` UEBERLEBT EINE LOESCHUNG — sie ist der Primaerschluessel, und
+ * die Anonymisierung behaelt die Zeile ja gerade. Deshalb schliesst die Abfrage unten
+ * geloeschte Saetze aus: ohne das re-identifizierte ein Vorher/Nachher-Vergleich
+ * dieser oeffentlichen Antwort jede Loeschung ueber die unveraenderte `id`.
  */
 class GetPaidMembers extends Controller
 {
@@ -42,6 +47,24 @@ class GetPaidMembers extends Controller
                 $query->where('year', $year)
                     ->where('paid', true);
             })
+            /*
+             * GELOESCHTE MITGLIEDER FALLEN HIER HERAUS (2026-08-07).
+             *
+             * Ihr Beitragssatz bleibt erhalten — das ist der Zweck der
+             * Anonymisierung —, also passten sie weiter auf "hat fuer Jahr X
+             * bezahlt" und standen mit ihrem Tombstone in dieser oeffentlichen
+             * Liste. Zusammen mit der `id`, die diese Antwort ausgibt und die
+             * eine Loeschung ueberlebt, machte das jede Loeschung rueckwirkend
+             * aufloesbar: zwei Abrufe zu verschiedenen Zeitpunkten, und
+             * `{"id":1,"npub":"npub1zemw3w8q…"}` steht neben
+             * `{"id":1,"npub":"deleted-5a224d7f98a1…"}`. Ein unauthentifizierter
+             * GET genuegte.
+             *
+             * Feldliste, Route und Zugang bleiben unveraendert — es faellt
+             * nichts weg ausser Datensaetzen, deren Person der Verein auf ihr
+             * Verlangen hin nicht mehr fuehren darf.
+             */
+            ->notErased()
             ->select('id', 'npub', 'pubkey', 'nip05_handle')
             ->get();
 
