@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Membership;
 
+use App\Exceptions\MembershipUnavailableException;
 use App\Http\Controllers\Api\V1\ApiV1Controller;
 use App\Http\Resources\Api\V1\InvoiceResource;
 use Illuminate\Http\Client\HttpClientException;
@@ -58,6 +59,19 @@ class StoreInvoiceController extends ApiV1Controller
              * the service refuses it rather than storing a phantom reference,
              * and a client must not be told "created" about a checkout that
              * does not exist.
+             */
+            throw new ServiceUnavailableHttpException(message: 'Service Unavailable.');
+        } catch (MembershipUnavailableException) {
+            /*
+             * The annual fee is not usable — in practice an empty
+             * `MEMBERSHIP_FEE`, which casts to 0. Measured before the guard
+             * existed: the payload that went out carried `amount: 0`, BTCPay
+             * settles such an invoice on sight, and a settled fee is what
+             * makes somebody a member. So this is a free membership handed out
+             * by a missing environment variable, and the same 503 fits: the
+             * endpoint cannot serve on the configuration it has, the client
+             * did nothing wrong, and no payload leaves the house. The refusal
+             * happens BEFORE the first BTCPay call, not after it.
              */
             throw new ServiceUnavailableHttpException(message: 'Service Unavailable.');
         }

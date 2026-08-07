@@ -4,10 +4,14 @@ namespace App\Services;
 
 use App\Enums\AssociationStatus;
 use App\Enums\MembershipStatus;
+use App\Enums\PaymentReviewReason;
+use App\Exceptions\MembershipUnavailableException;
 use App\Jobs\PublishPaymentEventToNostr;
 use App\Models\EinundzwanzigPleb;
 use App\Models\MembershipGrant;
 use App\Models\PaymentEvent;
+use App\Models\PaymentReversal;
+use App\Models\PaymentReview;
 use App\Models\Profile;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Client\HttpClientException;
@@ -50,6 +54,18 @@ class MembershipService
      */
     public const INVOICE_ID_PATTERN = '/^[A-Za-z0-9_-]{1,100}$/D';
 
+    /**
+     * Stamped into the posData of every membership invoice, so that a later
+     * pass can tell OUR invoices from anything else living in the same BTCPay
+     * store.
+     *
+     * It lives here, next to the code that writes it, and the reconciliation
+     * command reads it from here — not the other way round. A domain service
+     * that has to import a console command in order to know what it itself
+     * produces has the dependency backwards.
+     */
+    public const INVOICE_SOURCE = 'einundzwanzig-membership';
+
     public function __construct(protected BtcPayClient $btcPay) {}
 
     /**
@@ -63,6 +79,36 @@ class MembershipService
     public function currency(): string
     {
         return (string) config('einundzwanzig.config.currency');
+    }
+
+    /**
+     * Refuse to operate on a fee of zero or less.
+     *
+     * Measured before this guard existed: an unset or empty `MEMBERSHIP_FEE`
+     * casts to 0, and the payload that went to BTCPay carried `amount: 0`.
+     * BTCPay treats a zero-amount invoice as settled immediately — and since
+     * this phase makes the settled fee constitute the membership, that is a
+     * free membership handed out by a missing environment variable. It also
+     * poisons the record permanently: a payment event stored with `amount: 0`
+     * can never be verified against anything afterwards.
+     *
+     * Placed at every point where the fee would be SPENT (a new payment event,
+     * an outgoing invoice) and nowhere else. Reading an existing record must
+     * keep working while somebody fixes the configuration.
+     *
+     * @throws MembershipUnavailableException
+     */
+    protected function assertFeeConfigured(): int
+    {
+        $fee = $this->fee();
+
+        if ($fee <= 0) {
+            throw new MembershipUnavailableException(
+                'The configured membership fee is not usable: '.$fee
+            );
+        }
+
+        return $fee;
     }
 
     /**
@@ -124,7 +170,7 @@ class MembershipService
         try {
             $paymentEvent = $pleb->paymentEvents()->create([
                 'year' => $year,
-                'amount' => $this->fee(),
+                'amount' => $this->assertFeeConfigured(),
             ]);
         } catch (UniqueConstraintViolationException) {
             return $pleb->paymentEvents()->where('year', $year)->firstOrFail();
@@ -147,6 +193,14 @@ class MembershipService
      */
     public function createInvoice(EinundzwanzigPleb $pleb, ?int $year = null, string $orderId = ''): array
     {
+        /*
+         * BEFORE anything is resolved, created or sent. An existing payment
+         * event carrying a sane amount would otherwise sail past the guard in
+         * resolvePaymentEvent() and the payload built further down would still
+         * ask BTCPay for `amount: 0`.
+         */
+        $this->assertFeeConfigured();
+
         $year ??= $this->currentYear();
 
         $paymentEvent = $this->resolvePaymentEvent($pleb, $year);
@@ -273,19 +327,279 @@ class MembershipService
     }
 
     /**
-     * Book an incoming payment and let it constitute the membership.
+     * Book an incoming payment and let it constitute the membership — the one
+     * gate between money and membership.
+     *
+     * EVERY path from a payment to a membership runs through here: the BTCPay
+     * webhook, `POST /payments/{year}/refresh`, the Volt UI's status poll and
+     * the reconciliation command. That is the whole point of putting the
+     * checks in this method rather than in the callers. Two controllers each
+     * carrying their own copy of "is this the right amount?" is not two
+     * safeguards, it is one safeguard and one future gap — the third door
+     * somebody adds later arrives unprotected by default. Here it arrives
+     * protected by default.
+     *
+     * WHAT IS VERIFIED, and against what. Not against the webhook body: a
+     * BTCPay invoice webhook carries NO amount and NO currency at all. Read
+     * off the BTCPay Server source and its own OpenAPI document
+     * (BTCPayServer.Client/Models/WebhookInvoiceEvent.cs and
+     * BTCPayServer/wwwroot/swagger/v1/swagger.template.webhooks.json, master,
+     * fetched 2026-08-07): an InvoiceSettled event has storeId, invoiceId,
+     * metadata, manuallyMarked and overPaid on top of the delivery fields, and
+     * nothing else. The amount has to be fetched from the store — which is the
+     * better source anyway, because it is authenticated and cannot be dictated
+     * by whoever is talking to us.
+     *
+     * The expected amount is what THIS association invoiced
+     * (`payment_events.amount`, written from the fee at the time the record
+     * was created), not today's configured fee. The general assembly fixes the
+     * fee per year (Art. 4); comparing a 2025 fee against the 2026 setting
+     * would manufacture a mismatch out of a perfectly correct payment.
+     *
+     * `$invoice` may be handed in by a caller that has just fetched it anyway,
+     * to save a second round trip. Passing nothing is the SAFE default, not
+     * the lax one: the method then fetches the invoice itself. There is no way
+     * to call this and skip the check.
+     *
+     * A refusal writes a PaymentReview and returns `settled: false`. It does
+     * not throw: money did arrive, and an exception would either lose that
+     * fact or turn it into a retry loop at BTCPay. It does not book either.
+     *
+     * @param  array<string, mixed>|null  $invoice  BTCPay's own representation, if already at hand
+     * @param  array{manually_marked?: bool|null, over_paid?: bool|null}  $settlement  What the store said ABOUT the settlement
+     * @return array{payment_event: PaymentEvent, settled: bool, review: PaymentReview|null}
      */
-    public function markPaid(PaymentEvent $paymentEvent): PaymentEvent
+    public function markPaid(PaymentEvent $paymentEvent, ?array $invoice = null, string $source = 'unknown', ?string $deliveryId = null, array $settlement = []): array
     {
-        DB::transaction(function () use ($paymentEvent): void {
+        $verification = $this->verifyPayment($paymentEvent, $invoice);
+
+        if ($verification['reason'] instanceof PaymentReviewReason) {
+            return [
+                'payment_event' => $paymentEvent,
+                'settled' => false,
+                'review' => $this->flagForReview($paymentEvent, $verification, $source, $deliveryId),
+            ];
+        }
+
+        /*
+         * ONE transaction for both writes. Apart they produce "has paid but is
+         * not a member" whenever the process dies in between — a state nobody
+         * ever goes looking for and nothing ever repairs.
+         */
+        DB::transaction(function () use ($paymentEvent, $settlement): void {
             if (! $paymentEvent->paid) {
                 $paymentEvent->update(['paid' => true]);
             }
 
-            $this->grantMembershipOnPayment($paymentEvent);
+            $this->grantMembershipOnPayment($paymentEvent, $settlement);
         });
 
-        return $paymentEvent;
+        return ['payment_event' => $paymentEvent, 'settled' => true, 'review' => null];
+    }
+
+    /**
+     * Compare what BTCPay says was invoiced against what was billed.
+     *
+     * Currency is checked before the amount on purpose: "1" against "1" is a
+     * match in numbers and a catastrophe in fact if one of them is EUR and the
+     * other SATS, and reporting `amount_mismatch` for it would send whoever
+     * reads the review row looking in the wrong place.
+     *
+     * Amounts are compared as floats. BTCPay serialises the amount as a
+     * decimal STRING ("21000", "21000.0"), so a string comparison would fail
+     * on formatting alone, and the fee is a whole number of satoshis — well
+     * inside the range a double represents exactly. What is NOT accepted is a
+     * non-numeric or absent value: an amount that cannot be read is not an
+     * amount that matches.
+     *
+     * @param  array<string, mixed>|null  $invoice
+     * @return array{reason: PaymentReviewReason|null, expected_amount: int, expected_currency: string, observed_amount: string|null, observed_currency: string|null}
+     */
+    protected function verifyPayment(PaymentEvent $paymentEvent, ?array $invoice): array
+    {
+        $result = [
+            'reason' => null,
+            'expected_amount' => (int) $paymentEvent->amount,
+            'expected_currency' => $this->currency(),
+            'observed_amount' => null,
+            'observed_currency' => null,
+        ];
+
+        $invoiceId = (string) $paymentEvent->btc_pay_invoice;
+
+        if ($invoiceId === '') {
+            $result['reason'] = PaymentReviewReason::MissingInvoiceReference;
+
+            return $result;
+        }
+
+        if ($result['expected_amount'] <= 0) {
+            $result['reason'] = PaymentReviewReason::UnverifiableAmount;
+
+            return $result;
+        }
+
+        $invoice ??= $this->btcPay->getInvoice($invoiceId);
+
+        /*
+         * IS THIS THE RIGHT INVOICE, AND DOES IT SAY WHAT WE THINK IT SAYS?
+         *
+         * Both checks were missing while this method promised there was no way
+         * to call it and skip the verification — true of the amount, and empty
+         * without these two, because an amount is only evidence about the
+         * object it came from. A caller handing in a different invoice, or one
+         * BTCPay does not consider settled, was believed.
+         *
+         * No abuse path exists today: every caller fetches by this row's own
+         * invoice id. That is an argument for the checks being cheap, not for
+         * leaving them out — the next caller is the one nobody has written yet.
+         */
+        $observedId = $invoice['id'] ?? null;
+
+        if (is_string($observedId) && $observedId !== '' && ! hash_equals($invoiceId, $observedId)) {
+            $result['reason'] = PaymentReviewReason::InvoiceMismatch;
+
+            return $result;
+        }
+
+        $observedStatus = $invoice['status'] ?? null;
+
+        if ($observedStatus !== null && $observedStatus !== 'Settled') {
+            $result['reason'] = PaymentReviewReason::NotSettled;
+
+            return $result;
+        }
+
+        $observedAmount = $invoice['amount'] ?? null;
+        $observedCurrency = $invoice['currency'] ?? null;
+
+        $result['observed_amount'] = is_scalar($observedAmount) ? (string) $observedAmount : null;
+        $result['observed_currency'] = is_string($observedCurrency) ? $observedCurrency : null;
+
+        if ($result['observed_amount'] === null
+            || ! is_numeric($result['observed_amount'])
+            || $result['observed_currency'] === null
+            || $result['observed_currency'] === '') {
+            $result['reason'] = PaymentReviewReason::UnverifiableAmount;
+
+            return $result;
+        }
+
+        if (strcasecmp($result['observed_currency'], $result['expected_currency']) !== 0) {
+            $result['reason'] = PaymentReviewReason::CurrencyMismatch;
+
+            return $result;
+        }
+
+        if ((float) $result['observed_amount'] !== (float) $result['expected_amount']) {
+            $result['reason'] = PaymentReviewReason::AmountMismatch;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Put a refused payment in front of a human, findable from the database.
+     *
+     * One open row per (payment event, reason), refreshed rather than
+     * repeated. `POST /payments/{year}/refresh` is client-driven and the Volt
+     * page polls; without this, a single mismatched invoice would grow a new
+     * review row every twenty seconds and bury the queue it exists to fill.
+     *
+     * @param  array{reason: PaymentReviewReason|null, expected_amount: int, expected_currency: string, observed_amount: string|null, observed_currency: string|null}  $verification
+     */
+    protected function flagForReview(PaymentEvent $paymentEvent, array $verification, string $source, ?string $deliveryId): PaymentReview
+    {
+        $review = PaymentReview::query()
+            ->where('payment_event_id', $paymentEvent->getKey())
+            ->where('reason', $verification['reason']?->value)
+            ->whereNull('resolved_at')
+            ->first() ?? new PaymentReview;
+
+        $review->fill([
+            'payment_event_id' => $paymentEvent->getKey(),
+            'einundzwanzig_pleb_id' => $paymentEvent->einundzwanzig_pleb_id,
+            'reason' => $verification['reason']?->value,
+            'source' => $source,
+            'btc_pay_invoice' => $paymentEvent->btc_pay_invoice,
+            'delivery_id' => $deliveryId,
+            'expected_amount' => $verification['expected_amount'],
+            'expected_currency' => $verification['expected_currency'],
+            'observed_amount' => $verification['observed_amount'],
+            'observed_currency' => $verification['observed_currency'],
+        ])->save();
+
+        return $review;
+    }
+
+    /**
+     * Record a settled invoice that no payment event in this database claims.
+     *
+     * Money arrived against a claim the association cannot find. Deliberately
+     * not silent and deliberately not fatal: the reconciliation command can
+     * often work out afterwards who it belonged to, and until then the row is
+     * the only trace there is.
+     */
+    public function flagUnknownInvoice(string $invoiceId, string $source, ?string $deliveryId = null): PaymentReview
+    {
+        $review = PaymentReview::query()
+            ->whereNull('payment_event_id')
+            ->where('btc_pay_invoice', $invoiceId)
+            ->where('reason', PaymentReviewReason::UnknownInvoice->value)
+            ->whereNull('resolved_at')
+            ->first() ?? new PaymentReview;
+
+        $review->fill([
+            'reason' => PaymentReviewReason::UnknownInvoice->value,
+            'source' => $source,
+            'btc_pay_invoice' => $invoiceId,
+            'delivery_id' => $deliveryId,
+            'expected_currency' => $this->currency(),
+        ])->save();
+
+        return $review;
+    }
+
+    /**
+     * Take a booked fee back — the Storno path.
+     *
+     * WHAT MOVES: `paid`, plus a PaymentReversal that keeps the original entry
+     * on the record. WHAT DOES NOT MOVE: the membership category and the
+     * MembershipGrant that named this payment. That is decided, not an
+     * oversight (plan, "Beitrittsmodell" point 4): a payment provider does not
+     * get to end memberships, and Art. 4.2 of the statutes rules out any claim
+     * to a refund in the first place. A member who lapses is reported as
+     * `lapsed` through `membershipStatus()`, which reads the payment state —
+     * so the effect of the reversal is visible without demoting anybody.
+     *
+     * Idempotent by construction: an unpaid record has nothing to reverse, so
+     * a redelivered `InvoiceInvalid` writes no second Storno.
+     *
+     * @return array{payment_event: PaymentEvent, reversed: bool, reversal: PaymentReversal|null}
+     */
+    public function reversePayment(PaymentEvent $paymentEvent, string $reason, string $source = 'unknown', ?string $deliveryId = null): array
+    {
+        if (! $paymentEvent->paid) {
+            return ['payment_event' => $paymentEvent, 'reversed' => false, 'reversal' => null];
+        }
+
+        $reversal = DB::transaction(function () use ($paymentEvent, $reason, $source, $deliveryId): PaymentReversal {
+            $paymentEvent->update(['paid' => false]);
+
+            return PaymentReversal::create([
+                'payment_event_id' => $paymentEvent->getKey(),
+                'einundzwanzig_pleb_id' => $paymentEvent->einundzwanzig_pleb_id,
+                'year' => (int) $paymentEvent->year,
+                'amount' => (int) $paymentEvent->amount,
+                'currency' => $this->currency(),
+                'reason' => $reason,
+                'source' => $source,
+                'delivery_id' => $deliveryId,
+                'reversed_at' => now(),
+            ]);
+        });
+
+        return ['payment_event' => $paymentEvent, 'reversed' => true, 'reversal' => $reversal];
     }
 
     /**
@@ -300,7 +614,49 @@ class MembershipService
      */
     public function releaseExpiredInvoice(PaymentEvent $paymentEvent): array
     {
-        if ($paymentEvent->paid) {
+        /*
+         * `hasSettlementHistory()` and NOT `paid`. Measured: a Storno sets
+         * `paid` back to false, so a second refresh of the same invalid
+         * invoice found an "unpaid" row with a dead checkout, deleted it, and
+         * dragged the reversal and the grant along through their cascades. The
+         * member kept their category and lost every document explaining it.
+         *
+         * The flag describes the present; the question here is about the past.
+         */
+        if ($paymentEvent->hasSettlementHistory()) {
+            return ['payment_event' => $paymentEvent, 'released' => false];
+        }
+
+        /*
+         * ONLY THE CURRENT FEE YEAR MAY BE RELEASED, and this guard sits HERE
+         * rather than at a caller because that is the whole thesis of this
+         * phase — and I got it wrong the first time.
+         *
+         * The rule was originally written into the reconciliation command, one
+         * of three callers. The other two were unprotected: a member calling
+         * `POST /api/v1/membership/payments/2023/refresh` for themselves, and
+         * the Volt profile page's own status poll. Measured on the endpoint —
+         * BTCPay answers `Expired`, the row has genuinely never been paid so
+         * the guard above lets it through, and it is deleted and re-created:
+         *
+         *   before: amount=15000  event_id='nostr-abc'
+         *   after : amount=21000  event_id=NULL
+         *
+         * `payment_events.amount` is the exact reference `verifyPayment()`
+         * measures incoming money against, and the reason it uses the STORED
+         * amount rather than the configured one is that the general assembly
+         * sets the fee per year (Art. 4). Rewriting a 2023 fee to the 2026
+         * figure destroys that reference, and the re-created row queues a
+         * fresh kind-32121 publication for a years-old fee on the way out.
+         *
+         * Nothing is lost by refusing: releasing a year frees it up for a NEW
+         * checkout, and there is no new checkout to start for a year that is
+         * over — invoice creation only ever serves the current year, and
+         * `grantMembershipOnPayment()` refuses any other year anyway. Reading
+         * the status of an old invoice keeps working; only the destructive
+         * half is off the table.
+         */
+        if ((int) $paymentEvent->year !== $this->currentYear()) {
             return ['payment_event' => $paymentEvent, 'released' => false];
         }
 
@@ -349,6 +705,25 @@ class MembershipService
         $status = $invoice['status'] ?? null;
         $status = is_string($status) ? $status : null;
 
+        /*
+         * A BOOKED fee reported as invalid is a Storno, and it is checked
+         * before the dead-invoice branch because that branch would swallow it:
+         * `Invalid` is one of the two dead statuses, and releaseExpiredInvoice()
+         * declines on a paid record and returns — leaving `paid` standing on a
+         * fee BTCPay has just disowned. Freeing the year is the right answer
+         * for an UNPAID checkout; taking the booking back with a record is the
+         * right answer for a paid one. Same status, two different facts.
+         */
+        if ($status === 'Invalid' && $paymentEvent->paid) {
+            $reversal = $this->reversePayment($paymentEvent, 'InvoiceInvalid', source: 'refresh');
+
+            return [
+                'payment_event' => $reversal['payment_event']->refresh(),
+                'status' => $status,
+                'released' => false,
+            ];
+        }
+
         if (in_array($status, self::DEAD_INVOICE_STATUSES, true)) {
             $release = $this->releaseExpiredInvoice($paymentEvent);
 
@@ -360,7 +735,13 @@ class MembershipService
         }
 
         if ($status === 'Settled') {
-            $paymentEvent = $this->markPaid($paymentEvent);
+            /*
+             * The invoice just fetched is handed straight to markPaid(): it is
+             * BTCPay's own answer, carrying the amount and currency, so the
+             * verification runs on it without a second round trip. Passing
+             * nothing would be equally safe and merely slower.
+             */
+            $paymentEvent = $this->markPaid($paymentEvent, $invoice, source: 'refresh')['payment_event'];
         }
 
         return ['payment_event' => $paymentEvent->refresh(), 'status' => $status, 'released' => false];
@@ -422,15 +803,18 @@ class MembershipService
      *    anyone who already knows the pubkey. That is a property of publishing
      *    to Nostr at all, not of this erasure.
      *  - The BTCPay invoice metadata (`posData.pubkey`, `posData.npub`,
-     *    itemDesc). BTCPay is the association's own system, so this IS within
-     *    reach in principle — it is a known, deliberately documented residual
-     *    gap, not an oversight. Depersonalising it means an outbound call to a
-     *    store whose behaviour on metadata updates is unverified from this
-     *    repository, and an erasure must not fail or silently half-succeed
-     *    because a payment provider is unreachable. The reconciliation path in
-     *    P5 is where that belongs, as a retryable job. Until then the exposure
-     *    requires access to the BTCPay backend itself: with `btc_pay_invoice`
-     *    dropped, nothing in this database leads there any more.
+     *    itemDesc). CLOSED IN P5, but NOT here and not synchronously:
+     *    `membership:reconcile-btcpay`
+     *    (App\Console\Commands\ReconcileBtcPayInvoices) lists the store's
+     *    invoices and strips every one whose pubkey no longer belongs to a
+     *    living member record. It has to work that way round because THIS
+     *    method destroys the only route from here to there — `btc_pay_invoice`
+     *    is cleared below — so the reconciliation comes in from the BTCPay
+     *    side. Deliberately not done inline: an outbound call to a payment
+     *    provider must never be able to make an erasure fail or half-succeed,
+     *    and a failed scrub there is a logged line plus a return trip on the
+     *    next run. Between the erasure and the next run the exposure requires
+     *    access to the BTCPay backend itself.
      *  - The PRIMARY KEY survives, and it is the same one the public
      *    `GET /api/members/{year}` publishes. Filtering erased rows out of that
      *    list (`scopeNotErased`) takes the tombstone out of the PRESENT — it
@@ -527,17 +911,34 @@ class MembershipService
      *
      * Conditions, each individually checkable and in this order:
      *  1. the payment is settled,
-     *  2. the consent to the statutes is on record — no consent, no membership,
-     *  3. only DEFAULT(1) → PASSIVE(2); ACTIVE(3) and HONORARY(4) are never
+     *  2. it is settled for the CURRENT fee year,
+     *  3. the consent to the statutes is on record — no consent, no membership,
+     *  4. only DEFAULT(1) → PASSIVE(2); ACTIVE(3) and HONORARY(4) are never
      *     touched, otherwise paying the fee would demote an active member,
-     *  4. idempotent — a second call changes nothing.
+     *  5. idempotent — a second call changes nothing.
+     *
+     * Condition 2 belongs HERE and not in the invoice endpoint, where the year
+     * limit used to live alone. Measured before it moved: a settled payment
+     * event for the year 1970 over 1 satoshi raised a record to PASSIVE and
+     * wrote a grant dated 1970. `POST /payments/{year}/refresh` accepts any
+     * year on purpose — an unsettled invoice from a previous year is still
+     * worth resolving — and it runs through this very method, so the guard on
+     * the other endpoint protected nothing. A membership is the right to take
+     * part in THIS year's association; a fee for a year long past does not
+     * confer it.
      *
      * Every promotion leaves a MembershipGrant row naming the payment event
      * that caused it.
+     *
+     * @param  array{manually_marked?: bool|null, over_paid?: bool|null}  $settlement
      */
-    public function grantMembershipOnPayment(PaymentEvent $paymentEvent): void
+    public function grantMembershipOnPayment(PaymentEvent $paymentEvent, array $settlement = []): void
     {
         if (! $paymentEvent->paid) {
+            return;
+        }
+
+        if ((int) $paymentEvent->year !== $this->currentYear()) {
             return;
         }
 
@@ -551,7 +952,7 @@ class MembershipService
             return;
         }
 
-        DB::transaction(function () use ($pleb, $paymentEvent): void {
+        DB::transaction(function () use ($pleb, $paymentEvent, $settlement): void {
             $locked = EinundzwanzigPleb::query()
                 ->whereKey($pleb->getKey())
                 ->lockForUpdate()
@@ -570,6 +971,16 @@ class MembershipService
                 'from_status' => AssociationStatus::DEFAULT,
                 'to_status' => AssociationStatus::PASSIVE,
                 'year' => (int) $paymentEvent->year,
+                /*
+                 * Whether a person clicked "mark settled" in the BTCPay
+                 * backend rather than a payment being observed. Null where the
+                 * caller could not know — a refresh reads the invoice, which
+                 * does not carry the flag. The grant is the answer to "why is
+                 * this person a member", and that answer is materially
+                 * different when no money was ever seen.
+                 */
+                'manually_marked' => $settlement['manually_marked'] ?? null,
+                'over_paid' => $settlement['over_paid'] ?? null,
                 'granted_at' => now(),
             ]);
         });
@@ -586,8 +997,9 @@ class MembershipService
     }
 
     /**
-     * Legacy rows from before the unique index on (pleb, year). A paid record
-     * is kept and never deleted, even as a duplicate.
+     * Legacy rows from before the unique index on (pleb, year). A record that
+     * money was ever booked against is kept and never deleted, even as a
+     * duplicate.
      *
      * @param  Collection<int, PaymentEvent>  $paymentEvents
      */
@@ -600,8 +1012,14 @@ class MembershipService
             ])
             ->first();
 
+        /*
+         * Same correction as in releaseExpiredInvoice(), for the same reason:
+         * a reversed fee reads as unpaid, and pruning it would destroy the
+         * Storno and the grant that hang off it. Nothing with a settlement
+         * history is a duplicate worth removing.
+         */
         $idsToDelete = $paymentEvents
-            ->reject(fn (PaymentEvent $event) => $event->getKey() === $eventToKeep?->getKey() || $event->paid)
+            ->reject(fn (PaymentEvent $event) => $event->getKey() === $eventToKeep?->getKey() || $event->hasSettlementHistory())
             ->map(fn (PaymentEvent $event) => $event->getKey());
 
         if ($idsToDelete->isNotEmpty()) {
@@ -635,6 +1053,30 @@ class MembershipService
                     'event' => $paymentEvent->event_id,
                     'pubkey' => $pleb->pubkey,
                     'npub' => $pleb->npub,
+                    /*
+                     * For the reconciliation command. An invoice that never
+                     * made it into this database has to say which fee year it
+                     * belongs to on its own, and the only alternative was
+                     * reading the year back out of the German sentence in
+                     * `itemDesc`. Carries no personal reference, so unlike the
+                     * two lines above it survives a depersonalisation.
+                     */
+                    'year' => (int) $paymentEvent->year,
+                    /*
+                     * WHOSE INVOICE THIS IS. A BTCPay store can serve more
+                     * than one integration, and the reconciliation command
+                     * rewrites metadata — so it needs a marker that only this
+                     * method produces. Deducing ownership from the shape of
+                     * posData was tried and measurably wrong: a foreign
+                     * invoice carrying any 64-hex value was treated as ours
+                     * and had its booking data destroyed.
+                     *
+                     * Names a system, not a person, so it survives a
+                     * depersonalisation — which is exactly what a later run
+                     * needs in order to recognise an already-scrubbed invoice
+                     * as still ours.
+                     */
+                    'source' => self::INVOICE_SOURCE,
                 ],
             ],
             'checkout' => [

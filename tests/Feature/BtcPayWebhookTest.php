@@ -1,11 +1,39 @@
 <?php
 
 use App\Models\PaymentEvent;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\TestResponse;
 
 beforeEach(function () {
     config()->set('services.btc_pay.webhook_secret', 'test-secret');
     config()->set('services.btc_pay.store_id', 'store-123');
+    config()->set('services.btc_pay.base_url', 'https://pay.einundzwanzig.space');
+
+    /*
+     * THE ONLY CHANGE TO THIS FILE'S SETUP IN P5, and it is forced by what a
+     * BTCPay webhook actually contains: nothing about the amount.
+     *
+     * Verified against the BTCPay Server sources (master, fetched 2026-08-07):
+     * `BTCPayServer.Client/Models/WebhookInvoiceEvent.cs` and the project's own
+     * `swagger.template.webhooks.json` give an InvoiceSettled event exactly
+     * storeId, invoiceId, metadata, manuallyMarked and overPaid on top of the
+     * delivery fields — no amount, no currency. So the controller has to ask
+     * the store, and every delivery that books something now performs one
+     * authenticated GET.
+     *
+     * The six cases below are otherwise untouched, character for character.
+     * They were written against a controller that booked without asking
+     * anybody, and they still pass against one that asks — which is the point
+     * of leaving them alone.
+     */
+    Http::fake([
+        'pay.einundzwanzig.space/*' => Http::response([
+            'id' => 'inv-abc',
+            'status' => 'Settled',
+            'amount' => '21000',
+            'currency' => 'SATS',
+        ]),
+    ]);
 });
 
 function btcPayPost(array $payload, ?string $secret = 'test-secret'): TestResponse

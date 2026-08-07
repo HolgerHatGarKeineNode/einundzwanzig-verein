@@ -19,6 +19,8 @@ class MembershipGrant extends Model
         'from_status',
         'to_status',
         'year',
+        'manually_marked',
+        'over_paid',
         'granted_at',
     ];
 
@@ -30,6 +32,8 @@ class MembershipGrant extends Model
         return [
             'from_status' => AssociationStatus::class,
             'to_status' => AssociationStatus::class,
+            'manually_marked' => 'boolean',
+            'over_paid' => 'boolean',
             'granted_at' => 'datetime',
         ];
     }
