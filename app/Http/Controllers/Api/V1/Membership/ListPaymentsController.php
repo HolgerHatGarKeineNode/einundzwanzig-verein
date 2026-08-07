@@ -23,6 +23,20 @@ use Illuminate\Support\Collection;
  */
 class ListPaymentsController extends ApiV1Controller
 {
+    /**
+     * List the annual fees of the signing end user.
+     *
+     * Newest fee year first. The list is bound to the record the signature
+     * names, so it can never hold a second person's fees — no endpoint on this
+     * API returns data about another member.
+     *
+     * A pubkey with no record, and a member who has never been billed, both
+     * get an empty list rather than a refusal.
+     *
+     * `receipt_url` is present only once a fee is settled; an unsettled
+     * invoice has no receipt. To pay an open year, call
+     * `POST /api/v1/membership/payments/{year}/invoice`.
+     */
     public function __invoke(Request $request): AnonymousResourceCollection
     {
         $pleb = $this->subject($request);

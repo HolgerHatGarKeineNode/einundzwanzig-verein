@@ -40,6 +40,9 @@ export default defineConfig({
             input: [
                 'resources/css/app.css',
                 'resources/js/app.js',
+                // Die API-Referenz unter /docs/v1/api. Eigener Einstieg statt
+                // eines Imports in app.js — Begruendung in der Datei selbst.
+                'resources/js/scalar.js',
             ],
             refresh: true,
         }),

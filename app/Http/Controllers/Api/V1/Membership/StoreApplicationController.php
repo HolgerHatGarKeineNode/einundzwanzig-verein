@@ -47,6 +47,30 @@ class StoreApplicationController extends ApiV1Controller
      */
     private const CONTACT_FIELDS = ['application_text', 'email', 'no_email', 'nip05_handle'];
 
+    /**
+     * Apply for membership.
+     *
+     * Records the application and the consent to the statutes. IT CHANGES NO
+     * STATUS: the statutes are explicit that the membership begins with the
+     * payment of the annual fee (Art. 4), so the next step after a successful
+     * application is `POST /api/v1/membership/payments/{year}/invoice`.
+     *
+     * 201 when the consent is recorded for the first time, 200 on a repeat.
+     * The distinction is the consent, not the record: a long-standing member
+     * from before this field existed applies for the first time too. A repeat
+     * application leaves `statutes_accepted_at` untouched — it is the joining
+     * document and must not be backdated or refreshed — and updates only the
+     * contact fields actually sent.
+     *
+     * An absent field is left alone; an explicit `null` clears the stored
+     * value. The difference matters because the body is signed as a whole:
+     * were absence treated as "clear it", dropping a field from the payload
+     * would wipe data the user never touched.
+     *
+     * `association_status`, `paid`, `pubkey` and `npub` cannot be written
+     * through this endpoint. The subject is the signing pubkey and the
+     * membership category is raised by a settled fee and by nothing else.
+     */
     public function __invoke(StoreApplicationRequest $request): JsonResponse
     {
         $pubkey = $this->subjectPubkey($request);

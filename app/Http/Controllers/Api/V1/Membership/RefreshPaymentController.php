@@ -35,6 +35,30 @@ use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
  */
 class RefreshPaymentController extends ApiV1Controller
 {
+    /**
+     * Re-read an invoice from BTCPay and book whatever it says.
+     *
+     * The membership is granted by a BTCPay webhook, and a webhook arrives
+     * from outside: if a delivery is lost, somebody has paid and is not a
+     * member. This endpoint is the client-driven repair for that. It runs
+     * through the very same booking path the webhook uses, so a settled
+     * invoice found here grants the membership just as the webhook would have.
+     *
+     * Creates nothing — `created` is always false — and therefore accepts ANY
+     * year, unlike invoice creation: an unresolved invoice from a previous
+     * year is still worth settling.
+     *
+     * `checkout_url` is null when BTCPay reported the invoice as expired or
+     * invalid. The fee year has been freed up again and the next step is
+     * `POST /api/v1/membership/payments/{year}/invoice`, which starts a fresh
+     * checkout.
+     *
+     * 404 when there is nothing upstream to ask about: no membership record,
+     * no fee recorded for that year, or a fee that never had an invoice. 503
+     * when BTCPay is unreachable — the stored payment state is then left
+     * exactly as it was, because the only safe reading of an unknown payment
+     * is the one already on record.
+     */
     public function __invoke(Request $request, string $year): InvoiceResource
     {
         $pleb = $this->subject($request);

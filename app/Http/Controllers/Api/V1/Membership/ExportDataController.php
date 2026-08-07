@@ -25,6 +25,26 @@ use Illuminate\Http\Request;
  */
 class ExportDataController extends ApiV1Controller
 {
+    /**
+     * Export everything the association stores about the signing end user.
+     *
+     * The data-subject access request (revDSG Art. 25; Art. 15 GDPR where EU
+     * members are concerned). This is the one endpoint that hands out the
+     * e-mail address, the free-form application text and the archived
+     * application text, and it can only ever hand them to the holder of the
+     * private key they belong to.
+     *
+     * Read-only: an access request must not change the record it reports on,
+     * and it never creates one. A pubkey with nothing on file gets 200 with
+     * `member`, `nostr_profile` and the lists empty, because
+     * "nothing is stored about you" is a complete answer.
+     *
+     * SCOPE: the membership record — identity, contact data, application,
+     * annual fees, the membership grants those fees caused, and the cached
+     * public Nostr profile. Data the same person may have produced elsewhere
+     * in the application is outside `/api/v1/membership` and is not claimed
+     * here.
+     */
     public function __invoke(Request $request): MembershipExportResource
     {
         $pubkey = $this->subjectPubkey($request);

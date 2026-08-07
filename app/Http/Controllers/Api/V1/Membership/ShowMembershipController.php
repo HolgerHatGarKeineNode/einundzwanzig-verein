@@ -25,6 +25,22 @@ use Illuminate\Http\Request;
  */
 class ShowMembershipController extends ApiV1Controller
 {
+    /**
+     * Get the membership of the signing end user.
+     *
+     * The subject is the pubkey that signed the NIP-98 credential and cannot
+     * be anything else — there is no parameter for it, and a pubkey sent in
+     * the query or the body is refused. A caller can ask about themselves and
+     * about nobody else.
+     *
+     * The answer is 200 in every state, including for a pubkey with no record
+     * at all. A prospective member has to be able to learn that they are not
+     * a member yet in order to become one.
+     *
+     * READ `membership_status`, NOT `association_status`. The two answer
+     * different questions and they disagree exactly when a fee year goes
+     * unpaid — see the description of `association_status` below.
+     */
     public function __invoke(Request $request): MembershipResource
     {
         $pleb = $this->subject($request);

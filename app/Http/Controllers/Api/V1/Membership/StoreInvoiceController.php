@@ -40,6 +40,33 @@ use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
  */
 class StoreInvoiceController extends ApiV1Controller
 {
+    /**
+     * Start, or hand back, the BTCPay checkout for one annual fee.
+     *
+     * Send the payer to `checkout_url`. `created` is false when an invoice for
+     * that year already existed and the caller is being handed that one rather
+     * than a second one — that is the normal idempotent answer, not an error.
+     *
+     * THE REQUEST BODY IS IGNORED. Amount and currency come from the
+     * association's configuration and the fee year from `{year}`; a body
+     * naming any of them changes nothing.
+     *
+     * `{year}` MUST BE THE CURRENT FEE YEAR, the one
+     * `GET /api/v1/membership/config` reports. The general assembly fixes the
+     * fee per year, so an invoice for a past year would book today's amount
+     * against a year that owed a different one — and since a settled fee for
+     * any year constitutes a membership, an open year would let somebody join
+     * by paying a fee for 1970. Any other year answers 404.
+     *
+     * A pubkey with no membership record answers 404 as well. The way in is
+     * `POST /api/v1/membership/applications`.
+     *
+     * 503 means BTCPay is unreachable or the fee is unusable on the current
+     * configuration. Nothing was charged and nothing was recorded; retry
+     * later. This endpoint carries its own, much tighter quota than the rest
+     * of the API — every call spends a request against the association's own
+     * BTCPay key.
+     */
     public function __invoke(Request $request, string $year): InvoiceResource
     {
         $pleb = $this->subject($request);
