@@ -6,6 +6,40 @@ use App\Support\NostrAuth;
 use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
 
+/*
+ * The association's own nostr.json, which this screen fetches whenever a save
+ * leaves the member with a NIP-05 handle set
+ * (`NostrFetcherTrait::getNip05HandlesForPubkey()`, called from three places in
+ * profile.blade.php).
+ *
+ * It is faked here rather than in the three tests that trigger it, because
+ * nothing about those tests announces the request: it is fired from the
+ * component after `saveNip05Handle()` succeeds, not from anything the test
+ * writes. Any future test that saves a handle would reopen the same hole.
+ *
+ * Until P7 armed `Http::preventStrayRequests()` this call really did leave the
+ * machine on every run of `it can save nip05 handle`, `it can save null nip05
+ * handle` and `it still allows an underscore inside a handle on the profile
+ * screen` (measured across the full suite via the HTTP client's
+ * RequestSending/ResponseReceived events). It stayed invisible because the
+ * fetcher wraps the call in `catch (\Exception) { return []; }` — the same
+ * catch that would swallow the StrayRequestException, so the guard alone would
+ * never have made these tests red either.
+ *
+ * An empty `names` map is the truthful answer, not a convenient one: the
+ * members in these tests are factory rows that exist for milliseconds, so the
+ * published nostr.json cannot list them. The screen's verification therefore
+ * comes out unverified — exactly the outcome the tests already assert against,
+ * now for a stated reason instead of by accident.
+ *
+ * The pattern is the same form the BTCPay fakes in this file use, and it does
+ * not collide with them: `pay.einundzwanzig.space/*` never matches a
+ * `/.well-known/` path, and this one never matches a store endpoint.
+ */
+beforeEach(function () {
+    Http::fake(['einundzwanzig.space/.well-known/*' => Http::response(['names' => []], 200)]);
+});
+
 it('rejects non-string values for the fax field', function () {
     Livewire::test('association.profile')
         ->set('fax', [])
