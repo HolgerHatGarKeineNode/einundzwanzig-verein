@@ -4,7 +4,9 @@ use App\Http\Middleware\ThrottleApiV1;
 use App\Models\EinundzwanzigPleb;
 use App\Support\ApiIdentity;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Factory as HttpClientFactory;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use Mdanter\Ecc\Crypto\Signature\SchnorrSignature;
@@ -91,6 +93,67 @@ pest()->tia()
         'app/Models/**/*.php' => 'tests',
         'app/Auth/**/*.php' => 'tests',
     ]);
+
+/*
+|--------------------------------------------------------------------------
+| Outgoing HTTP
+|--------------------------------------------------------------------------
+|
+| A forgotten Http::fake() does not fail a test — the request simply leaves
+| the machine, and the only symptom is a slow test. That is not a hypothetical
+| here: phpunit.xml blanks NOSTR_RELAY and NOSTR_PROFILE_RELAYS but says
+| nothing about BTC_PAY_BASE_URL, so config/services.php:42 falls back to
+| https://pay.einundzwanzig.space and an unfaked BtcPayClient call in a test
+| run reaches the association's live payment provider.
+| preventStrayRequests() turns that into a StrayRequestException naming the
+| offending URL, i.e. into a red test.
+|
+| A beforeEach, not one call at the top of this file: the flag is instance
+| state on Illuminate\Http\Client\Factory ($preventStrayRequests, handed to
+| every PendingRequest in createPendingRequest()), and that Factory comes from
+| the container which Laravel's TestCase rebuilds for every single test. A
+| top-level call would arm one throwaway instance and nothing after it.
+|
+| Scoped to Feature for the same reason RefreshDatabase is: tests/Unit runs on
+| plain PHPUnit\Framework\TestCase with no application behind it, so the Http
+| facade has no root there — arming it would fail, and nothing can reach the
+| facade anyway.
+|
+| The rebinding() callback closes the one hole the flag has. Three test files
+| call Http::swap(new Factory) to install a fake that WINS over an earlier one
+| (fakes are appended and the first match answers — see hardFakeInvoice() in
+| tests/Feature/BtcPayWebhookHardeningTest.php), and a freshly constructed
+| Factory is unarmed. Facade::swap() routes through Container::instance(),
+| which fires rebound() for an already bound abstract, so re-arming there
+| covers every swap including ones written later — five call sites patched by
+| hand would leave a sixth to slip through unnoticed.
+|
+| Two things it cannot cover on its own. The Nostr relays are the first:
+| swentel\nostr\Relay\Relay opens its own WebSocket and never touches this
+| facade, which is why phpunit.xml blanks the relay URLs instead. The second is
+| a call site that swallows the exception — StrayRequestException is a
+| RuntimeException, so the catch(Throwable) in ReconcileBtcPayInvoices and the
+| catch(\Exception) in NostrFetcherTrait turn a refused request back into the
+| empty result they return for a failed one, and the test stays green. That is
+| not theoretical: three profile tests were fetching the association's
+| nostr.json for real, and the guard alone would not have exposed a single one
+| of them (see the beforeEach in
+| tests/Feature/Livewire/Association/ProfileTest.php). Arming this switch is
+| therefore worth exactly what it says and no more — it stops the request, it
+| does not always report it.
+|
+| tests/Feature/HttpStrayRequestTest.php proves all of this by effect.
+|
+*/
+
+pest()->beforeEach(function (): void {
+    Http::preventStrayRequests();
+
+    app()->rebinding(
+        HttpClientFactory::class,
+        fn ($app, HttpClientFactory $factory) => $factory->preventStrayRequests(),
+    );
+})->in('Feature');
 
 /*
 |--------------------------------------------------------------------------
