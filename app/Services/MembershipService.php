@@ -18,6 +18,8 @@ use Illuminate\Http\Client\HttpClientException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * The single home of the membership domain: application, fee year, invoice,
@@ -415,6 +417,109 @@ class MembershipService
      * @param  array<string, mixed>|null  $invoice
      * @return array{reason: PaymentReviewReason|null, expected_amount: int, expected_currency: string, observed_amount: string|null, observed_currency: string|null}
      */
+    /**
+     * The moment invoices began carrying their own currency — or null when that
+     * moment cannot be established.
+     *
+     * Every unreadable configuration resolves to null, and null means "no
+     * waiver, check strictly". That direction is not a style choice: the value
+     * is a date in an environment file, and the two ways it goes wrong both
+     * point the same way. `Carbon::parse('')` returns NOW rather than throwing,
+     * so an emptied variable would move the cut-off to this instant, make every
+     * existing row older than it, and lift the currency check for every payment
+     * the association will ever receive. And an operator wanting to switch the
+     * waiver OFF will reach for exactly that: emptying the value. The most
+     * natural wrong move must not be the one that opens the gate.
+     */
+    protected function explicitCurrencySince(): ?Carbon
+    {
+        $configured = trim((string) config('einundzwanzig.config.explicit_currency_since'));
+
+        if ($configured === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($configured);
+        } catch (Throwable) {
+            /*
+             * Refusing the waiver, not the request. Throwing here would travel
+             * up through the webhook and answer BTCPay with a 500 — it would
+             * retry, fail again, and eventually give up on a payment that is
+             * perfectly bookable under the strict rule.
+             */
+            return null;
+        }
+    }
+
+    /**
+     * Was this fee paid against an invoice from before invoices carried their
+     * own currency?
+     *
+     * Such an invoice was sent to BTCPay with an amount and nothing else, so it
+     * wears whatever the store happens to default to — a setting that lives
+     * outside this repository and that nobody here has read. The association
+     * decided on 2026-08-07 not to go looking: for an invoice from that era the
+     * currency reported back counts as SATS, and only the amount is verified.
+     *
+     * TWO AGES HAVE TO BE OLD, AND THE SECOND ONE IS THE POINT. The obvious
+     * discriminator — the age of the fee row — is wrong on its own, and
+     * measurably so: `resolvePaymentEvent()` creates that row when a member
+     * first OPENS THEIR PROFILE PAGE, not when an invoice is created. Every
+     * member who looked at their profile before the cut-off and has not paid
+     * carries a pre-cut-off row until the year ends, and the waiver would
+     * follow it onto an invoice created tomorrow — one that sends its currency
+     * explicitly and has no claim to any exception. So BTCPay's own
+     * `createdTime` has to be old as well, and a missing or unreadable one
+     * refuses the waiver rather than granting it.
+     *
+     * The row age stays in the condition because it costs nothing and can only
+     * narrow: an invoice cannot be older than the row it hangs on.
+     *
+     * A row with no `created_at` is NOT treated as legacy. Nothing in this
+     * application can produce one — `created_at` is not fillable on
+     * `PaymentEvent` and no code path forces it — so such a row would come from
+     * a hand-written backfill, and the prices are not symmetric: the strict
+     * answer costs one line in `payment_reviews` that a human clears in a
+     * minute, the lenient one silently disables a check on the money path for
+     * that row forever.
+     *
+     * @param  array<string, mixed>  $invoice  as BTCPay reported it
+     */
+    protected function predatesExplicitCurrency(PaymentEvent $paymentEvent, array $invoice): bool
+    {
+        $cutoff = $this->explicitCurrencySince();
+        $rowCreatedAt = $paymentEvent->created_at;
+
+        if ($cutoff === null || $rowCreatedAt === null || ! $rowCreatedAt->lessThan($cutoff)) {
+            return false;
+        }
+
+        $invoiceCreatedTime = $invoice['createdTime'] ?? null;
+
+        if (! is_numeric($invoiceCreatedTime)) {
+            return false;
+        }
+
+        try {
+            $invoiceCreatedAt = Carbon::createFromTimestamp((int) $invoiceCreatedTime);
+        } catch (Throwable) {
+            /*
+             * `is_numeric()` is not the same guarantee as "a moment in time".
+             * `9e99`, `1e18` and a twenty-digit integer all pass it and all
+             * make `createFromTimestamp()` throw, and the throw would leave
+             * this method, `verifyPayment()` and `markPaid()` for a 500 —
+             * BTCPay would retry eight times and then leave the payment
+             * unbooked forever. Same failure the cut-off parse above is
+             * guarded against, one method further along, so the same answer:
+             * no proof the invoice is old, therefore no waiver.
+             */
+            return false;
+        }
+
+        return $invoiceCreatedAt->lessThan($cutoff);
+    }
+
     protected function verifyPayment(PaymentEvent $paymentEvent, ?array $invoice): array
     {
         $result = [
@@ -485,14 +590,47 @@ class MembershipService
             return $result;
         }
 
-        if (strcasecmp($result['observed_currency'], $result['expected_currency']) !== 0) {
-            $result['reason'] = PaymentReviewReason::CurrencyMismatch;
+        $currencyWaived = false;
 
-            return $result;
+        if (strcasecmp($result['observed_currency'], $result['expected_currency']) !== 0) {
+            if (! $this->predatesExplicitCurrency($paymentEvent, $invoice)) {
+                $result['reason'] = PaymentReviewReason::CurrencyMismatch;
+
+                return $result;
+            }
+
+            $currencyWaived = true;
         }
 
         if ((float) $result['observed_amount'] !== (float) $result['expected_amount']) {
             $result['reason'] = PaymentReviewReason::AmountMismatch;
+
+            return $result;
+        }
+
+        if ($currencyWaived && ! $paymentEvent->paid) {
+            /*
+             * Tolerated, never silent — but logged only where the word is true.
+             *
+             * Two placements were wrong before this one. Above the amount
+             * comparison, the line claimed an acceptance for payments that were
+             * about to be refused for their amount. And without the `paid`
+             * guard it fired on every status poll rather than on the booking:
+             * `markPaid()` verifies unconditionally, the profile page polls
+             * every 20 seconds and `POST /payments/{year}/refresh` allows 30
+             * calls a minute, so a single waived fee could produce tens of
+             * thousands of identical warnings a day — enough to bury every
+             * other warning and to make the count useless for the one question
+             * the entry exists to answer: is this exception still needed?
+             */
+            Log::warning('membership.legacy_currency_accepted', [
+                'payment_event_id' => $paymentEvent->id,
+                'invoice' => $invoiceId,
+                'observed_currency' => $result['observed_currency'],
+                'expected_currency' => $result['expected_currency'],
+                'row_created_at' => $paymentEvent->created_at?->toIso8601String(),
+                'invoice_created_time' => $invoice['createdTime'] ?? null,
+            ]);
         }
 
         return $result;

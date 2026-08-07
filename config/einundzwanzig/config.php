@@ -19,6 +19,37 @@ return [
     'currency' => (string) env('MEMBERSHIP_CURRENCY', 'SATS'),
 
     /*
+     * Ab wann eine Invoice ihre Waehrung selbst mitbringt.
+     *
+     * Jede Invoice, die VOR diesem Zeitpunkt erzeugt wurde, ging ohne
+     * `currency` an BTCPay und traegt daher die Store-Voreinstellung — welche
+     * das ist, steht nirgends in diesem Repo. Beim Einloesen verglich
+     * MembershipService::verifyPayment() sie trotzdem gegen SATS und haette
+     * jede Altzahlung in `payment_reviews` geschoben statt in eine
+     * Mitgliedschaft.
+     *
+     * Entscheidung des Vorstands vom 2026-08-07: fuer solche Altsaetze zaehlt
+     * SATS, ohne Ruecksicht auf die Store-Einstellung. Die Begruendung ist
+     * nicht Bequemlichkeit, sondern Zurechnung — das Mitglied hat genau die
+     * Rechnung bezahlt, die der Verein ihm gestellt hat. Wer sie nachtraeglich
+     * zurueckweist, bestraft den Zahler fuer eine Konfiguration, auf die er
+     * keinen Einfluss hatte.
+     *
+     * Der Betrag wird weiterhin geprueft. Der Verzicht gilt der Waehrungs-
+     * BEZEICHNUNG einer Altrechnung, nicht der Frage, ob ueberhaupt der
+     * richtige Betrag geflossen ist.
+     *
+     * Der Default ist der Merge von P2 (b21f055, 2026-08-06 21:24:18 +0200) —
+     * der Commit, mit dem `currency` erstmals mitgesendet wurde. Nach hinten
+     * verschieben darf man ihn nur, wenn ein Deploy nachweislich spaeter lag;
+     * nach vorn nie, sonst faellt eine Altzahlung wieder durch.
+     */
+    'explicit_currency_since' => (string) env(
+        'MEMBERSHIP_EXPLICIT_CURRENCY_SINCE',
+        '2026-08-06 21:24:18+02:00'
+    ),
+
+    /*
      * Die Statuten, auf die sich ein Antrag bezieht — Adresse UND Fassung.
      *
      * Konfigurierbar und nicht einbetoniert, weil sich beides bei der
