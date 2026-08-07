@@ -48,6 +48,26 @@ use Illuminate\Http\Request;
  */
 class DeleteMembershipController extends ApiV1Controller
 {
+    /**
+     * Erase the personal data of the signing end user.
+     *
+     * Removes the personal reference — e-mail address, application text,
+     * NIP-05 handle, pubkey — from the membership record. The annual fees the
+     * association received stay behind as anonymised bookkeeping entries,
+     * because a club has to be able to account for its income and the statutes
+     * rule out any claim to a refund (Art. 4.2). This is erasure under the
+     * revised Swiss DSG and under Art. 17(3) GDPR, not a row deletion.
+     *
+     * Idempotent: a second call answers 200 again rather than 404. What was
+     * asked for is a state — no personal data of this pubkey is stored — and
+     * that state remains true. `retained_payments` is null on every call
+     * after the first; the link needed to count those entries is exactly what
+     * the erasure destroyed.
+     *
+     * NOT A BAN. The next request signed by the same pubkey creates a fresh,
+     * empty record with no application and no fee history. The anonymised
+     * bookkeeping entries are never re-attached to it.
+     */
     public function __invoke(Request $request): JsonResponse
     {
         $pleb = $this->subject($request);

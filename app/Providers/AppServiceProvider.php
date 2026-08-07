@@ -52,6 +52,38 @@ class AppServiceProvider extends ServiceProvider
         });
 
         /*
+         * Die beiden Doku-Routen (/docs/v1/api und /docs/v1/api.json).
+         *
+         * Sie sind bewusst oeffentlich, und sie sind teuer: Scramble baut das
+         * OpenAPI-Dokument bei JEDEM Aufruf neu — CacheableGenerator LIEST
+         * einen Cache, schreibt ihn aber nie; gefuellt wird er allein von
+         * `php artisan scramble:cache`, das hier nirgends laeuft. Am laufenden
+         * `artisan serve` nachgemessen: 0,29–0,39 s pro Aufruf gegen 0,013–0,018 s
+         * fuer /up, also gut das Zwanzigfache. Ohne Grenze ist das eine
+         * unauthentifizierte CPU-Verstaerkung — die web-Gruppe bringt selbst
+         * keine mit.
+         *
+         * 30/min: Ein Leser loest beim Oeffnen der Seite eine Erzeugung aus,
+         * beim Abholen des Dokuments eine zweite; selbst wer die Seite im
+         * Sekundentakt neu laedt, bleibt darunter. Nach oben deckelt es eine
+         * einzelne IP auf 30 × 0,39 s ≈ 12 s Rechenzeit pro Minute, also rund
+         * ein Fuenftel eines Kerns.
+         *
+         * EIGENER LIMITER, nicht `api-v1`: Das ist die Konsumenten-Flaeche mit
+         * eigenen Kontingenten, und ein Leser der Doku darf einem Client nicht
+         * dessen Kontingent wegnehmen (und umgekehrt).
+         *
+         * Schluessel ist die IP, weil es hier keinen anderen gibt — die Seite
+         * kennt weder Client-Key noch Pubkey. Der Vorbehalt aus dem
+         * api-v1-Block gilt hier nicht mehr in derselben Schaerfe: seit
+         * trustProxies() in bootstrap/app.php ist $request->ip() hinter dem
+         * Proxy die echte Client-Adresse und nicht mehr frei waehlbar.
+         */
+        RateLimiter::for('docs', function (Request $request) {
+            return Limit::perMinute(30)->by($request->ip());
+        });
+
+        /*
          * /api/v1: zwei Eimer nebeneinander, weil zwei verschiedene Dinge
          * begrenzt werden. Der Client-Eimer deckelt, was eine Anwendung
          * INSGESAMT durchreichen darf — ein fehlgeleiteter Fremd-Client legt

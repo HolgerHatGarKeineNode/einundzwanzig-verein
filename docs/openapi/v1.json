@@ -1,0 +1,1772 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+        "title": "EINUNDZWANZIG Membership API",
+        "version": "1.0.0",
+        "description": "The membership API of the EINUNDZWANZIG association: apply for membership, pay the annual fee,\nread your own record and have it erased. It is meant for third-party clients acting on behalf of\na member \u2014 a Nostr client, a wallet, a community app.\n\n## Two identities, two credentials\n\nEvery request carries the **client key** of the calling application in `X-Api-Key`. Every request\nexcept `GET /api/v1/membership/config` additionally carries a **NIP-98 signature** identifying the\nend user. The two answer different questions \u2014 which application is calling, and who it is calling\nfor \u2014 and neither substitutes for the other. See the security schemes for how to build the\nsignature.\n\nThe subject of a request is always the pubkey that signed it. There is no parameter for it and a\npubkey sent in the path, the query or the body is refused. No endpoint on this API returns data\nabout another member.\n\n## Reading the membership status\n\nDO NOT EVALUATE `association_status` ON ITS OWN. It is the category the board assigned and it does\nnot lapse: under Art. 4.1 of the statutes a membership ends after a year without payment, but the\nassociation deliberately applies no hard cut, so a record can read `ACTIVE` while the current fee\nyear is unpaid. Such a person is not a member.\n\n`membership_status` is derived from the category **and** the payment and is the only correct answer\nto \"is this person a member right now\":\n\n| Value | Meaning |\n| --- | --- |\n| `none` | No application on record and no membership category. |\n| `awaiting_payment` | Applied for, current fee year unpaid, not a member yet. |\n| `member` | A membership category and the current fee year paid. |\n| `lapsed` | A membership category, but the current fee year is unpaid. |\n\nA client that renders `association_status` alone will call a lapsed member active, and two clients\ndoing it differently will publish two contradicting answers about the same person.\n\n## Joining, end to end\n\n1. `GET /api/v1/membership/config` \u2014 the fee, the currency and the current fee year.\n2. `POST /api/v1/membership/applications` \u2014 the application and the consent to the statutes. This\n   grants nothing on its own: the statutes tie the membership to the payment (Art. 4).\n3. `POST /api/v1/membership/payments/{year}/invoice` \u2014 a BTCPay checkout for that fee year. Send\n   the payer to `checkout_url`.\n4. The settled payment grants the membership. It normally arrives as a BTCPay webhook; if that\n   delivery is lost, `POST /api/v1/membership/payments/{year}/refresh` pulls the same result.\n\nPaid fees are not refundable (Art. 4.2), and erasure under\n`DELETE /api/v1/membership/me` therefore anonymises the bookkeeping entries rather than deleting\nthem.\n\n## Errors and quotas\n\nErrors are JSON objects with a single `message` field. Refusals are deliberately indistinguishable:\n\"no record for this pubkey\", \"not a member\" and \"no invoice for that year\" all answer `404` with\nthe same body, so the API cannot be used to look up who belongs to the association.\n\nRequests are counted per client key and per end-user pubkey, and invoice creation carries its own\nmuch tighter daily quota. Exceeding a quota answers `429` with `Retry-After`."
+    },
+    "servers": [
+        {
+            "url": "https://verein.einundzwanzig.space",
+            "description": "Production"
+        },
+        {
+            "url": "http://localhost:8000",
+            "description": "Local"
+        }
+    ],
+    "tags": [
+        {
+            "name": "Configuration",
+            "description": "What joining costs and what an application has to carry. The only part of this API that needs no end-user signature."
+        },
+        {
+            "name": "Membership",
+            "description": "Applying, and reading your own membership."
+        },
+        {
+            "name": "Payments",
+            "description": "The annual fee: the checkout for it, and the record of the ones already paid."
+        },
+        {
+            "name": "Personal data",
+            "description": "The two rights a data subject exercises directly \u2014 access and erasure."
+        }
+    ],
+    "paths": {
+        "/api/v1/membership/me": {
+            "delete": {
+                "operationId": "v1.membership.me.delete",
+                "description": "Removes the personal reference \u2014 e-mail address, application text,\nNIP-05 handle, pubkey \u2014 from the membership record. The annual fees the\nassociation received stay behind as anonymised bookkeeping entries,\nbecause a club has to be able to account for its income and the statutes\nrule out any claim to a refund (Art. 4.2). This is erasure under the\nrevised Swiss DSG and under Art. 17(3) GDPR, not a row deletion.\n\nIdempotent: a second call answers 200 again rather than 404. What was\nasked for is a state \u2014 no personal data of this pubkey is stored \u2014 and\nthat state remains true. `retained_payments` is null on every call\nafter the first; the link needed to count those entries is exactly what\nthe erasure destroyed.\n\nNOT A BAN. The next request signed by the same pubkey creates a fresh,\nempty record with no application and no fee history. The anonymised\nbookkeeping entries are never re-attached to it.",
+                "summary": "Erase the personal data of the signing end user",
+                "tags": [
+                    "Personal data"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The erasure is complete. The same answer is given on every repeat call.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "properties": {
+                                                "erased": {
+                                                    "type": "boolean",
+                                                    "description": "Always true: no personal data of this pubkey is stored. A statement about the state after the call, not about how much work it took."
+                                                },
+                                                "retained_payments": {
+                                                    "type": [
+                                                        "integer",
+                                                        "null"
+                                                    ],
+                                                    "description": "How many annual fees remain as anonymised bookkeeping entries. Null on every call after the first \u2014 the link needed to count them is exactly what the erasure destroyed.",
+                                                    "examples": [
+                                                        2
+                                                    ],
+                                                    "minimum": 0
+                                                }
+                                            },
+                                            "required": [
+                                                "erased",
+                                                "retained_payments"
+                                            ]
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "The replay lock behind the NIP-98 verification is unreachable. The request was refused rather than waved through; nothing was written. Retry.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "A quota was exceeded \u2014 per client key, per end-user pubkey, or, for invoice creation, the daily invoice quota. `Retry-After` says how long to wait.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "clientKey": [],
+                        "nip98": []
+                    }
+                ]
+            },
+            "get": {
+                "operationId": "v1.membership.me",
+                "description": "The subject is the pubkey that signed the NIP-98 credential and cannot\nbe anything else \u2014 there is no parameter for it, and a pubkey sent in\nthe query or the body is refused. A caller can ask about themselves and\nabout nobody else.\n\nThe answer is 200 in every state, including for a pubkey with no record\nat all. A prospective member has to be able to learn that they are not\na member yet in order to become one.\n\nREAD `membership_status`, NOT `association_status`. The two answer\ndifferent questions and they disagree exactly when a fee year goes\nunpaid \u2014 see the description of `association_status` below.",
+                "summary": "Get the membership of the signing end user",
+                "tags": [
+                    "Membership"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "`MembershipResource`",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/components/schemas/MembershipResource"
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "The replay lock behind the NIP-98 verification is unreachable. The request was refused rather than waved through; nothing was written. Retry.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "A quota was exceeded \u2014 per client key, per end-user pubkey, or, for invoice creation, the daily invoice quota. `Retry-After` says how long to wait.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "clientKey": [],
+                        "nip98": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/membership/export": {
+            "get": {
+                "operationId": "v1.membership.export",
+                "description": "The data-subject access request (revDSG Art. 25; Art. 15 GDPR where EU\nmembers are concerned). This is the one endpoint that hands out the\ne-mail address, the free-form application text and the archived\napplication text, and it can only ever hand them to the holder of the\nprivate key they belong to.\n\nRead-only: an access request must not change the record it reports on,\nand it never creates one. A pubkey with nothing on file gets 200 with\n`member`, `nostr_profile` and the lists empty, because\n\"nothing is stored about you\" is a complete answer.\n\nSCOPE: the membership record \u2014 identity, contact data, application,\nannual fees, the membership grants those fees caused, and the cached\npublic Nostr profile. Data the same person may have produced elsewhere\nin the application is outside `/api/v1/membership` and is not claimed\nhere.",
+                "summary": "Export everything the association stores about the signing end user",
+                "tags": [
+                    "Personal data"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "`MembershipExportResource`",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/components/schemas/MembershipExportResource"
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "The replay lock behind the NIP-98 verification is unreachable. The request was refused rather than waved through; nothing was written. Retry.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "A quota was exceeded \u2014 per client key, per end-user pubkey, or, for invoice creation, the daily invoice quota. `Retry-After` says how long to wait.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "clientKey": [],
+                        "nip98": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/membership/payments": {
+            "get": {
+                "operationId": "v1.membership.payments",
+                "description": "Newest fee year first. The list is bound to the record the signature\nnames, so it can never hold a second person's fees \u2014 no endpoint on this\nAPI returns data about another member.\n\nA pubkey with no record, and a member who has never been billed, both\nget an empty list rather than a refusal.\n\n`receipt_url` is present only once a fee is settled; an unsettled\ninvoice has no receipt. To pay an open year, call\n`POST /api/v1/membership/payments/{year}/invoice`.",
+                "summary": "List the annual fees of the signing end user",
+                "tags": [
+                    "Payments"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Array of `PaymentEventResource`",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/components/schemas/PaymentEventResource"
+                                            }
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "The replay lock behind the NIP-98 verification is unreachable. The request was refused rather than waved through; nothing was written. Retry.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "A quota was exceeded \u2014 per client key, per end-user pubkey, or, for invoice creation, the daily invoice quota. `Retry-After` says how long to wait.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "clientKey": [],
+                        "nip98": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/membership/payments/{year}/refresh": {
+            "post": {
+                "operationId": "v1.membership.payments.refresh",
+                "description": "The membership is granted by a BTCPay webhook, and a webhook arrives\nfrom outside: if a delivery is lost, somebody has paid and is not a\nmember. This endpoint is the client-driven repair for that. It runs\nthrough the very same booking path the webhook uses, so a settled\ninvoice found here grants the membership just as the webhook would have.\n\nCreates nothing \u2014 `created` is always false \u2014 and therefore accepts ANY\nyear, unlike invoice creation: an unresolved invoice from a previous\nyear is still worth settling.\n\n`checkout_url` is null when BTCPay reported the invoice as expired or\ninvalid. The fee year has been freed up again and the next step is\n`POST /api/v1/membership/payments/{year}/invoice`, which starts a fresh\ncheckout.\n\n404 when there is nothing upstream to ask about: no membership record,\nno fee recorded for that year, or a fee that never had an invoice. 503\nwhen BTCPay is unreachable \u2014 the stored payment state is then left\nexactly as it was, because the only safe reading of an unknown payment\nis the one already on record.",
+                "summary": "Re-read an invoice from BTCPay and book whatever it says",
+                "tags": [
+                    "Payments"
+                ],
+                "parameters": [
+                    {
+                        "name": "year",
+                        "in": "path",
+                        "required": true,
+                        "description": "The fee year to re-read from BTCPay. Any year is accepted; a refresh creates nothing.",
+                        "schema": {
+                            "type": "string",
+                            "pattern": "^[0-9]{4}$"
+                        },
+                        "example": "2026"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "`InvoiceResource`",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/components/schemas/InvoiceResource"
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "Error overview."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "$ref": "#/components/responses/NotFoundHttpException"
+                    },
+                    "401": {
+                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "A quota was exceeded \u2014 per client key, per end-user pubkey, or, for invoice creation, the daily invoice quota. `Retry-After` says how long to wait.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "clientKey": [],
+                        "nip98": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/membership/config": {
+            "get": {
+                "operationId": "v1.membership.config",
+                "description": "The only endpoint on this API that does not require a NIP-98 signature:\nsend the client key alone. A client has to be able to show the fee\nbefore anybody has signed anything, and the response is association-wide\n\u2014 it is identical for every caller.\n\n`year` is the fee year the association is currently collecting, and it\nis the only year `POST /api/v1/membership/payments/{year}/invoice`\naccepts. `application.required_fields` and `application.optional_fields`\nname the body fields of `POST /api/v1/membership/applications`.",
+                "summary": "Get the annual fee and what an application must carry",
+                "tags": [
+                    "Configuration"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "`MembershipConfigResource`",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/components/schemas/MembershipConfigResource"
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "The client key is missing or unknown.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "A quota was exceeded \u2014 per client key, per end-user pubkey, or, for invoice creation, the daily invoice quota. `Retry-After` says how long to wait.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "clientKey": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/membership/applications": {
+            "post": {
+                "operationId": "v1.membership.applications.store",
+                "description": "Records the application and the consent to the statutes. IT CHANGES NO\nSTATUS: the statutes are explicit that the membership begins with the\npayment of the annual fee (Art. 4), so the next step after a successful\napplication is `POST /api/v1/membership/payments/{year}/invoice`.\n\n201 when the consent is recorded for the first time, 200 on a repeat.\nThe distinction is the consent, not the record: a long-standing member\nfrom before this field existed applies for the first time too. A repeat\napplication leaves `statutes_accepted_at` untouched \u2014 it is the joining\ndocument and must not be backdated or refreshed \u2014 and updates only the\ncontact fields actually sent.\n\nAn absent field is left alone; an explicit `null` clears the stored\nvalue. The difference matters because the body is signed as a whole:\nwere absence treated as \"clear it\", dropping a field from the payload\nwould wipe data the user never touched.\n\n`association_status`, `paid`, `pubkey` and `npub` cannot be written\nthrough this endpoint. The subject is the signing pubkey and the\nmembership category is raised by a settled fee and by nothing else.",
+                "summary": "Apply for membership",
+                "tags": [
+                    "Membership"
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/StoreApplicationRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "The consent to the statutes was recorded for the first time. The membership itself still waits for the annual fee.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/components/schemas/MembershipResource"
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "A repeat application. Contact data was updated where sent; `statutes_accepted_at` keeps the value it already had.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/components/schemas/MembershipResource"
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/ValidationException"
+                    },
+                    "401": {
+                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "The replay lock behind the NIP-98 verification is unreachable. The request was refused rather than waved through; nothing was written. Retry.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "A quota was exceeded \u2014 per client key, per end-user pubkey, or, for invoice creation, the daily invoice quota. `Retry-After` says how long to wait.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "415": {
+                        "description": "The request carried a body with a `Content-Type` other than `application/json`. The NIP-98 `payload` tag can only be checked against a body PHP has not already consumed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "clientKey": [],
+                        "nip98": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/membership/payments/{year}/invoice": {
+            "post": {
+                "operationId": "v1.membership.payments.invoice",
+                "description": "Send the payer to `checkout_url`. `created` is false when an invoice for\nthat year already existed and the caller is being handed that one rather\nthan a second one \u2014 that is the normal idempotent answer, not an error.\n\nTHE REQUEST BODY IS IGNORED. Amount and currency come from the\nassociation's configuration and the fee year from `{year}`; a body\nnaming any of them changes nothing.\n\n`{year}` MUST BE THE CURRENT FEE YEAR, the one\n`GET /api/v1/membership/config` reports. The general assembly fixes the\nfee per year, so an invoice for a past year would book today's amount\nagainst a year that owed a different one \u2014 and since a settled fee for\nany year constitutes a membership, an open year would let somebody join\nby paying a fee for 1970. Any other year answers 404.\n\nA pubkey with no membership record answers 404 as well. The way in is\n`POST /api/v1/membership/applications`.\n\n503 means BTCPay is unreachable or the fee is unusable on the current\nconfiguration. Nothing was charged and nothing was recorded; retry\nlater. This endpoint carries its own, much tighter quota than the rest\nof the API \u2014 every call spends a request against the association's own\nBTCPay key.",
+                "summary": "Start, or hand back, the BTCPay checkout for one annual fee",
+                "tags": [
+                    "Payments"
+                ],
+                "parameters": [
+                    {
+                        "name": "year",
+                        "in": "path",
+                        "required": true,
+                        "description": "The fee year to be paid. Only the CURRENT fee year is accepted \u2014 the one `GET /api/v1/membership/config` reports. Any other year answers 404.",
+                        "schema": {
+                            "type": "string",
+                            "pattern": "^[0-9]{4}$"
+                        },
+                        "example": "2026"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "`InvoiceResource`",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/components/schemas/InvoiceResource"
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "Error overview."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "$ref": "#/components/responses/NotFoundHttpException"
+                    },
+                    "401": {
+                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "A quota was exceeded \u2014 per client key, per end-user pubkey, or, for invoice creation, the daily invoice quota. `Retry-After` says how long to wait.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "clientKey": [],
+                        "nip98": []
+                    }
+                ]
+            }
+        }
+    },
+    "components": {
+        "securitySchemes": {
+            "clientKey": {
+                "type": "apiKey",
+                "description": "Identifies the CALLING APPLICATION \u2014 not the end user. Required on **every** endpoint of this API,\n`GET /api/v1/membership/config` included.\n\nSend the key the association issued to you in the `X-Api-Key` header:\n\n```http\nX-Api-Key: <your client key>\n```\n\nA missing or unknown key is answered with `401` before any data operation runs and before the\nsignature is verified. The key is never echoed back by any response and never appears in a log.\n\nIt is not a user credential and unlocks no member data on its own: every endpoint but the\nconfiguration one additionally requires a NIP-98 signature from the end user, and the association\nnever sees that user's private key.\n\nRequests are counted per client key and per end-user pubkey. Exceeding either quota answers `429`\nwith a `Retry-After` header.",
+                "in": "header",
+                "name": "X-Api-Key"
+            },
+            "nip98": {
+                "type": "http",
+                "description": "NIP-98 HTTP Auth \u2014 identifies the END USER a request is made for. Required on every endpoint except\n`GET /api/v1/membership/config`, **in addition to** the client key.\n\nSend a signed Nostr event of kind `27235`, JSON-encoded and then base64-encoded:\n\n```http\nAuthorization: Nostr <base64 of the event JSON>\n```\n\nThe private key stays with the user's signer. Neither the association nor the client operator ever\nholds it, which is what makes \"the subject is whoever signed\" a guarantee rather than a promise.\n\n## What the server checks\n\nIn this order, and each condition on its own:\n\n1. `kind` is `27235`.\n2. Tag `method` equals the HTTP method of the request, compared case-insensitively.\n3. Tag `u` equals the absolute request URL, compared byte for byte. Scheme, host and port come from\n   the server's own configuration \u2014 use the server URL listed above \u2014 while path and query come\n   from the request. A trailing slash or a different query string is a different URL.\n4. `created_at` is within **60 seconds** of server time, in either direction.\n5. If the request carries a body, its `Content-Type` must be exactly `application/json`. Anything\n   else, `multipart/form-data` above all, is refused with `415` \u2014 a body PHP has already consumed\n   cannot be checked against a signature.\n6. If the request carries a body, tag `payload` is the SHA-256 of the **raw body bytes**, lowercase\n   hex. It is hashed over the bytes actually sent, not over a re-encoding of them: sign and send\n   the same string.\n7. `id` is the SHA-256 of the NIP-01 serialisation `[0, pubkey, created_at, kind, tags, content]`,\n   JSON-encoded with slashes and unicode unescaped.\n8. `sig` is a valid BIP-340 Schnorr signature over `id`.\n9. The `id` has not been presented before. **Every event is accepted exactly once** and is\n   remembered for 150 seconds; a retried request needs a NEW event.\n\n`id` and `pubkey` must be 64 lowercase hex characters and `sig` 128. Uppercase hex is rejected even\nthough it verifies cryptographically \u2014 one private key would otherwise yield arbitrarily many\nidentities, each with its own quota.\n\nAny failed check answers `401` with the same body. Which one failed is deliberately not disclosed.\n\n## Building the credential\n\nWith a NIP-07 browser signer, which fills in `pubkey`, `id` and `sig`:\n\n```js\nconst url    = 'https://verein.einundzwanzig.space/api/v1/membership/applications'\nconst method = 'POST'\nconst body   = JSON.stringify({ statutes_accepted: true, email: 'satoshi@example.org' })\n\nconst sha256Hex = async (input) => {\n  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))\n  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')\n}\n\nconst tags = [\n  ['u', url],\n  ['method', method],\n  // Not required by the server, but two events built in the same second for the same URL and\n  // method would otherwise share an id \u2014 and the second one would be refused as a replay.\n  ['nonce', crypto.randomUUID()],\n]\n\nif (body) {\n  tags.push(['payload', await sha256Hex(body)])\n}\n\nconst event = await window.nostr.signEvent({\n  kind: 27235,\n  created_at: Math.floor(Date.now() / 1000),\n  tags,\n  content: '',\n})\n\nconst response = await fetch(url, {\n  method,\n  headers: {\n    'Content-Type': 'application/json',\n    'X-Api-Key': '<your client key>',\n    Authorization: 'Nostr ' + btoa(JSON.stringify(event)),\n  },\n  body,\n})\n```\n\nFor a GET there is no body: leave out the `payload` tag, the `Content-Type` header and the `body`\noption. Sending an empty JSON body such as `[]` is NOT the same thing \u2014 it counts as a body and\nthen demands a matching `payload` tag.\n\n## A decoded credential\n\nThis is what the base64 in the header decodes to:\n\n```json\n{\n  \"id\": \"5cf1b4f0e4b90a4a02f0f0a0b1c2d3e4f5061728394a5b6c7d8e9f0a1b2c3d4e\",\n  \"pubkey\": \"6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93\",\n  \"created_at\": 1785062400,\n  \"kind\": 27235,\n  \"tags\": [\n    [\"u\", \"https://verein.einundzwanzig.space/api/v1/membership/me\"],\n    [\"method\", \"GET\"],\n    [\"nonce\", \"0f2b7a1c9d3e4f50\"]\n  ],\n  \"content\": \"\",\n  \"sig\": \"908f5d1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6\"\n}\n```\n\n`content` is unused by this API and may stay empty. Tags other than `u`, `method` and `payload` are\nignored, so a `nonce` costs nothing.",
+                "scheme": "nostr"
+            }
+        },
+        "schemas": {
+            "InvoiceResource": {
+                "type": "object",
+                "properties": {
+                    "checkout_url": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "The BTCPay checkout page to send the payer to. Null only on a refresh whose invoice BTCPay reported as expired or invalid \u2014 the fee year is then free again and a new invoice can be created.",
+                        "examples": [
+                            "https://pay.einundzwanzig.space/i/3T8xkPZbvhMzTMbY5rYWbA"
+                        ]
+                    },
+                    "created": {
+                        "type": "boolean",
+                        "description": "Whether THIS call created a BTCPay invoice. False means an invoice for that year already existed and you are being handed that one \u2014 the normal idempotent answer, not an error. A refresh never creates anything and always reports false."
+                    },
+                    "payment": {
+                        "type": "object",
+                        "description": "The annual fee this checkout belongs to, in the same shape an entry of `GET /api/v1/membership/payments` has.",
+                        "properties": {
+                            "year": {
+                                "type": "integer",
+                                "description": "The fee year this entry is for.",
+                                "examples": [
+                                    2026
+                                ]
+                            },
+                            "amount": {
+                                "type": "integer",
+                                "description": "The annual fee that was billed for that year, in the smallest unit of `currency`. The general assembly fixes it per year, so an older entry may name a different amount than the current one.",
+                                "examples": [
+                                    21
+                                ]
+                            },
+                            "currency": {
+                                "type": "string",
+                                "description": "The currency the fee is billed in, as an ISO 4217 code.",
+                                "examples": [
+                                    "CHF"
+                                ]
+                            },
+                            "paid": {
+                                "type": "boolean",
+                                "description": "Whether this fee has been settled. A settled fee is what constitutes the membership for that year."
+                            },
+                            "receipt_url": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The BTCPay receipt, and null until the fee is settled. An unsettled invoice has no receipt \u2014 to pay an open year, call `POST /api/v1/membership/payments/{year}/invoice`.",
+                                "examples": [
+                                    "https://pay.einundzwanzig.space/i/3T8xkPZbvhMzTMbY5rYWbA/receipt"
+                                ]
+                            }
+                        },
+                        "required": [
+                            "year",
+                            "amount",
+                            "currency",
+                            "paid",
+                            "receipt_url"
+                        ]
+                    }
+                },
+                "required": [
+                    "checkout_url",
+                    "created",
+                    "payment"
+                ],
+                "title": "InvoiceResource"
+            },
+            "MembershipConfigResource": {
+                "type": "object",
+                "properties": {
+                    "fee": {
+                        "type": "integer",
+                        "description": "The annual fee for `year`, in the smallest unit of `currency`.",
+                        "examples": [
+                            21
+                        ]
+                    },
+                    "currency": {
+                        "type": "string",
+                        "description": "The currency the fee is billed in, as an ISO 4217 code.",
+                        "examples": [
+                            "CHF"
+                        ]
+                    },
+                    "year": {
+                        "type": "integer",
+                        "description": "The fee year the association is currently collecting. It is the only year `POST /api/v1/membership/payments/{year}/invoice` accepts.",
+                        "examples": [
+                            2026
+                        ]
+                    },
+                    "statutes": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "description": "The public statutes a member consents to when applying. A client must show them before asking for that consent.",
+                                "examples": [
+                                    "https://einundzwanzig.space/files/Statuten_v1.3.pdf"
+                                ]
+                            },
+                            "version": {
+                                "type": "string",
+                                "description": "The version of the statutes currently in force.",
+                                "examples": [
+                                    "1.3"
+                                ]
+                            },
+                            "adopted_at": {
+                                "type": "string",
+                                "description": "The date the general assembly adopted that version.",
+                                "examples": [
+                                    "2024-04-20"
+                                ]
+                            }
+                        },
+                        "required": [
+                            "url",
+                            "version",
+                            "adopted_at"
+                        ]
+                    },
+                    "application": {
+                        "type": "object",
+                        "properties": {
+                            "required_fields": {
+                                "type": "array",
+                                "description": "The body fields `POST /api/v1/membership/applications` requires on a first application. The consent is the only one: the statutes demand no legal name, no address and no date of birth.",
+                                "prefixItems": [
+                                    {
+                                        "type": "string",
+                                        "const": "statutes_accepted"
+                                    }
+                                ],
+                                "minItems": 1,
+                                "maxItems": 1,
+                                "additionalItems": false
+                            },
+                            "optional_fields": {
+                                "type": "array",
+                                "description": "The body fields that application may additionally carry. An absent field is left alone, an explicit null clears the stored value.",
+                                "prefixItems": [
+                                    {
+                                        "type": "string",
+                                        "const": "application_text"
+                                    },
+                                    {
+                                        "type": "string",
+                                        "const": "email"
+                                    },
+                                    {
+                                        "type": "string",
+                                        "const": "no_email"
+                                    },
+                                    {
+                                        "type": "string",
+                                        "const": "nip05_handle"
+                                    }
+                                ],
+                                "minItems": 4,
+                                "maxItems": 4,
+                                "additionalItems": false
+                            },
+                            "application_text_max_length": {
+                                "type": "integer",
+                                "description": "The maximum length of `application_text`, in characters. A longer text is refused with 422.",
+                                "const": 2000
+                            }
+                        },
+                        "required": [
+                            "required_fields",
+                            "optional_fields",
+                            "application_text_max_length"
+                        ]
+                    }
+                },
+                "required": [
+                    "fee",
+                    "currency",
+                    "year",
+                    "statutes",
+                    "application"
+                ],
+                "title": "MembershipConfigResource"
+            },
+            "MembershipExportResource": {
+                "type": "object",
+                "properties": {
+                    "subject": {
+                        "type": "object",
+                        "properties": {
+                            "pubkey": {
+                                "type": "string",
+                                "description": "The Nostr public key the request was signed with, 64 lowercase hex characters.",
+                                "pattern": "^[0-9a-f]{64}$",
+                                "examples": [
+                                    "6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93"
+                                ]
+                            },
+                            "npub": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The same key in the bech32 form of NIP-19, and null if no membership record exists.",
+                                "examples": [
+                                    "npub1dergggklka99wwrs92yz8wdjs952h2ux2ha2ed598ngwu9w7a6fsh9xzpc"
+                                ]
+                            }
+                        },
+                        "required": [
+                            "pubkey",
+                            "npub"
+                        ]
+                    },
+                    "membership_status": {
+                        "type": "string",
+                        "description": "Whether this person is a member right now. Same values and same meaning as in `GET /api/v1/membership/me`.",
+                        "enum": [
+                            "none",
+                            "awaiting_payment",
+                            "member",
+                            "lapsed"
+                        ],
+                        "examples": [
+                            "member"
+                        ]
+                    },
+                    "member": {
+                        "type": [
+                            "object",
+                            "null"
+                        ],
+                        "description": "The membership record, or null if this pubkey has none. \"Nothing is stored about you\" is a complete answer to an access request.",
+                        "properties": {
+                            "association_status": {
+                                "type": "string",
+                                "description": "The membership category on record. DO NOT EVALUATE `association_status` ON ITS OWN. It is the category the board assigned and it does not lapse: under Art. 4.1 of the statutes a membership ends after a year without payment, but the association deliberately applies no hard cut, so a record can read `ACTIVE` while the current fee year is unpaid. Such a person is not a member. `membership_status` is derived from both the category and the payment and is the only correct answer to \"is this person a member right now\".",
+                                "enum": [
+                                    "DEFAULT",
+                                    "PASSIVE",
+                                    "ACTIVE",
+                                    "HONORARY"
+                                ],
+                                "examples": [
+                                    "PASSIVE"
+                                ]
+                            },
+                            "association_status_value": {
+                                "type": "integer",
+                                "description": "The numeric form of `association_status`: DEFAULT 1, PASSIVE 2, ACTIVE 3, HONORARY 4.",
+                                "enum": [
+                                    1,
+                                    2,
+                                    3,
+                                    4
+                                ],
+                                "examples": [
+                                    2
+                                ]
+                            },
+                            "applied_at": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "format": "date-time",
+                                "description": "When the most recent application was recorded, ISO 8601."
+                            },
+                            "statutes_accepted_at": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "format": "date-time",
+                                "description": "When the statutes were consented to, ISO 8601. Null means the membership predates the field."
+                            },
+                            "email": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The e-mail address on file. This endpoint is the only one that discloses it.",
+                                "examples": [
+                                    "satoshi@example.org"
+                                ]
+                            },
+                            "no_email": {
+                                "type": "boolean",
+                                "description": "Whether this person asked not to be contacted by e-mail."
+                            },
+                            "nip05_handle": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The local part of the NIP-05 identifier the association serves for this member, if one was claimed.",
+                                "examples": [
+                                    "satoshi"
+                                ]
+                            },
+                            "application_text": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The free-form text written on the most recent application. Disclosed here and nowhere else."
+                            },
+                            "archived_application_text": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "Application text kept from an earlier application. Disclosed here and nowhere else."
+                            },
+                            "application_for": {
+                                "type": [
+                                    "integer",
+                                    "null"
+                                ],
+                                "description": "An internal reference on the application record. Reported for completeness of the access request."
+                            },
+                            "created_at": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "format": "date-time",
+                                "description": "When the membership record came into existence, ISO 8601."
+                            },
+                            "updated_at": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "format": "date-time",
+                                "description": "When the membership record was last written, ISO 8601."
+                            }
+                        },
+                        "required": [
+                            "association_status",
+                            "association_status_value",
+                            "applied_at",
+                            "statutes_accepted_at",
+                            "email",
+                            "no_email",
+                            "nip05_handle",
+                            "application_text",
+                            "archived_application_text",
+                            "application_for",
+                            "created_at",
+                            "updated_at"
+                        ]
+                    },
+                    "payments": {
+                        "type": "array",
+                        "description": "Every annual fee on record, newest year first. Fuller than `GET /api/v1/membership/payments`: the BTCPay invoice id and the Nostr event id are withheld from ordinary responses because no client needs them, but to their own subject they are part of the record.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "year": {
+                                    "type": "integer",
+                                    "description": "The fee year.",
+                                    "examples": [
+                                        2026
+                                    ]
+                                },
+                                "amount": {
+                                    "type": "integer",
+                                    "description": "The amount billed for that year, in the smallest unit of `currency`.",
+                                    "examples": [
+                                        21
+                                    ]
+                                },
+                                "currency": {
+                                    "type": "string",
+                                    "description": "The currency the fee is billed in, as an ISO 4217 code.",
+                                    "examples": [
+                                        "CHF"
+                                    ]
+                                },
+                                "paid": {
+                                    "type": "boolean",
+                                    "description": "Whether the fee has been settled."
+                                },
+                                "btc_pay_invoice": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "description": "The BTCPay invoice id, if one was ever created for this year.",
+                                    "examples": [
+                                        "3T8xkPZbvhMzTMbY5rYWbA"
+                                    ]
+                                },
+                                "nostr_event_id": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "description": "The id of the Nostr event this payment was recorded from, if it came in that way."
+                                },
+                                "created_at": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "format": "date-time",
+                                    "description": "When the entry was created, ISO 8601."
+                                },
+                                "updated_at": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "format": "date-time",
+                                    "description": "When the entry was last written, ISO 8601."
+                                }
+                            },
+                            "required": [
+                                "year",
+                                "amount",
+                                "currency",
+                                "paid",
+                                "btc_pay_invoice",
+                                "nostr_event_id",
+                                "created_at",
+                                "updated_at"
+                            ]
+                        }
+                    },
+                    "membership_grants": {
+                        "type": "array",
+                        "description": "Every status change a settled fee caused, newest year first. This is the audit trail behind `association_status`.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "year": {
+                                    "type": "integer",
+                                    "description": "The fee year whose settled payment caused the change.",
+                                    "examples": [
+                                        2026
+                                    ]
+                                },
+                                "from_status": {
+                                    "type": "string",
+                                    "description": "The membership category before the change.",
+                                    "enum": [
+                                        "DEFAULT",
+                                        "PASSIVE",
+                                        "ACTIVE",
+                                        "HONORARY"
+                                    ]
+                                },
+                                "to_status": {
+                                    "type": "string",
+                                    "description": "The membership category after it.",
+                                    "enum": [
+                                        "DEFAULT",
+                                        "PASSIVE",
+                                        "ACTIVE",
+                                        "HONORARY"
+                                    ]
+                                },
+                                "granted_at": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "format": "date-time",
+                                    "description": "When the change was recorded, ISO 8601."
+                                }
+                            },
+                            "required": [
+                                "year",
+                                "from_status",
+                                "to_status",
+                                "granted_at"
+                            ]
+                        }
+                    },
+                    "nostr_profile": {
+                        "type": [
+                            "object",
+                            "null"
+                        ],
+                        "description": "The cached public kind-0 profile of this pubkey, exactly as its owner published it to the Nostr network, or null if none was ever seen. It is public data, held here only as a cache, and the association is not its source.",
+                        "properties": {
+                            "name": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The `name` field of the kind-0 profile."
+                            },
+                            "display_name": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The `display_name` field of the kind-0 profile."
+                            },
+                            "picture": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The avatar URL from the kind-0 profile."
+                            },
+                            "banner": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The banner image URL from the kind-0 profile."
+                            },
+                            "website": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The website from the kind-0 profile."
+                            },
+                            "about": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The free-form \"about\" text from the kind-0 profile."
+                            },
+                            "nip05": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The NIP-05 identifier claimed in the kind-0 profile. Unverified, and unrelated to `member.nip05_handle`, which is the handle the association itself serves."
+                            },
+                            "lud16": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The Lightning address from the kind-0 profile."
+                            },
+                            "lud06": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The LNURL-pay entry from the kind-0 profile."
+                            },
+                            "created_at": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "format": "date-time",
+                                "description": "When this cache entry was created, ISO 8601. Not the age of the profile itself."
+                            },
+                            "updated_at": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "format": "date-time",
+                                "description": "When this cache entry was last refreshed, ISO 8601."
+                            }
+                        },
+                        "required": [
+                            "name",
+                            "display_name",
+                            "picture",
+                            "banner",
+                            "website",
+                            "about",
+                            "nip05",
+                            "lud16",
+                            "lud06",
+                            "created_at",
+                            "updated_at"
+                        ]
+                    }
+                },
+                "required": [
+                    "subject",
+                    "membership_status",
+                    "member",
+                    "payments",
+                    "membership_grants",
+                    "nostr_profile"
+                ],
+                "title": "MembershipExportResource"
+            },
+            "MembershipResource": {
+                "type": "object",
+                "properties": {
+                    "pubkey": {
+                        "type": "string",
+                        "description": "The Nostr public key of the end user this record belongs to \u2014 the key that signed the request. 64 lowercase hex characters (NIP-01).",
+                        "pattern": "^[0-9a-f]{64}$",
+                        "examples": [
+                            "6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93"
+                        ]
+                    },
+                    "association_status": {
+                        "type": "string",
+                        "description": "The membership category on record. DO NOT EVALUATE `association_status` ON ITS OWN. It is the category the board assigned and it does not lapse: under Art. 4.1 of the statutes a membership ends after a year without payment, but the association deliberately applies no hard cut, so a record can read `ACTIVE` while the current fee year is unpaid. Such a person is not a member. `membership_status` is derived from both the category and the payment and is the only correct answer to \"is this person a member right now\".",
+                        "enum": [
+                            "DEFAULT",
+                            "PASSIVE",
+                            "ACTIVE",
+                            "HONORARY"
+                        ],
+                        "examples": [
+                            "PASSIVE"
+                        ]
+                    },
+                    "association_status_value": {
+                        "type": "integer",
+                        "description": "The numeric form of `association_status` as stored: DEFAULT 1, PASSIVE 2, ACTIVE 3, HONORARY 4. Present for clients that persist the value; prefer the name.",
+                        "enum": [
+                            1,
+                            2,
+                            3,
+                            4
+                        ],
+                        "examples": [
+                            2
+                        ]
+                    },
+                    "membership_status": {
+                        "type": "string",
+                        "description": "Whether this person is a member RIGHT NOW, derived from the category and the current fee year together. This is the field to render. `none` \u2014 no application and no category. `awaiting_payment` \u2014 applied for, current fee year unpaid. `member` \u2014 a category and the current fee year paid. `lapsed` \u2014 a category, but the current fee year unpaid.",
+                        "enum": [
+                            "none",
+                            "awaiting_payment",
+                            "member",
+                            "lapsed"
+                        ],
+                        "examples": [
+                            "member"
+                        ]
+                    },
+                    "statutes_accepted_at": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "date-time",
+                        "description": "When this person consented to the statutes, ISO 8601. Null means the membership predates the field \u2014 NOT that consent was refused. It is recorded once and is never backdated or refreshed by a later application.",
+                        "examples": [
+                            "2026-02-14T09:31:07+00:00"
+                        ]
+                    },
+                    "applied_at": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "date-time",
+                        "description": "When the most recent application was recorded, ISO 8601. Null if there has never been one.",
+                        "examples": [
+                            "2026-02-14T09:31:07+00:00"
+                        ]
+                    },
+                    "current_year": {
+                        "type": "object",
+                        "properties": {
+                            "year": {
+                                "type": "integer",
+                                "description": "The fee year the association is currently collecting.",
+                                "examples": [
+                                    2026
+                                ]
+                            },
+                            "fee": {
+                                "type": "integer",
+                                "description": "The annual fee for that year, in the smallest unit of `currency`.",
+                                "examples": [
+                                    21
+                                ]
+                            },
+                            "currency": {
+                                "type": "string",
+                                "description": "The currency the fee is billed in, as an ISO 4217 code.",
+                                "examples": [
+                                    "CHF"
+                                ]
+                            },
+                            "paid": {
+                                "type": "boolean",
+                                "description": "Whether the current fee year has been settled. This is the payment half of `membership_status`."
+                            },
+                            "receipt_url": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ],
+                                "description": "The BTCPay receipt for the current year, and null until it is settled.",
+                                "examples": [
+                                    "https://pay.einundzwanzig.space/i/3T8xkPZbvhMzTMbY5rYWbA/receipt"
+                                ]
+                            }
+                        },
+                        "required": [
+                            "year",
+                            "fee",
+                            "currency",
+                            "paid",
+                            "receipt_url"
+                        ]
+                    }
+                },
+                "required": [
+                    "pubkey",
+                    "association_status",
+                    "association_status_value",
+                    "membership_status",
+                    "statutes_accepted_at",
+                    "applied_at",
+                    "current_year"
+                ],
+                "title": "MembershipResource"
+            },
+            "PaymentEventResource": {
+                "type": "object",
+                "properties": {
+                    "year": {
+                        "type": "integer",
+                        "description": "The fee year this entry is for.",
+                        "examples": [
+                            2026
+                        ]
+                    },
+                    "amount": {
+                        "type": "integer",
+                        "description": "The annual fee that was billed for that year, in the smallest unit of `currency`. The general assembly fixes it per year, so an older entry may name a different amount than the current one.",
+                        "examples": [
+                            21
+                        ]
+                    },
+                    "currency": {
+                        "type": "string",
+                        "description": "The currency the fee is billed in, as an ISO 4217 code.",
+                        "examples": [
+                            "CHF"
+                        ]
+                    },
+                    "paid": {
+                        "type": "boolean",
+                        "description": "Whether this fee has been settled. A settled fee is what constitutes the membership for that year."
+                    },
+                    "receipt_url": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "The BTCPay receipt, and null until the fee is settled. An unsettled invoice has no receipt \u2014 to pay an open year, call `POST /api/v1/membership/payments/{year}/invoice`.",
+                        "examples": [
+                            "https://pay.einundzwanzig.space/i/3T8xkPZbvhMzTMbY5rYWbA/receipt"
+                        ]
+                    }
+                },
+                "required": [
+                    "year",
+                    "amount",
+                    "currency",
+                    "paid",
+                    "receipt_url"
+                ],
+                "title": "PaymentEventResource"
+            },
+            "StoreApplicationRequest": {
+                "type": "object",
+                "description": "The body of an application. There is no `pubkey` field: the subject is the pubkey that signed the request, and a body naming one is refused. There is no `association_status` field either \u2014 the membership category is raised by a settled fee and by nothing else.\n\nAn omitted field is left untouched; an explicit `null` clears the stored value. The two are not the same instruction, because the body is signed as a whole: were omission treated as \"clear it\", dropping a field from the payload would erase data the user never touched.",
+                "properties": {
+                    "statutes_accepted": {
+                        "description": "Consent to the statutes. Send `true`. Required on a first application and optional afterwards \u2014 the consent is given once, and a repeat application neither needs it again nor may overwrite the recorded timestamp. An explicit `false` is a refusal and is rejected with 422 rather than silently recorded as a non-consent. The other accepted spellings are Laravel's `accepted` rule and are listed for completeness.",
+                        "enum": [
+                            "yes",
+                            "on",
+                            "1",
+                            1,
+                            "true",
+                            true
+                        ]
+                    },
+                    "application_text": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Free-form text the applicant wants on record, up to 2000 characters. Disclosed only back to its own author, through `GET /api/v1/membership/export`.",
+                        "examples": [
+                            "I have been running the local meetup since 2023 and would like to join."
+                        ],
+                        "maxLength": 2000
+                    },
+                    "email": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "email",
+                        "description": "Contact e-mail address. Optional \u2014 the statutes let invitations travel by online publication, so a membership does not depend on it.",
+                        "examples": [
+                            "satoshi@example.org"
+                        ],
+                        "maxLength": 255
+                    },
+                    "no_email": {
+                        "type": "boolean",
+                        "description": "Set to true to state that this person does not want to be contacted by e-mail."
+                    },
+                    "nip05_handle": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "The local part of a NIP-05 identifier the association serves as `<handle>@einundzwanzig.space`. Lowercase letters, digits, hyphen and underscore only, because it becomes part of a public .well-known/nostr.json. Handles are unique across members; a taken one is refused with 422. It is a public identifier by design, so refusing it discloses nothing.",
+                        "pattern": "^[a-z0-9_-]+$",
+                        "examples": [
+                            "satoshi"
+                        ],
+                        "maxLength": 255
+                    }
+                },
+                "required": [
+                    "statutes_accepted"
+                ],
+                "title": "StoreApplicationRequest"
+            }
+        },
+        "responses": {
+            "ValidationException": {
+                "description": "Validation error",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "message": {
+                                    "type": "string",
+                                    "description": "Errors overview."
+                                },
+                                "errors": {
+                                    "type": "object",
+                                    "description": "A detailed description of each field that failed validation.",
+                                    "additionalProperties": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            },
+                            "required": [
+                                "message",
+                                "errors"
+                            ]
+                        }
+                    }
+                }
+            },
+            "NotFoundHttpException": {
+                "description": "Not found",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "message": {
+                                    "type": "string",
+                                    "description": "Error overview."
+                                }
+                            },
+                            "required": [
+                                "message"
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

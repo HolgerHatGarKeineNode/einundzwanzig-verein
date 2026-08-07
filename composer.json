@@ -11,6 +11,7 @@
         "php": "^8.4",
         "akuechler/laravel-geoly": "^1.0",
         "archtechx/enums": "^1.1",
+        "dedoc/scramble": "^0.13.39",
         "einundzwanzig/group": "dev-master",
         "laravel/framework": "^13.0",
         "laravel/nightwatch": "^1.22",

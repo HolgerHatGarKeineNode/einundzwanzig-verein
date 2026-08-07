@@ -27,6 +27,19 @@ use Illuminate\Http\Request;
  */
 class ShowConfigController extends ApiV1Controller
 {
+    /**
+     * Get the annual fee and what an application must carry.
+     *
+     * The only endpoint on this API that does not require a NIP-98 signature:
+     * send the client key alone. A client has to be able to show the fee
+     * before anybody has signed anything, and the response is association-wide
+     * — it is identical for every caller.
+     *
+     * `year` is the fee year the association is currently collecting, and it
+     * is the only year `POST /api/v1/membership/payments/{year}/invoice`
+     * accepts. `application.required_fields` and `application.optional_fields`
+     * name the body fields of `POST /api/v1/membership/applications`.
+     */
     public function __invoke(Request $request): MembershipConfigResource
     {
         return new MembershipConfigResource($this->membership);
