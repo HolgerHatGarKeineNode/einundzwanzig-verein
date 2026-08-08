@@ -111,9 +111,19 @@ new class extends Component
                 Signiere mit deinem Nostr-Wallet
             </flux:heading>
 
+            {{-- Der Text nennt beide Wege und behauptet keinen davon.
+
+                 Vorher stand hier „in deiner Browser-Extension" — auf dem Telefon
+                 gibt es die in aller Regel nicht. Dort liefert window.nostr.js
+                 (public/dist/window.nostr.min.js.js, konfiguriert ueber
+                 window.wnjParams im Layout) das window.nostr-Objekt nach und
+                 oeffnet beim Signieren einen eigenen Dialog. Der liegt mit einem
+                 sehr hohen z-index UEBER diesem Overlay, ist also bedienbar —
+                 aber der alte Satz schickte den Nutzer zu einer Erweiterung, die
+                 er nicht hat, waehrend die Loesung vor ihm stand. --}}
             <flux:text id="nostr-login-progress-description-{{ $location }}" class="mt-3 text-zinc-600 dark:text-zinc-400">
-                Bitte bestätige die Login-Anfrage in deiner Browser-Extension.
-                Du wirst gleich automatisch weitergeleitet.
+                Bestätige die Anmeldung in deiner Browser-Erweiterung oder im
+                Nostr-Dialog über dieser Seite. Danach geht es automatisch weiter.
             </flux:text>
 
             <flux:text size="sm" class="mt-6 text-zinc-500 dark:text-zinc-500">

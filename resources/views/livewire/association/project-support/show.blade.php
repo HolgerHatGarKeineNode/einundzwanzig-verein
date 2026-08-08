@@ -32,7 +32,13 @@ new class extends Component {
             $this->currentPubkey = NostrAuth::pubkey();
             $this->isAllowed = true;
             $this->mountWithNostrAuth();
-            $this->ownVoteExists = Vote::query()
+            // `currentPleb` ist nullable — eine angemeldete Sitzung ohne
+            // Mitgliedseintrag ist ein gültiger Zustand (der Eintrag kann nach
+            // dem Login entfernt worden sein). `ownVote` unten prüft das bereits;
+            // hier fehlte die Prüfung und die Seite antwortete mit einer 500
+            // statt mit der Karte, die dem Betrachter erklärt, warum er nicht
+            // abstimmen kann.
+            $this->ownVoteExists = $this->currentPleb !== null && Vote::query()
                 ->where('project_proposal_id', $this->projectProposal->id)
                 ->where('einundzwanzig_pleb_id', $this->currentPleb->id)
                 ->exists();
@@ -884,6 +890,119 @@ new class extends Component {
                             </div>
                             <p class="mt-2 text-sm text-text-tertiary">
                                 Deine Stimme ist endgültig.
+                            </p>
+                        @endif
+                    </div>
+                @else
+                    {{-- Ersatzzustand derselben Karte — die Seite darf an dieser
+                         Stelle nicht schweigen.
+
+                         Die Route ist oeffentlich, die Karte hing allein am Login:
+                         Wer ohne Anmeldung kam (auf dem Telefon der Normalfall, dort
+                         gibt es keine Signer-Erweiterung), sah die ganze Seite, aber
+                         die Abstimmung fehlte ERSATZLOS. Nichts auf der Seite sagte,
+                         dass es sie ueberhaupt gibt oder wie man an sie kommt — das
+                         liest sich als „hier darf niemand abstimmen", nicht als
+                         „melde dich an". Gemeldet aus dem Verein, live nachgestellt.
+
+                         `order-1` wie die Karte, die hier sonst steht: Der Ersatz
+                         nimmt exakt denselben Platz in der Spalte ein. Wer sich
+                         anmeldet, sieht danach dieselbe Box an derselben Stelle mit
+                         Bedienelementen — keine Karte, die woanders auftaucht. Auf
+                         dem Telefon haelt `order-1` sie ausserdem VOR den beiden
+                         Zaehlkarten (order-2/order-3): Wie andere abgestimmt haben,
+                         ist erst interessant, wenn man weiss, ob und wie man selbst
+                         mitreden kann. Ohne die Klasse fiele sie ans Ende der Spalte,
+                         also hinter genau diese Zaehlkarten.
+
+                         Auch die Beschriftung bleibt „Deine Stimme". Der Slot behaelt
+                         seine Identitaet ueber alle Anmeldezustaende hinweg; eine
+                         eigene Ueberschrift wie „Anmeldung noetig" waere eine zweite
+                         Vokabel fuer dieselbe Sache. --}}
+                    <div class="order-1 rounded-xl border border-border-subtle bg-bg-surface p-5">
+                        <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary mb-1">
+                            Deine Stimme
+                        </div>
+
+                        @if(NostrAuth::check())
+                            {{-- Angemeldet, aber ohne Mitgliedseintrag. Selten, aber
+                                 erreichbar: die Sitzung haelt nur den Pubkey, der
+                                 Eintrag kann danach entfernt worden sein.
+
+                                 Bewusst der Warnhinweis-Aufbau der Karte „Kein
+                                 Kontaktweg hinterlegt." weiter unten (Icon +
+                                 Klartextzeile + Erklaerung) statt eines
+                                 flux:callout: In dieser Spalte ist die Karte das
+                                 Layout-Element, ein Callout braechte eine zweite
+                                 Rahmensprache mit.
+
+                                 Der Wortlaut nennt bewusst NICHT „aktives Mitglied +
+                                 bezahlte Mitgliedschaft" wie die Callouts in
+                                 news.blade.php und form/create.blade.php: Abstimmen
+                                 verlangt das nicht. VotePolicy::create prueft
+                                 ausschliesslich, ob ein Mitgliedseintrag existiert
+                                 und noch keine Stimme abgegeben wurde — eine
+                                 unbezahlte Mitgliedschaft stimmt hier mit ab
+                                 (Stimmungsbild). Ein Hinweis auf den Beitrag
+                                 schickte den Betrachter also einer Bedingung
+                                 hinterher, die es fuer diese Karte nicht gibt. --}}
+                            <div class="flex items-start gap-2">
+                                <flux:icon name="exclamation-triangle" variant="micro" class="mt-1 shrink-0 text-yellow-400" aria-hidden="true"/>
+                                <div>
+                                    <p class="text-sm text-text-primary">
+                                        Zu deinem Schlüssel ist kein Mitgliedseintrag hinterlegt.
+                                    </p>
+                                    <p class="mt-1 text-sm text-text-secondary">
+                                        Abstimmen kann nur, wer im Verein als Mitglied geführt wird.
+                                        Bitte kontaktiere den Vorstand, wenn du denkst, dass du berechtigt sein solltest.
+                                    </p>
+                                </div>
+                            </div>
+                        @else
+                            <p class="mb-3 text-sm text-text-secondary">
+                                Mit einer Nostr-Anmeldung kannst du diesem Antrag zustimmen oder ihn ablehnen.
+                            </p>
+
+                            {{-- Zweite Instanz von auth-button, nicht nur ein Verweis
+                                 aufs Menue. Der Ausloeser gehoert dorthin, wo der
+                                 Grund steht — sonst schickt die Karte den Handy-Nutzer
+                                 auf die Suche nach genau dem Knopf, den sie ihm
+                                 gerade erklaert hat.
+
+                                 Unschaedlich, weil die Komponente auf Mehrfach-Mounts
+                                 ausgelegt IST: `mount()` zieht die Challenge ueber
+                                 NostrAuth::currentOrIssueChallenge(), deren Docblock
+                                 genau diesen Fall beschreibt (Sidebar + Navbar auf
+                                 derselben Seite) — beide Instanzen rendern denselben
+                                 Sitzungswert, statt sich gegenseitig zu ueberschreiben.
+                                 Die IDs des Fortschritts-Overlays haengen am
+                                 `location`-Parameter, deshalb hier ein eigener Wert.
+                                 `nostrLoginInProgress` ist Zustand der EINEN
+                                 Alpine-Insel, also zeigt nur die geklickte Instanz ihr
+                                 Overlay. Und dass das `nostrLoggedIn`-Ereignis
+                                 mehrere Livewire-Hoerer erreicht, ist bereits heute so
+                                 (diese Seite hoert ueber WithNostrAuth mit);
+                                 NostrAuth::loginWithSignedEvent ist dafuer
+                                 ausdruecklich idempotent.
+
+                                 `[&_button]`: Die Breite laesst sich nicht als Klasse
+                                 durchreichen, die Komponente nimmt nur `location`.
+                                 Der einzige Knopf im ausgeloggten Zustand ist der
+                                 Anmelde-Knopf; volle Breite und 44px Hoehe wie bei
+                                 den Nachbarkarten. --}}
+                            <div class="[&_button]:w-full [&_button]:min-h-11">
+                                <livewire:auth-button location="project-vote" :key="'auth-button-project-vote'"/>
+                            </div>
+
+                            {{-- Der eigentliche Grund fuer die Meldung: Auf dem Handy
+                                 endet „melde dich an" ohne diesen Satz im Nichts.
+                                 Bewusst UNTER dem Knopf und in Tertiaerfarbe — wer
+                                 einen Signer im Browser hat, braucht ihn nicht, und
+                                 der Dialog zeigt den QR-Code ohnehin selbst. --}}
+                            <p class="mt-3 border-t border-border-subtle pt-3 text-sm text-text-tertiary">
+                                Auf dem Handy gibt es meist keine Browser-Erweiterung. Der Anmelde-Dialog
+                                nimmt dort auch einen bunker://-Link entgegen oder zeigt einen QR-Code
+                                zum Scannen mit deiner Signer-App.
                             </p>
                         @endif
                     </div>
