@@ -509,6 +509,74 @@ it('hides voting buttons from unauthenticated users', function () {
         ->assertDontSee('Ablehnen');
 });
 
+// Ersatzzustand der Abstimmungskarte
+//
+// Die Detailseite ist oeffentlich erreichbar, die Karte „Deine Stimme" hing aber
+// allein am Login. Ein ausgeloggter Besucher — auf dem Telefon der Normalfall,
+// dort gibt es keine Signer-Erweiterung — sah die ganze Seite, nur die
+// Abstimmung fehlte ersatzlos und kommentarlos. Die drei Zustaende des Slots
+// werden hier zusammen geprueft, damit keiner davon still verschwindet.
+
+it('offers a nostr login in place of the voting card for a logged out visitor', function () {
+    $project = ProjectProposal::factory()->create();
+
+    Livewire::test('association.project-support.show', ['projectProposal' => $project])
+        ->assertSet('isVoter', false)
+        // Der Slot behaelt seine Beschriftung ueber alle Anmeldezustaende.
+        ->assertSee('Deine Stimme')
+        ->assertSee('Mit einer Nostr-Anmeldung kannst du diesem Antrag zustimmen oder ihn ablehnen.')
+        // Der Auslöser steht IN der Karte, nicht nur im Menue.
+        ->assertSee('Mit Nostr verbinden')
+        // Ohne diesen Satz endet „melde dich an" auf dem Telefon im Nichts.
+        ->assertSee('Auf dem Handy gibt es meist keine Browser-Erweiterung.')
+        ->assertSee('bunker://')
+        // Eigener location-Wert: sonst kollidierten die Overlay-IDs mit der
+        // Instanz in der Sidebar, die auf derselben Seite gemountet wird.
+        ->assertSee('nostr-login-progress-heading-project-vote', escape: false)
+        ->assertDontSee('Zustimmen')
+        ->assertDontSee('Ablehnen');
+});
+
+it('names the missing member record instead of answering with an error', function () {
+    $project = ProjectProposal::factory()->create();
+
+    // Eine angemeldete Sitzung haelt nur den Pubkey. Fehlt der Mitgliedseintrag
+    // dazu (nach dem Login entfernt), lief mount() vorher in
+    // „Attempt to read property id on null" — die Seite antwortete mit einer
+    // 500 statt mit dem Hinweis.
+    $pubkey = str_repeat('ab', 32);
+    expect(EinundzwanzigPleb::query()->where('pubkey', $pubkey)->exists())->toBeFalse();
+
+    NostrAuth::login($pubkey);
+
+    Livewire::test('association.project-support.show', ['projectProposal' => $project])
+        ->assertStatus(200)
+        ->assertSet('isVoter', false)
+        ->assertSee('Deine Stimme')
+        ->assertSee('Zu deinem Schlüssel ist kein Mitgliedseintrag hinterlegt.')
+        ->assertSee('Bitte kontaktiere den Vorstand, wenn du denkst, dass du berechtigt sein solltest.')
+        // Wer angemeldet ist, bekommt keinen zweiten Anmelde-Knopf vorgesetzt.
+        ->assertDontSee('Mit Nostr verbinden')
+        ->assertDontSee('Zustimmen')
+        ->assertDontSee('Ablehnen');
+});
+
+it('leaves the voting card untouched for a member who may vote', function () {
+    $pleb = EinundzwanzigPleb::factory()->create();
+    $project = ProjectProposal::factory()->create();
+
+    NostrAuth::login($pleb->pubkey);
+
+    Livewire::test('association.project-support.show', ['projectProposal' => $project])
+        ->assertSet('isVoter', true)
+        ->assertSee('Deine Stimme')
+        ->assertSee('Zustimmen')
+        ->assertSee('Ablehnen')
+        // Keiner der beiden Ersatzzustaende darf daneben stehen.
+        ->assertDontSee('Mit Nostr verbinden')
+        ->assertDontSee('Zu deinem Schlüssel ist kein Mitgliedseintrag hinterlegt.');
+});
+
 // Stimmungsbild der Nicht-Vorstandsmitglieder
 
 it('shows the members sentiment panel even when nobody has voted yet', function () {
