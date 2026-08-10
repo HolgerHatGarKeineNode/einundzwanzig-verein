@@ -68,6 +68,19 @@ class MembershipService
      */
     public const INVOICE_SOURCE = 'einundzwanzig-membership';
 
+    /**
+     * The one payment method id whose `destination` is a BOLT11.
+     *
+     * SELECTED BY THIS EXACT VALUE, never by "the first method that has a
+     * `destination` key". Measured over the live store (P2,
+     * `p2-machbarkeit.md` section (a)): `BTC-LNURL` is present on essentially
+     * every invoice and carries `destination` as an EMPTY STRING. Picking the
+     * first method with that key therefore hands the client precisely the
+     * empty string that looks like a payment request and is none — the case
+     * this feature exists to avoid.
+     */
+    public const LIGHTNING_PAYMENT_METHOD_ID = 'BTC-LN';
+
     public function __construct(protected BtcPayClient $btcPay) {}
 
     /**
@@ -191,9 +204,29 @@ class MembershipService
      * invoice at BTCPay while only one was ever stored; the other stayed open
      * and unaccounted for, so paying it produced money without a booking.
      *
+     * `$returnUrl` is where BTCPay sends the payer after the checkout. It is
+     * ALREADY VALIDATED when it arrives here — the allowlist lives in
+     * `InvoiceReturnUrl` and is applied by the form request, because an
+     * unlisted address has to be refused with a 422 rather than corrected. A
+     * null keeps the association's own profile page, which is what every
+     * caller before this parameter existed got and still gets.
+     *
+     * IT ONLY TAKES EFFECT WHEN AN INVOICE IS ACTUALLY CREATED. On the
+     * idempotent path there is no payload to put it in: the redirect belongs
+     * to the invoice that already exists at BTCPay, and rewriting it would
+     * mean a second call to a payment provider to change where a stranger's
+     * browser goes afterwards. A client that needs a different return address
+     * needs a different invoice.
+     *
+     * THE BOLT11 IS NOT PART OF THIS ANSWER, on purpose. Reading it costs a
+     * second BTCPay round trip (`lightningInvoiceFor()`), and the caller that
+     * runs this most often — the association's own profile page — redirects
+     * the payer to the checkout immediately and would never look at it. Every
+     * caller that wants it asks for it; none pays for it by default.
+     *
      * @return array{payment_event: PaymentEvent, invoice: array<string, mixed>|null, checkout_url: string, created: bool}
      */
-    public function createInvoice(EinundzwanzigPleb $pleb, ?int $year = null, string $orderId = ''): array
+    public function createInvoice(EinundzwanzigPleb $pleb, ?int $year = null, string $orderId = '', ?string $returnUrl = null): array
     {
         /*
          * BEFORE anything is resolved, created or sent. An existing payment
@@ -207,7 +240,7 @@ class MembershipService
 
         $paymentEvent = $this->resolvePaymentEvent($pleb, $year);
 
-        $result = DB::transaction(function () use ($pleb, $paymentEvent, $orderId): array {
+        $result = DB::transaction(function () use ($pleb, $paymentEvent, $orderId, $returnUrl): array {
             $locked = PaymentEvent::query()
                 ->whereKey($paymentEvent->getKey())
                 ->lockForUpdate()
@@ -217,7 +250,7 @@ class MembershipService
                 return ['payment_event' => $locked, 'invoice' => null, 'created' => false];
             }
 
-            $invoice = $this->btcPay->createInvoice($this->invoicePayload($pleb, $locked, $orderId));
+            $invoice = $this->btcPay->createInvoice($this->invoicePayload($pleb, $locked, $orderId, $returnUrl));
 
             $invoiceId = $invoice['id'] ?? null;
 
@@ -248,6 +281,126 @@ class MembershipService
             ?? $this->btcPay->checkoutUrl($invoiceId);
 
         return $result;
+    }
+
+    /**
+     * The BOLT11 of a BTCPay invoice — or null, and never an empty string.
+     *
+     * BOTH PATHS OF `createInvoice()` END HERE, and the second one is why this
+     * takes an invoice id rather than just a payload. On the first call there
+     * is a BTCPay payload; on the idempotent repeat there is none — `invoice`
+     * is null by design — so a value read only from the payload would be
+     * present on the first call and absent on every repeat, which is the one
+     * shape a client cannot build on. This reads the payload when there is
+     * one and reloads through the stored invoice id when there is not.
+     *
+     * FAIL-SOFT, DELIBERATELY. Every failure of the extra BTCPay round trip
+     * this may need — timeout, 4xx, 5xx, an unparsable body — is answered with
+     * null and logged, never rethrown. The reason is not optimism about
+     * BTCPay: the BOLT11 is an ADDITIVE convenience, and the checkout URL that
+     * travels next to it in the same response is unaffected and still leads to
+     * a payable invoice. Letting this call fail the request would turn a
+     * missing shortcut into "the association cannot take your money", which is
+     * a strictly worse answer to the same outage. `BtcPayClient` throws on
+     * purpose so that this decision is made here, once, where it can be read.
+     *
+     * The catch is `Throwable` rather than `HttpClientException` and that is
+     * the same decision, not a wider one by accident: the call is a read whose
+     * result is optional, so NOTHING it can raise — including a bug in the
+     * parsing below — may reach a caller who is otherwise able to answer.
+     *
+     * WHAT NULL DOES NOT MEAN: that the invoice expired. Measured (P2,
+     * `p2-machbarkeit.md` section (a)): BTCPay keeps handing out the dead
+     * BOLT11 of an invoice that expired 785 hours ago, unchanged. Expiry is
+     * read from the invoice's `expirationTime`, or from the BOLT11's own
+     * timestamp plus its `x` tag — both of which say 1440 minutes here,
+     * identical to the invoice's own lifetime, so there is no second deadline
+     * to publish. Null means one thing only: no `BTC-LN` method carrying a
+     * non-empty destination.
+     *
+     * @param  array<string, mixed>|null  $invoicePayload  the create response, when this call has one
+     */
+    public function lightningInvoiceFor(string $invoiceId, ?array $invoicePayload = null): ?string
+    {
+        /*
+         * From the payload first, when it carries the methods. The BTCPay
+         * version this installation runs does not put them into the create
+         * response — measured, not assumed — so in practice this is the branch
+         * that does not fire. It stays because it costs one array read to save
+         * a round trip the day a BTCPay version does include them, and because
+         * the alternative is a request this method already knows the answer to.
+         */
+        $fromPayload = $this->extractLightningInvoice($invoicePayload['paymentMethods'] ?? null);
+
+        if ($fromPayload !== null) {
+            return $fromPayload;
+        }
+
+        if (preg_match(self::INVOICE_ID_PATTERN, $invoiceId) !== 1) {
+            return null;
+        }
+
+        try {
+            $methods = $this->btcPay->invoicePaymentMethods($invoiceId);
+        } catch (Throwable $exception) {
+            /*
+             * The invoice id and the exception CLASS, not the message: a
+             * BTCPay error body travels inside `RequestException::getMessage()`
+             * and would put upstream response content into this application's
+             * log for a call whose failure is already fully described by "it
+             * did not answer usably".
+             */
+            Log::warning('membership.bolt11_unavailable', [
+                'invoice' => $invoiceId,
+                'exception' => $exception::class,
+            ]);
+
+            return null;
+        }
+
+        return $this->extractLightningInvoice($methods);
+    }
+
+    /**
+     * Pick the BOLT11 out of a BTCPay payment-methods list.
+     *
+     * Two things this refuses to do, both measured against the live store
+     * (P2, `p2-machbarkeit.md` section (a)):
+     *
+     *  1. It selects on `paymentMethodId === 'BTC-LN'` and on nothing else.
+     *     `BTC-LNURL` ships on nearly every invoice with `destination` set to
+     *     the empty string, so "the first method with a destination" returns
+     *     that empty string.
+     *  2. It never returns `''`. An empty or whitespace-only destination is
+     *     null, because a client checking `if (bolt11)` and a client checking
+     *     `if (bolt11 !== null)` must reach the same conclusion.
+     *
+     * That the Lightning method can be missing altogether is not a
+     * precaution: 4 of 239 invoices in the store's history have no `BTC-LN`
+     * method, one of them a real membership fee invoice of this very
+     * application.
+     */
+    protected function extractLightningInvoice(mixed $methods): ?string
+    {
+        if (! is_array($methods)) {
+            return null;
+        }
+
+        foreach ($methods as $method) {
+            if (! is_array($method) || ($method['paymentMethodId'] ?? null) !== self::LIGHTNING_PAYMENT_METHOD_ID) {
+                continue;
+            }
+
+            $destination = $method['destination'] ?? null;
+
+            if (! is_string($destination) || trim($destination) === '') {
+                return null;
+            }
+
+            return trim($destination);
+        }
+
+        return null;
     }
 
     /**
@@ -1166,9 +1319,10 @@ class MembershipService
     }
 
     /**
+     * @param  string|null  $returnUrl  an ALREADY VALIDATED return address, or null for the association's own profile page
      * @return array<string, mixed>
      */
-    protected function invoicePayload(EinundzwanzigPleb $pleb, PaymentEvent $paymentEvent, string $orderId): array
+    protected function invoicePayload(EinundzwanzigPleb $pleb, PaymentEvent $paymentEvent, string $orderId, ?string $returnUrl = null): array
     {
         return [
             'amount' => $this->fee(),
@@ -1219,7 +1373,20 @@ class MembershipService
             ],
             'checkout' => [
                 'expirationMinutes' => 60 * 24,
-                'redirectURL' => url()->route('association.profile'),
+                /*
+                 * WHERE THE PAYER LANDS AFTERWARDS. Null — the case of every
+                 * caller that existed before this was configurable, including
+                 * the association's own profile page — keeps the profile
+                 * route, byte for byte what was sent before.
+                 *
+                 * A non-null value has already passed the allowlist in
+                 * `InvoiceReturnUrl`; nothing is filtered here. This is
+                 * written down because the value reaches a third party that
+                 * will send a browser to it: were the check ever moved or
+                 * dropped upstream, this line would forward an open redirect
+                 * without a single local symptom.
+                 */
+                'redirectURL' => $returnUrl ?? url()->route('association.profile'),
                 'redirectAutomatically' => true,
                 'defaultLanguage' => 'de',
             ],

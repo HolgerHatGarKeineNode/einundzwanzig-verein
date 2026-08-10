@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Api\V1\Membership;
 
 use App\Exceptions\MembershipUnavailableException;
 use App\Http\Controllers\Api\V1\ApiV1Controller;
+use App\Http\Requests\Api\V1\StoreInvoiceRequest;
 use App\Http\Resources\Api\V1\InvoiceResource;
 use Illuminate\Http\Client\HttpClientException;
-use Illuminate\Http\Request;
 use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
 
 /**
@@ -25,6 +25,15 @@ use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
  * and the year is the current one. A body naming any of them is ignored — not
  * rejected, because a client sending `{"amount": 1}` is not to be helped with
  * an error message but to be charged the correct fee.
+ *
+ * THE ONE FIELD THAT IS TAKEN is `return_url`, and it is taken because it is
+ * the only value a client can send that leaves this application: it becomes
+ * `checkout.redirectURL` at BTCPay, whose page then sends the payer's browser
+ * there. It must appear on the server-side allowlist
+ * (`einundzwanzig.config.invoice_return_urls`) or the call is refused with a
+ * 422 — see `StoreInvoiceRequest` for why refusing beats correcting. Omitted,
+ * it changes nothing: the payer returns to the association's profile page, as
+ * before this field existed.
  *
  * Which is also why `{year}` may only ever be the current fee year. The
  * general assembly fixes the fee per year (Art. 4), so an invoice for a past
@@ -47,9 +56,25 @@ class StoreInvoiceController extends ApiV1Controller
      * that year already existed and the caller is being handed that one rather
      * than a second one — that is the normal idempotent answer, not an error.
      *
-     * THE REQUEST BODY IS IGNORED. Amount and currency come from the
-     * association's configuration and the fee year from `{year}`; a body
-     * naming any of them changes nothing.
+     * `bolt11` is the Lightning payment request of the same invoice, for a
+     * client that can pay it in-app instead of opening the checkout page. It
+     * is null when the invoice carries no Lightning payment method, and null
+     * again when BTCPay could not be asked in time — the checkout URL next to
+     * it works either way, so this field never turns an outage into a refusal.
+     * NULL DOES NOT MEAN EXPIRED: BTCPay hands out the payment request of a
+     * long-dead invoice unchanged. Read the deadline from the invoice, not
+     * from this field; it is the same 1440 minutes the checkout has.
+     *
+     * AMOUNT, CURRENCY AND FEE YEAR ARE NOT REQUEST VALUES. They come from the
+     * association's configuration and from `{year}`; a body naming any of them
+     * changes nothing.
+     *
+     * `return_url` is the single field of the body that is read. It decides
+     * where the payer lands after the checkout, must be one of the addresses
+     * configured on the server, and answers 422 when it is not. Send none and
+     * the payer returns to the association's profile page. It only takes
+     * effect on the call that actually creates the invoice — on an idempotent
+     * repeat the redirect belongs to the invoice that already exists.
      *
      * `{year}` MUST BE THE CURRENT FEE YEAR, the one
      * `GET /api/v1/membership/config` reports. The general assembly fixes the
@@ -67,7 +92,7 @@ class StoreInvoiceController extends ApiV1Controller
      * of the API — every call spends a request against the association's own
      * BTCPay key.
      */
-    public function __invoke(Request $request, string $year): InvoiceResource
+    public function __invoke(StoreInvoiceRequest $request, string $year): InvoiceResource
     {
         $pleb = $this->subject($request);
         $currentYear = $this->membership->currentYear();
@@ -77,7 +102,11 @@ class StoreInvoiceController extends ApiV1Controller
         }
 
         try {
-            $result = $this->membership->createInvoice($pleb, $currentYear);
+            $result = $this->membership->createInvoice(
+                $pleb,
+                $currentYear,
+                returnUrl: $request->returnUrl(),
+            );
         } catch (HttpClientException) {
             /*
              * Same answer and same reasoning as the refresh endpoint: BTCPay
@@ -106,6 +135,21 @@ class StoreInvoiceController extends ApiV1Controller
         return new InvoiceResource([
             'payment_event' => $result['payment_event'],
             'checkout_url' => $result['checkout_url'],
+            /*
+             * BOTH PATHS, and asked for here rather than inside
+             * `createInvoice()` because it costs a second BTCPay round trip
+             * that the association's own profile page — the other caller of
+             * that method — would pay for and never read. `invoice` is the
+             * create payload on the first call and null on the idempotent
+             * repeat; `lightningInvoiceFor()` handles both, reloading through
+             * the stored invoice id when there is no payload, and answers null
+             * rather than throwing when BTCPay does not cooperate. Nothing
+             * else in this response depends on it.
+             */
+            'bolt11' => $this->membership->lightningInvoiceFor(
+                (string) $result['payment_event']->btc_pay_invoice,
+                $result['invoice'],
+            ),
             'created' => $result['created'],
         ]);
     }

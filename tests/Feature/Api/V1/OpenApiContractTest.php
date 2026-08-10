@@ -204,6 +204,54 @@ it('documents every real /api/v1 route, and no route that is not real', function
             .json_encode($phantom));
 });
 
+it('publishes the two fields the onboarding flow depends on', function () {
+    /*
+     * A THIRD guarantee, and neither of the two above gives it. Coverage is
+     * about operations, not about fields; freshness proves that the document
+     * matches the code, which stays true when a field disappears from both.
+     * Drop `bolt11` from `InvoiceResource` or `return_url` from
+     * `StoreInvoiceRequest` and every other test in this repository keeps its
+     * colour while the client that was built against them breaks.
+     *
+     * Pinned as a shape, not as prose: the type, the nullability and the
+     * presence in `required` are the contract. `bolt11` MUST be nullable —
+     * invoices without a Lightning method exist on the real store — and it
+     * MUST be required, because a client has to be able to tell "no Lightning
+     * here" from "this response predates the field".
+     */
+    $document = contractTestCommittedDocument();
+
+    $invoice = $document['components']['schemas']['InvoiceResource'] ?? [];
+
+    expect($invoice['properties']['bolt11']['type'] ?? null)
+        ->toBe(['string', 'null'], 'InvoiceResource.bolt11 must be documented as a nullable string.')
+        // Always present, so a client can tell "no Lightning here" from "this
+        // response predates the field".
+        ->and($invoice['required'] ?? [])->toContain('bolt11');
+
+    $requestBody = $document['paths']['/api/v1/membership/payments/{year}/invoice']['post']['requestBody'] ?? [];
+
+    expect($requestBody['content']['application/json']['schema']['$ref'] ?? null)
+        ->toBe('#/components/schemas/StoreInvoiceRequest', 'The invoice endpoint must document a request body.');
+
+    $invoiceRequest = $document['components']['schemas']['StoreInvoiceRequest'] ?? [];
+
+    expect($invoiceRequest['properties']['return_url']['type'] ?? null)
+        ->toBe(['string', 'null'], 'StoreInvoiceRequest.return_url must be documented as an optional, nullable string.')
+        // Optional, and that is the compatibility promise: a client that sends
+        // no body at all keeps working exactly as before the field existed.
+        ->and($invoiceRequest['required'] ?? [])
+        ->not->toContain('return_url');
+
+    // And the refusal of an unlisted address is part of the published
+    // contract, not an implementation detail a client discovers in production.
+    $responses = $document['paths']['/api/v1/membership/payments/{year}/invoice']['post']['responses'] ?? [];
+
+    // 422 and not '422': PHP turns a numeric JSON object key into an int on
+    // decode, so the string spelling never matches.
+    expect(array_keys($responses))->toContain(422);
+});
+
 it('matches a fresh export of the code that produced it', function () {
     // Outside the repository on purpose — a test that writes into the
     // working tree while proving the working tree is unchanged would defeat

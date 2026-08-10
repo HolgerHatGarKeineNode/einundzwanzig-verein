@@ -73,6 +73,39 @@ return [
     ],
 
     /*
+     * Erlaubte Rueckkehr-Adressen nach dem BTCPay-Checkout — die VOLLSTAENDIGE
+     * Liste. Format der Env-Variable:
+     *
+     *   MEMBERSHIP_INVOICE_RETURN_URLS="https://einundzwanzig.group/verein,https://…"
+     *
+     * Wozu ueberhaupt: bei `POST /payments/{jahr}/invoice` darf ein Client eine
+     * Adresse mitgeben, damit der Zahler nach dem Checkout wieder in DESSEN
+     * Onboarding-Flow landet statt auf der Vereins-Profilseite. Die Adresse
+     * wandert in `checkout.redirectURL` und damit in eine Seite, die einen
+     * fremden Browser weiterschickt. Frei setzbar waere sie ein offener
+     * Weiterleitungs-Vektor — mit dem Vertrauensbonus der Vereinsdomain davor.
+     *
+     * Fail-closed, wie bei `api_client_keys`: nicht gesetzt oder leer ergibt
+     * eine LEERE Liste, und eine leere Liste passt auf keine Adresse. Ein
+     * Client, der dann eine mitgibt, bekommt 422 — er wird NICHT still auf die
+     * Profilseite zurueckgesetzt. Ein stiller Rueckfall wuerde einen
+     * Angriffsversuch und einen Konfigurationsfehler gleich aussehen lassen:
+     * beide „funktionieren" dann, und beide bleiben unbemerkt.
+     *
+     * Ohne mitgegebene Adresse bleibt alles wie bisher — die Profilseite. Die
+     * Liste kostet also nichts, solange niemand sie braucht.
+     *
+     * Verglichen wird STRUKTURIERT (Schema, Host, Port, Pfad, Query), nicht
+     * per Praefix auf der Zeichenkette: `InvoiceReturnUrl::isAllowed()`. Ein
+     * Praefix-Vergleich liesse `https://verein.einundzwanzig.space.boese.tld`
+     * durch.
+     */
+    'invoice_return_urls' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env('MEMBERSHIP_INVOICE_RETURN_URLS', ''))
+    ))),
+
+    /*
      * Server-zu-Server-Schluessel der /api/v1-Clients, als Abbildung
      * Name -> Key. Format der Env-Variable:
      *

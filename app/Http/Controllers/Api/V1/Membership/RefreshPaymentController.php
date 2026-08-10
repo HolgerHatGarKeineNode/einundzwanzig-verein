@@ -53,6 +53,15 @@ class RefreshPaymentController extends ApiV1Controller
      * `POST /api/v1/membership/payments/{year}/invoice`, which starts a fresh
      * checkout.
      *
+     * `bolt11` is the Lightning payment request of the invoice still on
+     * record, so that a client which lost it — a reload, a fresh device — can
+     * get it back here. It matters that it is here: creating an invoice is
+     * capped at a handful of calls per pubkey and day, and spending one of
+     * them to re-read a payment request that already exists would be the wrong
+     * way round. Null when the invoice has no Lightning method, when the fee
+     * year was just freed, and when BTCPay could not be asked — the checkout
+     * URL is unaffected in every one of those cases.
+     *
      * 404 when there is nothing upstream to ask about: no membership record,
      * no fee recorded for that year, or a fee that never had an invoice. 503
      * when BTCPay is unreachable — the stored payment state is then left
@@ -92,6 +101,18 @@ class RefreshPaymentController extends ApiV1Controller
             'checkout_url' => $invoiceId === ''
                 ? null
                 : app(BtcPayClient::class)->checkoutUrl($invoiceId),
+            /*
+             * The same field the invoice endpoint answers, filled the same
+             * way, so that `bolt11` means one thing across this API rather
+             * than "a payment request, unless you happened to ask the other
+             * endpoint". `lightningInvoiceFor()` is fail-soft: a BTCPay that
+             * does not answer costs this field and nothing else. Skipped
+             * outright once the fee year has been freed — there is no invoice
+             * left to read a payment request from.
+             */
+            'bolt11' => $invoiceId === ''
+                ? null
+                : $this->membership->lightningInvoiceFor($invoiceId),
             /*
              * Always false. `created` reports whether THIS call created a
              * BTCPay invoice, and a refresh never does — it only reads.

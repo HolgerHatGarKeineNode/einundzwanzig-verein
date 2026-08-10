@@ -431,7 +431,7 @@
         "/api/v1/membership/payments/{year}/refresh": {
             "post": {
                 "operationId": "v1.membership.payments.refresh",
-                "description": "The membership is granted by a BTCPay webhook, and a webhook arrives\nfrom outside: if a delivery is lost, somebody has paid and is not a\nmember. This endpoint is the client-driven repair for that. It runs\nthrough the very same booking path the webhook uses, so a settled\ninvoice found here grants the membership just as the webhook would have.\n\nCreates nothing \u2014 `created` is always false \u2014 and therefore accepts ANY\nyear, unlike invoice creation: an unresolved invoice from a previous\nyear is still worth settling.\n\n`checkout_url` is null when BTCPay reported the invoice as expired or\ninvalid. The fee year has been freed up again and the next step is\n`POST /api/v1/membership/payments/{year}/invoice`, which starts a fresh\ncheckout.\n\n404 when there is nothing upstream to ask about: no membership record,\nno fee recorded for that year, or a fee that never had an invoice. 503\nwhen BTCPay is unreachable \u2014 the stored payment state is then left\nexactly as it was, because the only safe reading of an unknown payment\nis the one already on record.",
+                "description": "The membership is granted by a BTCPay webhook, and a webhook arrives\nfrom outside: if a delivery is lost, somebody has paid and is not a\nmember. This endpoint is the client-driven repair for that. It runs\nthrough the very same booking path the webhook uses, so a settled\ninvoice found here grants the membership just as the webhook would have.\n\nCreates nothing \u2014 `created` is always false \u2014 and therefore accepts ANY\nyear, unlike invoice creation: an unresolved invoice from a previous\nyear is still worth settling.\n\n`checkout_url` is null when BTCPay reported the invoice as expired or\ninvalid. The fee year has been freed up again and the next step is\n`POST /api/v1/membership/payments/{year}/invoice`, which starts a fresh\ncheckout.\n\n`bolt11` is the Lightning payment request of the invoice still on\nrecord, so that a client which lost it \u2014 a reload, a fresh device \u2014 can\nget it back here. It matters that it is here: creating an invoice is\ncapped at a handful of calls per pubkey and day, and spending one of\nthem to re-read a payment request that already exists would be the wrong\nway round. Null when the invoice has no Lightning method, when the fee\nyear was just freed, and when BTCPay could not be asked \u2014 the checkout\nURL is unaffected in every one of those cases.\n\n404 when there is nothing upstream to ask about: no membership record,\nno fee recorded for that year, or a fee that never had an invoice. 503\nwhen BTCPay is unreachable \u2014 the stored payment state is then left\nexactly as it was, because the only safe reading of an unknown payment\nis the one already on record.",
                 "summary": "Re-read an invoice from BTCPay and book whatever it says",
                 "tags": [
                     "Payments"
@@ -756,7 +756,7 @@
         "/api/v1/membership/payments/{year}/invoice": {
             "post": {
                 "operationId": "v1.membership.payments.invoice",
-                "description": "Send the payer to `checkout_url`. `created` is false when an invoice for\nthat year already existed and the caller is being handed that one rather\nthan a second one \u2014 that is the normal idempotent answer, not an error.\n\nTHE REQUEST BODY IS IGNORED. Amount and currency come from the\nassociation's configuration and the fee year from `{year}`; a body\nnaming any of them changes nothing.\n\n`{year}` MUST BE THE CURRENT FEE YEAR, the one\n`GET /api/v1/membership/config` reports. The general assembly fixes the\nfee per year, so an invoice for a past year would book today's amount\nagainst a year that owed a different one \u2014 and since a settled fee for\nany year constitutes a membership, an open year would let somebody join\nby paying a fee for 1970. Any other year answers 404.\n\nA pubkey with no membership record answers 404 as well. The way in is\n`POST /api/v1/membership/applications`.\n\n503 means BTCPay is unreachable or the fee is unusable on the current\nconfiguration. Nothing was charged and nothing was recorded; retry\nlater. This endpoint carries its own, much tighter quota than the rest\nof the API \u2014 every call spends a request against the association's own\nBTCPay key.",
+                "description": "Send the payer to `checkout_url`. `created` is false when an invoice for\nthat year already existed and the caller is being handed that one rather\nthan a second one \u2014 that is the normal idempotent answer, not an error.\n\n`bolt11` is the Lightning payment request of the same invoice, for a\nclient that can pay it in-app instead of opening the checkout page. It\nis null when the invoice carries no Lightning payment method, and null\nagain when BTCPay could not be asked in time \u2014 the checkout URL next to\nit works either way, so this field never turns an outage into a refusal.\nNULL DOES NOT MEAN EXPIRED: BTCPay hands out the payment request of a\nlong-dead invoice unchanged. Read the deadline from the invoice, not\nfrom this field; it is the same 1440 minutes the checkout has.\n\nAMOUNT, CURRENCY AND FEE YEAR ARE NOT REQUEST VALUES. They come from the\nassociation's configuration and from `{year}`; a body naming any of them\nchanges nothing.\n\n`return_url` is the single field of the body that is read. It decides\nwhere the payer lands after the checkout, must be one of the addresses\nconfigured on the server, and answers 422 when it is not. Send none and\nthe payer returns to the association's profile page. It only takes\neffect on the call that actually creates the invoice \u2014 on an idempotent\nrepeat the redirect belongs to the invoice that already exists.\n\n`{year}` MUST BE THE CURRENT FEE YEAR, the one\n`GET /api/v1/membership/config` reports. The general assembly fixes the\nfee per year, so an invoice for a past year would book today's amount\nagainst a year that owed a different one \u2014 and since a settled fee for\nany year constitutes a membership, an open year would let somebody join\nby paying a fee for 1970. Any other year answers 404.\n\nA pubkey with no membership record answers 404 as well. The way in is\n`POST /api/v1/membership/applications`.\n\n503 means BTCPay is unreachable or the fee is unusable on the current\nconfiguration. Nothing was charged and nothing was recorded; retry\nlater. This endpoint carries its own, much tighter quota than the rest\nof the API \u2014 every call spends a request against the association's own\nBTCPay key.",
                 "summary": "Start, or hand back, the BTCPay checkout for one annual fee",
                 "tags": [
                     "Payments"
@@ -774,6 +774,15 @@
                         "example": "2026"
                     }
                 ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/StoreInvoiceRequest"
+                            }
+                        }
+                    }
+                },
                 "responses": {
                     "200": {
                         "description": "`InvoiceResource`",
@@ -814,6 +823,9 @@
                     },
                     "404": {
                         "$ref": "#/components/responses/NotFoundHttpException"
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/ValidationException"
                     },
                     "401": {
                         "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
@@ -891,6 +903,16 @@
                             "https://pay.einundzwanzig.space/i/3T8xkPZbvhMzTMbY5rYWbA"
                         ]
                     },
+                    "bolt11": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "The Lightning payment request (BOLT11) of the same invoice, so that a client with a wallet can pay it without opening the checkout page. It is additive: null means \"use `checkout_url`\", never \"something went wrong\". Null when the invoice carries no Lightning payment method \u2014 which happens on real invoices of this store \u2014 and null again when BTCPay could not be asked in time. NULL IS NOT AN EXPIRY SIGNAL: BTCPay hands out the payment request of a long-dead invoice unchanged, so read the deadline from the invoice itself. It is the same 1440 minutes the checkout has, so there is no second deadline to track.",
+                        "examples": [
+                            "lnbc210u1p48naztpp5tl2nrhjn8skyy3jv0mlhfaugppmu6dv"
+                        ]
+                    },
                     "created": {
                         "type": "boolean",
                         "description": "Whether THIS call created a BTCPay invoice. False means an invoice for that year already existed and you are being handed that one \u2014 the normal idempotent answer, not an error. A refresh never creates anything and always reports false."
@@ -946,6 +968,7 @@
                 },
                 "required": [
                     "checkout_url",
+                    "bolt11",
                     "created",
                     "payment"
                 ],
@@ -1715,6 +1738,24 @@
                     "statutes_accepted"
                 ],
                 "title": "StoreApplicationRequest"
+            },
+            "StoreInvoiceRequest": {
+                "type": "object",
+                "description": "The body of an invoice request, and `return_url` is the only field of it that is read. Amount, currency and fee year are not request values: the first two come from the association's configuration and the year from the path. A body naming them is ignored rather than rejected \u2014 a client asking for a different amount is not to be helped with an error message but to be charged the correct fee.\n\nThe whole body may also be omitted.",
+                "properties": {
+                    "return_url": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Where the payer is sent after the checkout. Optional: omit it (or send null) and the payer returns to the association's own profile page, which is what happened before this field existed. A value must be one of the addresses configured on the server; anything else is refused with 422 rather than silently replaced, so that a rejected address is never mistaken for an accepted one. It only takes effect on the call that actually creates the invoice \u2014 on an idempotent repeat the redirect belongs to the invoice that already exists.",
+                        "examples": [
+                            "https://einundzwanzig.group/verein/beitritt"
+                        ],
+                        "maxLength": 2048
+                    }
+                },
+                "title": "StoreInvoiceRequest"
             }
         },
         "responses": {

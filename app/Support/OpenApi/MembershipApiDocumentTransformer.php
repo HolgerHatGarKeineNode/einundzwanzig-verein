@@ -3,6 +3,7 @@
 namespace App\Support\OpenApi;
 
 use App\Http\Requests\Api\V1\StoreApplicationRequest;
+use App\Http\Requests\Api\V1\StoreInvoiceRequest;
 use App\Http\Resources\Api\V1\InvoiceResource;
 use App\Http\Resources\Api\V1\MembershipConfigResource;
 use App\Http\Resources\Api\V1\MembershipExportResource;
@@ -577,10 +578,10 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
         }
 
         /*
-         * The request body is the one schema whose generated description comes
-         * from a class docblock rather than from a field comment, and that
-         * docblock argues with a plan step and an audit item. A third party
-         * needs the rule, not the argument for it.
+         * Request bodies are the schemas whose generated description comes
+         * from a class docblock rather than from a field comment, and those
+         * docblocks argue with plan steps, audit items and measurements. A
+         * third party needs the rule, not the argument for it.
          */
         $requestSchema = $document->components->schemas[$this->schemaName($document, StoreApplicationRequest::class)] ?? null;
 
@@ -596,6 +597,22 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
             .'An omitted field is left untouched; an explicit `null` clears the stored value. The two are not the '
             .'same instruction, because the body is signed as a whole: were omission treated as "clear it", '
             .'dropping a field from the payload would erase data the user never touched.'
+        );
+
+        $invoiceSchema = $document->components->schemas[$this->schemaName($document, StoreInvoiceRequest::class)] ?? null;
+
+        if (! $invoiceSchema instanceof Schema || ! $invoiceSchema->type instanceof ObjectType) {
+            throw new RuntimeException('The invoice request body is missing from the generated document.');
+        }
+
+        $invoiceSchema->type->setDescription(
+            'The body of an invoice request, and `return_url` is the only field of it that is read. Amount, '
+            .'currency and fee year are not request values: the first two come from the association\'s '
+            .'configuration and the year from the path. A body naming them is ignored rather than rejected — a '
+            .'client asking for a different amount is not to be helped with an error message but to be charged '
+            .'the correct fee.'
+            ."\n\n"
+            .'The whole body may also be omitted.'
         );
     }
 
@@ -862,6 +879,12 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
                     'description' => 'The BTCPay checkout page to send the payer to. Null only on a refresh whose invoice BTCPay reported as expired or invalid — the fee year is then free again and a new invoice can be created.',
                     'examples' => ['https://pay.einundzwanzig.space/i/3T8xkPZbvhMzTMbY5rYWbA'],
                 ],
+                'bolt11' => [
+                    'type' => 'string',
+                    'nullable' => true,
+                    'description' => 'The Lightning payment request (BOLT11) of the same invoice, so that a client with a wallet can pay it without opening the checkout page. It is additive: null means "use `checkout_url`", never "something went wrong". Null when the invoice carries no Lightning payment method — which happens on real invoices of this store — and null again when BTCPay could not be asked in time. NULL IS NOT AN EXPIRY SIGNAL: BTCPay hands out the payment request of a long-dead invoice unchanged, so read the deadline from the invoice itself. It is the same 1440 minutes the checkout has, so there is no second deadline to track.',
+                    'examples' => ['lnbc210u1p48naztpp5tl2nrhjn8skyy3jv0mlhfaugppmu6dv'],
+                ],
                 'created' => [
                     'type' => 'boolean',
                     'description' => 'Whether THIS call created a BTCPay invoice. False means an invoice for that year already existed and you are being handed that one — the normal idempotent answer, not an error. A refresh never creates anything and always reports false.',
@@ -988,6 +1011,13 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
                 'nip05_handle' => [
                     'description' => 'The local part of a NIP-05 identifier the association serves as `<handle>@einundzwanzig.space`. Lowercase letters, digits, hyphen and underscore only, because it becomes part of a public .well-known/nostr.json. Handles are unique across members; a taken one is refused with 422. It is a public identifier by design, so refusing it discloses nothing.',
                     'examples' => ['satoshi'],
+                ],
+            ],
+
+            StoreInvoiceRequest::class => [
+                'return_url' => [
+                    'description' => 'Where the payer is sent after the checkout. Optional: omit it (or send null) and the payer returns to the association\'s own profile page, which is what happened before this field existed. A value must be one of the addresses configured on the server; anything else is refused with 422 rather than silently replaced, so that a rejected address is never mistaken for an accepted one. It only takes effect on the call that actually creates the invoice — on an idempotent repeat the redirect belongs to the invoice that already exists.',
+                    'examples' => ['https://einundzwanzig.group/verein/beitritt'],
                 ],
             ],
         ];
