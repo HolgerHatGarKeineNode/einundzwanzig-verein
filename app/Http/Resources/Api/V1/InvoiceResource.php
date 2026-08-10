@@ -26,7 +26,17 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * upstream body through unfiltered is how the next field BTCPay adds becomes
  * part of this API without anyone deciding so.
  *
- * @property-read array{payment_event: PaymentEvent, checkout_url: string, created: bool} $resource
+ * `bolt11` is the Lightning payment request of the same invoice — the one
+ * field that lets a client with a wallet pay without opening the checkout page
+ * at all. It is nullable and additive: every client that ignores it keeps
+ * working exactly as before, and a client that reads it must treat null as
+ * "use `checkout_url`". NULL IS NOT AN EXPIRY SIGNAL — BTCPay hands out the
+ * payment request of an invoice that died hundreds of hours ago unchanged, so
+ * a client asking "can this still be paid" has to read the invoice's own
+ * deadline. It is also null whenever the extra BTCPay read behind it failed,
+ * which is why nothing else in this response depends on it.
+ *
+ * @property-read array{payment_event: PaymentEvent, checkout_url: string|null, bolt11: string|null, created: bool} $resource
  */
 class InvoiceResource extends JsonResource
 {
@@ -37,6 +47,15 @@ class InvoiceResource extends JsonResource
     {
         return [
             'checkout_url' => $this->resource['checkout_url'],
+            /*
+             * `?? null` so that a caller which has no Lightning payment
+             * request to offer says so by omission rather than by having to
+             * spell out a null it never looked up. The alternative — an
+             * undefined-key error — would turn "no BOLT11" into a 500 in the
+             * one place whose whole design is that a missing BOLT11 costs
+             * nothing.
+             */
+            'bolt11' => $this->resource['bolt11'] ?? null,
             'created' => $this->resource['created'],
             'payment' => (new PaymentEventResource($this->resource['payment_event']))->toArray($request),
         ];

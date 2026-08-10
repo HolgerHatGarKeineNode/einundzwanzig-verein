@@ -17,6 +17,20 @@ use Illuminate\Support\Facades\Http;
  */
 class BtcPayClient
 {
+    /**
+     * Connect and overall timeout, in seconds, for `invoicePaymentMethods()`.
+     *
+     * DELIBERATELY SHORTER than the client's default. Every caller of that
+     * method treats a failure as "no BOLT11" and answers anyway, so a long
+     * wait buys nothing but a slow invoice endpoint: the checkout URL is
+     * already known at that point and the payer can be sent on their way. The
+     * default timeout would let a hanging BTCPay stall a request that has
+     * nothing left to learn from it.
+     */
+    public const PAYMENT_METHODS_CONNECT_TIMEOUT = 2;
+
+    public const PAYMENT_METHODS_TIMEOUT = 4;
+
     public function baseUrl(): string
     {
         return rtrim((string) config('services.btc_pay.base_url'), '/');
@@ -72,6 +86,54 @@ class BtcPayClient
             ->get($this->storeEndpoint('/invoices/'.$invoiceId))
             ->throw()
             ->json() ?? [];
+    }
+
+    /**
+     * The ways one invoice can be paid — one entry per payment method.
+     *
+     * THE ONLY PLACE THE LIGHTNING PAYMENT REQUEST (BOLT11) COMES FROM.
+     * Neither the create response nor `getInvoice()` carries it, which is why
+     * reading it costs this extra round trip rather than falling out of a call
+     * that already happens. Measured against the live store before it was
+     * written (P2, `p2-machbarkeit.md` section (a)): the BOLT11 is the
+     * `destination` of the entry whose `paymentMethodId` is exactly `BTC-LN`.
+     *
+     * The store-scoped path is used deliberately, matching `getInvoice()` and
+     * `updateInvoiceMetadata()`: it is the form this installation's BTCPay is
+     * known to answer.
+     *
+     * The `?? []` is not cosmetic, for the same reason it is not in
+     * `getInvoice()`: a 200 with an empty or non-JSON body makes json() return
+     * null, and the declared array return type would turn that into a
+     * TypeError instead of into "this invoice has no methods to report". An
+     * empty list reaches the caller and is answered with a null BOLT11, which
+     * is the answer that belongs to it.
+     *
+     * Non-array entries are dropped the same way `listInvoices()` drops them,
+     * so a caller may iterate without re-checking every element.
+     *
+     * THIS METHOD THROWS like its neighbours. Whether a failure is fatal is
+     * not the client's decision to make — `MembershipService` catches it and
+     * answers with a null BOLT11, because the field is additive and the
+     * checkout URL still works. Swallowing the failure here would take that
+     * choice away from every future caller.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function invoicePaymentMethods(string $invoiceId): array
+    {
+        $methods = $this->request()
+            ->connectTimeout(self::PAYMENT_METHODS_CONNECT_TIMEOUT)
+            ->timeout(self::PAYMENT_METHODS_TIMEOUT)
+            ->get($this->storeEndpoint('/invoices/'.$invoiceId.'/payment-methods'))
+            ->throw()
+            ->json() ?? [];
+
+        if (! is_array($methods)) {
+            return [];
+        }
+
+        return array_values(array_filter($methods, 'is_array'));
     }
 
     /**

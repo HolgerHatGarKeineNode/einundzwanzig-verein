@@ -52,6 +52,29 @@ function invFakeBtcPay(array $body, int $status = 200): void
 }
 
 /**
+ * How many invoices were ORDERED at BTCPay — counted by method and path, not
+ * as a bare request count.
+ *
+ * `Http::assertSentCount()` stood here and measured the same thing as long as
+ * ordering an invoice was the only call this endpoint made. Since the response
+ * carries `bolt11`, every call also READS `/payment-methods`, and a read that
+ * creates nothing must not be mistaken for a second invoice being ordered —
+ * which is exactly what a bare count would now report. The assertion is
+ * narrowed to the fact it was always about: one POST to `/invoices`, never
+ * two, because a second one leaves an unaccounted open invoice behind that
+ * produces money without a booking when paid.
+ */
+function invExpectInvoicesOrdered(int $expected): void
+{
+    $orders = Http::recorded(
+        fn (ClientRequest $request): bool => $request->method() === 'POST'
+            && $request->url() === 'https://pay.einundzwanzig.space/api/v1/stores/test-store/invoices'
+    );
+
+    expect($orders)->toHaveCount($expected);
+}
+
+/**
  * @param  array<string, mixed>  $attributes
  */
 function invMemberFor(string $privkey, array $attributes = []): EinundzwanzigPleb
@@ -166,7 +189,7 @@ it('is idempotent per pubkey and year: one invoice, one BTCPay request', functio
     expect($second['response']->json('data.checkout_url'))
         ->toBe($first['response']->json('data.checkout_url'));
 
-    Http::assertSentCount(1);
+    invExpectInvoicesOrdered(1);
 
     expect(PaymentEvent::query()->count())->toBe(1)
         ->and(PaymentEvent::query()->value('btc_pay_invoice'))->toBe('inv-new');
@@ -261,7 +284,7 @@ it('hands out one invoice once BTCPay answers properly again', function () {
 
     // Two calls after the recovery, one POST: the guard holds again as soon as
     // there is something to hold.
-    Http::assertSentCount(1);
+    invExpectInvoicesOrdered(1);
 });
 
 it('answers 503 when BTCPay refuses the invoice outright', function () {
