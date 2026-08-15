@@ -32,7 +32,14 @@ return [
 
     'cache' => [
         'key' => 'scramble.openapi',
-        'store' => 'file',
+        /*
+         * Store für das OpenAPI-Dokument. Default: der App-Cache-Store
+         * (config/cache.php 'default'), nicht mehr 'file' — der File-Store
+         * lebt im Release-Verzeichnis und fiel bei jedem Deploy kalt bzw.
+         * race-anfällig aus (file_put_contents auf gelöschtes Verzeichnis,
+         * Deploy 07.08.). Über SCRAMBLE_CACHE_STORE überschreibbar.
+         */
+        'store' => env('SCRAMBLE_CACHE_STORE', config('cache.default')),
     ],
 
     'info' => [
