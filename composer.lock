@@ -886,12 +886,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/HolgerHatGarKeineNode/einundzwanzig-group-package.git",
-                "reference": "2bd6a45b3d2815012f35d7872e24a44a5bd53c76"
+                "reference": "03c4606585ad3f9ec5c31871fdc7b6d5deb93d30"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/HolgerHatGarKeineNode/einundzwanzig-group-package/zipball/2bd6a45b3d2815012f35d7872e24a44a5bd53c76",
-                "reference": "2bd6a45b3d2815012f35d7872e24a44a5bd53c76",
+                "url": "https://api.github.com/repos/HolgerHatGarKeineNode/einundzwanzig-group-package/zipball/03c4606585ad3f9ec5c31871fdc7b6d5deb93d30",
+                "reference": "03c4606585ad3f9ec5c31871fdc7b6d5deb93d30",
                 "shasum": ""
             },
             "require": {
@@ -924,7 +924,7 @@
                 "source": "https://github.com/HolgerHatGarKeineNode/einundzwanzig-group-package/tree/master",
                 "issues": "https://github.com/HolgerHatGarKeineNode/einundzwanzig-group-package/issues"
             },
-            "time": "2026-08-15T08:06:55+00:00"
+            "time": "2026-08-15T17:12:00+00:00"
         },
         {
             "name": "fruitcake/php-cors",

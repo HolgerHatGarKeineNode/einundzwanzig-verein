@@ -22,7 +22,7 @@
     },
     "dependencies": {
         "@capacitor/core": "^7.6.7",
-        "@einundzwanzig/group": "github:HolgerHatGarKeineNode/einundzwanzig-group-package#2bd6a45",
+        "@einundzwanzig/group": "github:HolgerHatGarKeineNode/einundzwanzig-group-package#03c4606",
         "@frostr/bifrost": "^1.0.7",
         "@pomade/core": "^0.2.5",
         "@tailwindcss/vite": "^4.1.18",
