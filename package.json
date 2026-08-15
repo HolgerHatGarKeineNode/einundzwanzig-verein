@@ -7,7 +7,7 @@
     },
     "devDependencies": {
         "@nostr-dev-kit/ndk": "^3.0.0",
-        "@scalar/api-reference": "1.64.0",
+        "@scalar/api-reference": "^1.64.1",
         "@tailwindcss/forms": "^0.5.8",
         "autoprefixer": "^10.4.24",
         "chart.js": "^4.4.4",
@@ -22,7 +22,7 @@
     },
     "dependencies": {
         "@capacitor/core": "^7.6.7",
-        "@einundzwanzig/group": "github:HolgerHatGarKeineNode/einundzwanzig-group-package#bcf1349",
+        "@einundzwanzig/group": "github:HolgerHatGarKeineNode/einundzwanzig-group-package#2bd6a45",
         "@frostr/bifrost": "^1.0.7",
         "@pomade/core": "^0.2.5",
         "@tailwindcss/vite": "^4.1.18",
