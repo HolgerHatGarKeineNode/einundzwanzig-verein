@@ -1,6 +1,9 @@
 <?php
 
+use League\CommonMark\Extension\Autolink\AutolinkExtension;
 use League\CommonMark\Extension\DisallowedRawHtml\DisallowedRawHtmlExtension;
+use League\CommonMark\Extension\Strikethrough\StrikethroughExtension;
+use League\CommonMark\Extension\Table\TableExtension;
 use Spatie\LaravelMarkdown\MarkdownRenderer;
 
 return [
@@ -90,8 +93,35 @@ return [
      *
      * More info: https://commonmark.thephpleague.com/2.4/extensions/overview/
      */
+    /*
+     * WAS COMMONMARK OHNE DIESE LISTE NICHT KANN, und was jahrelang niemand
+     * bemerkt hat: CommonMark ist die Kernspezifikation, und Tabellen stehen
+     * NICHT darin. Mit `DisallowedRawHtmlExtension` als einzigem Eintrag
+     * landete eine Markdown-Tabelle als Rohtext in einem <p> — nachgemessen:
+     *
+     *   | Posten | Sats |   ->  <p>| Posten | Sats |
+     *   | ---    | ---  |        | ---    | ---  | …</p>
+     *   ~~alt~~              ->  <p>~~alt~~</p>
+     *   https://…            ->  kein Link
+     *
+     * Das sah aus, als sei der Markdown-Renderer kaputt, war aber die
+     * Voreinstellung: Was ein Nutzer als „Markdown" schreibt, ist meist
+     * GitHub-Flavored Markdown, und dessen Zusätze sind einzeln zuzuschalten.
+     *
+     * EINZELN STATT `GithubFlavoredMarkdownExtension`, und der Grund ist der
+     * Sanitizer: Das Bündel bringt zusätzlich TaskList mit, und die erzeugt
+     * `<input type="checkbox">`. Ein Formularelement in einer von Mitgliedern
+     * geschriebenen Beschreibung ist nichts, was hier gebraucht wird — und
+     * `App\Support\RichTextSanitizer` müsste `<input>` erlauben, ohne den
+     * `type` einschränken zu können. Ein `type="password"` in einem
+     * Förderantrag ist ein Phishing-Formular. Die drei unten erzeugen
+     * ausschließlich Elemente, die ohnehin auf der Allowlist stehen.
+     */
     'extensions' => [
         DisallowedRawHtmlExtension::class,
+        TableExtension::class,
+        StrikethroughExtension::class,
+        AutolinkExtension::class,
     ],
 
     /*

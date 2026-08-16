@@ -120,3 +120,45 @@ it('preserves images embedded via img tags', function () {
         ->toContain('src="https://example.com/i.png"')
         ->toContain('alt="caption"');
 });
+
+it('rendert GitHub-Markdown: Tabellen, Durchstreichen und nackte URLs', function () {
+    /*
+     * DIE ERWEITERUNGEN, DIE JAHRELANG FEHLTEN. CommonMark ist die
+     * Kernspezifikation und kennt keine Tabellen — mit
+     * `DisallowedRawHtmlExtension` als einzigem Eintrag in
+     * config/markdown.php landete eine Markdown-Tabelle als Rohtext in einem
+     * <p>, und es sah aus, als sei der Renderer defekt. Er war es nie; es war
+     * die Voreinstellung.
+     *
+     * Gepinnt, weil der Ausfall LAUTLOS war: Kein Fehler, kein Log, nur eine
+     * Beschreibung, die auf der Seite aussieht wie roher Text. Nimmt jemand
+     * die Erweiterungen wieder heraus, fällt das hier auf und nicht erst
+     * einem Mitglied.
+     */
+    $markdown = "| Posten | Sats |\n| --- | --- |\n| Sticker | 21000 |\n\n"
+        .'~~gestrichen~~ und https://einundzwanzig.space';
+
+    $result = $this->normalizer->normalize($markdown);
+
+    expect($result)->toContain('<table>')
+        ->toContain('<th>Posten</th>')
+        ->toContain('<td>21000</td>')
+        ->toContain('<del>gestrichen</del>')
+        ->toContain('<a href="https://einundzwanzig.space">');
+});
+
+it('erzeugt keine Formularelemente aus Markdown', function () {
+    /*
+     * Die bewusst NICHT geladene Erweiterung. `GithubFlavoredMarkdownExtension`
+     * hätte TaskList mitgebracht, und die macht aus `- [ ]` ein
+     * `<input type="checkbox">`. Der Sanitizer müsste `<input>` erlauben und
+     * könnte den `type` nicht einschränken — ein `type="password"` in einem
+     * Förderantrag wäre ein Phishing-Formular auf der Vereinsseite.
+     *
+     * Wer TaskList später will, muss zuerst diesen Test beantworten.
+     */
+    $result = (string) $this->normalizer->normalize("- [ ] offen\n- [x] erledigt");
+
+    expect($result)->not->toContain('<input')
+        ->not->toContain('type="checkbox"');
+});
