@@ -101,7 +101,7 @@ class ConvertProjectProposalDescriptionsToMarkdown extends Command
             }
 
             try {
-                $markdown = trim($converter->convert($html));
+                $markdown = trim($converter->convert($this->preserveInlineBreaks($html)));
             } catch (Throwable $exception) {
                 $failed++;
                 $this->error(sprintf('#%d %s — Wandlung fehlgeschlagen: %s', $proposal->id, $proposal->name, $exception->getMessage()));
@@ -155,6 +155,31 @@ class ConvertProjectProposalDescriptionsToMarkdown extends Command
         ));
 
         return $failed > 0 || $skipped > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    /**
+     * Zeilenumbrüche im Fließtext zu `<br>` machen, bevor der Konverter sie
+     * verliert.
+     *
+     * GEMESSEN AN EINEM ECHTEN ANTRAG, den die Wortprüfung zu Recht gestoppt
+     * hat. Im Text stand
+     *
+     *     …<a href="…">#einundzwanzigwrite</a>
+     *     damit wir euch auch finden
+     *
+     * und `league/html-to-markdown` verschluckte den Umbruch direkt hinter dem
+     * Inline-Element — heraus kam `…einundzwanzigwrite)damit wir…`, zwei
+     * zusammengeklebte Wörter. `hard_break` ändert daran nichts, beide
+     * Einstellungen liefern dasselbe (nachgemessen).
+     *
+     * Ersetzt wird nur ein `\n`, dem KEIN `<` und kein Leerraum folgt — also
+     * genau die Umbrüche mitten im Text. Die Umbrüche zwischen Blöcken
+     * (`</p>\n<p>`) bleiben unangetastet; sie sind Formatierung der
+     * Auszeichnung und kein Inhalt.
+     */
+    private function preserveInlineBreaks(string $html): string
+    {
+        return preg_replace('/\n(?![\s<])/u', '<br>', $html) ?? $html;
     }
 
     /**

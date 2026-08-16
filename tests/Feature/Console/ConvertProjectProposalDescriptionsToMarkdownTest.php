@@ -106,3 +106,28 @@ it('erhält die gerenderte Bedeutung über die Wandlung hinweg', function () {
 
     expect($textOf($proposal->fresh()->safeDescription()))->toBe($before);
 });
+
+it('verliert keinen Zeilenumbruch hinter einem Link', function () {
+    /*
+     * AN EINEM ECHTEN ANTRAG GEMESSEN, den die Wortprüfung auf Produktion
+     * gestoppt hat: `league/html-to-markdown` verschluckt einen Umbruch, der
+     * direkt hinter einem Inline-Element steht, und klebt die Wörter davor und
+     * danach zusammen. Ohne die Vorverarbeitung stünde
+     * „…einundzwanzigwritedamit wir…" auf der Seite.
+     *
+     * Der Test steht hier und nicht als Notiz, weil der Fehler leise ist: Er
+     * erzeugt keinen Abbruch, nur ein falsches Wort mitten im Text eines
+     * Mitglieds.
+     */
+    $proposal = ProjectProposal::factory()->create();
+    $proposal->description = "<p>Nutzt den Hashtag: <a href=\"https://primal.net/x\">#einundzwanzigwrite</a>\ndamit wir euch finden</p>";
+    $proposal->saveQuietly();
+
+    $this->artisan('project-proposals:to-markdown')->assertSuccessful();
+
+    $rendered = $proposal->fresh()->safeDescription();
+
+    expect($rendered)->toContain('#einundzwanzigwrite')
+        ->toContain('damit wir euch finden')
+        ->not->toContain('einundzwanzigwritedamit');
+});
