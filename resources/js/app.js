@@ -8,6 +8,23 @@ import projectChatRoom from "./projectChatRoom.js";
 import projectChatFeed from "./projectChatFeed.js";
 import nostrLogout from "./nostrLogout.js";
 
+/*
+ * Die Markdown-Werkzeugleiste (<markdown-toolbar>), ein Web Component von
+ * GitHub ohne eigene Abhaengigkeiten.
+ *
+ * KEIN EDITOR, und das ist der Grund fuer die Wahl. Es haengt sich an ein
+ * gewoehnliches <textarea> und schreibt Markdown-Syntax hinein — per
+ * execCommand('insertText'), womit die native Rueckgaengig-Kette erhalten
+ * bleibt — und feuert dabei ein aufsteigendes `input`-Event. Damit greift
+ * `wire:model` ohne eine Zeile Klebecode.
+ *
+ * Was daran haengt: Es gibt keine Editor-Instanz, die ein Livewire-DOM-Patch
+ * verlieren oder doppelt anlegen koennte. Der Zustand IST der Textarea-Wert,
+ * und den kennt Livewire ohnehin. Genau dieses Problem macht jeden
+ * JS-Editor in Livewire teuer; hier existiert es nicht.
+ */
+import '@github/markdown-toolbar-element';
+
 import './bootstrap';
 
 // Light switcher

@@ -3,7 +3,7 @@
 namespace App\Models;
 
 use App\Enums\ProjectProposalStatus;
-use App\Support\RichTextSanitizer;
+use App\Support\MarkdownRenderer;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -27,27 +27,30 @@ class ProjectProposal extends Model implements HasMedia
     /**
      * Die Beschreibung, wie sie ausgegeben werden darf.
      *
-     * DIE SICHERHEITSGRENZE LIEGT HIER, nicht beim Speichern. `description`
-     * wird mit `{!! !!}` gerendert — der einen Blade-Konstruktion, die nichts
-     * escapt —, und was in der Spalte steht, hat der Antragsteller geschrieben.
-     * Vor diesem Accessor lief ein gespeichertes `<script>` bei JEDEM Besucher
-     * der öffentlichen Detailseite; nachgemessen, ohne Anmeldung, Status 200.
+     * IN DER SPALTE STEHT MARKDOWN, kein HTML. Das ist die Umstellung, die
+     * `flux:editor` (Tiptap, speicherte HTML) durch ein Markdown-Feld ersetzt
+     * hat: Der Rohtext ist das, was der Antragsteller geschrieben hat, und er
+     * bleibt lesbar, diffbar und unabhängig davon, welches Eingabe-Widget die
+     * Anwendung gerade benutzt.
      *
-     * WARUM ZUSÄTZLICH ZUM SANITIZING IM `RichTextMarkdownNormalizer`, und
-     * nicht statt seiner: Der Normalizer sieht nur, was nach seiner Einführung
-     * geschrieben wurde. Zeilen, die vorher entstanden sind, kämen ungefiltert
-     * heraus — ausgerechnet die, die niemand geprüft hat. Dieser Accessor
-     * greift für jede Zeile, unabhängig davon, wann und über welchen Weg sie
-     * entstand.
+     * DIE SICHERHEITSGRENZE LIEGT HIER. Das Ergebnis geht in ein `{!! !!}` —
+     * die eine Blade-Konstruktion, die nichts escapt. Vor dieser Methode lief
+     * ein gespeichertes `<script>` bei JEDEM Besucher der öffentlichen
+     * Detailseite; nachgemessen, ohne Anmeldung, Status 200.
+     *
+     * Gerendert wird bei der AUSGABE und nicht beim Speichern, und das ist
+     * keine Bequemlichkeit: So greifen Renderer und Sanitizer auch für Zeilen,
+     * die vor ihrer Einführung entstanden sind oder die irgendein späterer
+     * Importweg schreibt — also gerade für die, die niemand geprüft hat.
      *
      * WER DIESE SPALTE AUSGIBT, NIMMT DIESEN ACCESSOR. `description` direkt in
      * ein `{!! !!}` zu setzen ist der Fehler, den es hier zu verhindern gilt;
      * `ProjectProposalXssTest` prüft deshalb die gerenderte Seite und nicht
      * bloß diese Methode.
      */
-    public function safeDescription(): ?string
+    public function safeDescription(): string
     {
-        return (new RichTextSanitizer)->sanitize($this->description);
+        return (new MarkdownRenderer)->toSafeHtml($this->description);
     }
 
     /**

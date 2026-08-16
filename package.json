@@ -24,6 +24,7 @@
         "@capacitor/core": "^7.6.7",
         "@einundzwanzig/group": "github:HolgerHatGarKeineNode/einundzwanzig-group-package#03c4606",
         "@frostr/bifrost": "^1.0.7",
+        "@github/markdown-toolbar-element": "^2.2.3",
         "@pomade/core": "^0.2.5",
         "@tailwindcss/vite": "^4.1.18",
         "@welshman/feeds": "^0.8.16",

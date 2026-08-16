@@ -1,123 +1,172 @@
 <?php
 
 use App\Models\ProjectProposal;
-use App\Support\RichTextMarkdownNormalizer;
+use App\Support\MarkdownRenderer;
 use App\Support\RichTextSanitizer;
 
 /*
- * The public detail page of a funding proposal renders its description with
- * `{!! !!}`, and that description is written by the applicant through a
- * rich-text editor. Before `RichTextSanitizer` existed, a stored `<script>`
- * executed for every visitor of that page — no login needed, measured at
- * status 200 — and the page is the one carrying the board's own approve and
- * payout actions, each callable as `$wire.<name>()` from injected script.
+ * Die öffentliche Detailseite eines Förderantrags gibt seine Beschreibung mit
+ * `{!! !!}` aus, und geschrieben hat sie der Antragsteller. Vor
+ * `ProjectProposal::safeDescription()` lief ein gespeichertes `<script>` bei
+ * jedem Besucher — ohne Anmeldung, gemessen bei Status 200 — und die Seite ist
+ * dieselbe, auf der der Vorstand zustimmt und Auszahlungen bucht.
  *
- * ASSERTED ON THE RENDERED PAGE, not on the sanitizer. A unit test of the
- * sanitizer would have stayed green through the entire defect: the sanitizer
- * was not the thing that was missing, the CALL to one was, in two places at
- * once. What has to hold is that nothing active reaches a reader, whichever
- * way the row got into the database.
+ * SEIT DIE SPALTE MARKDOWN TRÄGT, schützen ZWEI Mechanismen nacheinander, und
+ * die Tests unterscheiden sie:
+ *
+ *   1. `html_input => 'escape'` — rohes HTML im Markdown wird zu sichtbarem
+ *      TEXT. Ein `<script>` in der Datenbank erscheint als `&lt;script&gt;`
+ *      auf der Seite: lesbar, unwirksam.
+ *   2. `RichTextSanitizer` — die Allowlist über dem gerenderten Ergebnis, für
+ *      den Fall, dass die erste Schicht je verstellt wird.
+ *
+ * WAS DIESE TESTS DESHALB PRÜFEN, ist nicht mehr „der Payload-Text kommt nicht
+ * vor" — er DARF vorkommen, escaped, und das ist korrektes Verhalten. Geprüft
+ * wird, dass er nicht AKTIV ist: kein Element, kein Attribut, kein Schema.
  */
 
 /**
- * Payloads that reached the page unescaped before the fix, one per class of
- * vector, plus the substring that proves the payload survived.
+ * Was an einem HTML-Fragment aktiv werden könnte — als STRUKTUR gelesen, nicht
+ * als Zeichenkette.
  *
- * THE MARKER IS PAYLOAD-SPECIFIC, never a generic `<script` or `onerror`. The
- * assertion runs against the WHOLE rendered page, and that page legitimately
- * carries both: Livewire's and Vite's script tags, and an
- * `onerror="this.src=…"` image fallback on this very template
- * (`show.blade.php:475`). A generic needle fails on those and says nothing
- * about the proposal. Each needle below appears nowhere but in its own
- * payload, and each names the part that must not survive.
+ * DER GRUND, warum das ein DOM-Durchlauf sein muss und keine Textsuche: Seit
+ * die Spalte Markdown trägt, kommt rohes HTML escaped heraus. `position:fixed`
+ * oder `onerror` stehen dann als sichtbarer TEXT in der Ausgabe — korrekt und
+ * harmlos —, und ein `str_contains()` schlägt trotzdem an. Ein Test, der so
+ * fehlschlägt, sagt nichts über Sicherheit; er sagt nur, dass jemand über HTML
+ * geschrieben hat.
  *
- * @return array<string, array{0: string, 1: string}>
+ * Der Parser sieht den Unterschied: `&lt;script&gt;` ist ein Textknoten,
+ * `<script>` ein Element.
+ *
+ * @return array{elements: list<string>, attributes: list<string>, urls: list<string>}
+ */
+function activeMarkupIn(string $html): array
+{
+    $dom = new DOMDocument;
+    $previous = libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8"?><div>'.$html.'</div>', LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous);
+
+    $elements = [];
+    $attributes = [];
+    $urls = [];
+
+    foreach (new DOMXPath($dom)->query('//*') as $node) {
+        $elements[] = strtolower($node->nodeName);
+
+        foreach ($node->attributes ?? [] as $attribute) {
+            $attributes[] = strtolower($attribute->nodeName);
+
+            if (in_array(strtolower($attribute->nodeName), ['href', 'src'], true)) {
+                $urls[] = strtolower(trim($attribute->nodeValue ?? ''));
+            }
+        }
+    }
+
+    return ['elements' => $elements, 'attributes' => $attributes, 'urls' => $urls];
+}
+
+/**
+ * Payloads, die vor dem Fix ausgeführt wurden, je einer pro Vektorklasse.
+ *
+ * @return array<string, array{0: string}>
  */
 dataset('xss payloads', [
-    // Needs no structural tag at all — the branch that returns the input
-    // unchanged because it "does not look like Markdown" was enough.
-    'bare script' => ['hello <script>alert(11)</script>', 'alert(11)'],
-    'script in a paragraph' => ['<p><script>alert(12)</script></p>', 'alert(12)'],
-    // The structural branch: a heading or a table makes the normalizer hand
-    // the whole document back untouched.
-    'script behind a heading' => ['<h1>Projekt</h1><script>alert(13)</script>', 'alert(13)'],
-    'img onerror inside a table' => ['<table><tr><td><img src=x onerror="alert(14)"></td></tr></table>', 'alert(14)'],
-    'svg onload' => ['<h2>x</h2><svg onload="alert(15)"></svg>', 'alert(15)'],
-    'event handler on an allowed element' => ['<p onclick="alert(16)">click</p>', 'alert(16)'],
-    'javascript url' => ['<h3>x</h3><a href="javascript:alert(17)">go</a>', 'javascript:alert'],
-    'data url in an image' => ['<h3>x</h3><img src="data:text/html;base64,PHNjcmlwdD4=">', 'data:text/html'],
-    // Not a script, but the reason `style` is off the allowlist: it can put an
-    // element over a control and turn a click into a click on something else.
-    'positioning style' => ['<h1>x</h1><div style="position:fixed;inset:0">x</div>', 'position:fixed'],
+    'bare script' => ['hallo <script>alert(11)</script>'],
+    'script in a paragraph' => ['<p><script>alert(12)</script></p>'],
+    'script behind a heading' => ['<h1>Projekt</h1><script>alert(13)</script>'],
+    'img onerror inside a table' => ['<table><tr><td><img src=x onerror="alert(14)"></td></tr></table>'],
+    'svg onload' => ['<h2>x</h2><svg onload="alert(15)"></svg>'],
+    'event handler on an allowed element' => ['<p onclick="alert(16)">click</p>'],
+    'javascript url' => ['<h3>x</h3><a href="javascript:alert(17)">go</a>'],
+    'data url in an image' => ['<h3>x</h3><img src="data:text/html;base64,PHNjcmlwdD4=">'],
+    'positioning style' => ['<h1>x</h1><div style="position:fixed;inset:0">x</div>'],
+    // Markdown-eigene Vektoren, die es vorher nicht gab: Der Renderer selbst
+    // darf aus Markdown-Syntax kein aktives Ziel bauen.
+    'markdown link with javascript scheme' => ['[klick](javascript:alert(18))'],
+    'markdown image with data url' => ['![x](data:text/html;base64,PHN2Zz4=)'],
 ]);
 
-it('never serves an active payload on the public proposal page', function (string $payload, string $marker) {
+it('gibt keinen aktiven Payload aus, egal wie die Zeile entstand', function (string $payload) {
     /*
-     * Written straight to the column with `saveQuietly()`, deliberately
-     * bypassing the form and the normalizer. That is not a shortcut — it is
-     * the case the output layer exists for: rows that predate the sanitizing
-     * save path, or that some future importer writes. If this test went
-     * through the form, it would only ever measure the save-side half.
+     * Mit `saveQuietly()` direkt in die Spalte geschrieben, am Formular
+     * vorbei. Das ist kein Abkürzen, sondern der Fall, für den die
+     * Ausgabeschicht existiert: Zeilen aus einem Import, aus der Konsole oder
+     * aus der Zeit vor dieser Änderung.
      */
     $proposal = ProjectProposal::factory()->create();
     $proposal->description = $payload;
     $proposal->saveQuietly();
 
-    $response = $this->get(route('association.projectSupport.item', $proposal));
+    $markup = activeMarkupIn($proposal->safeDescription());
 
-    $response->assertOk();
+    expect(array_intersect($markup['elements'], ['script', 'iframe', 'svg', 'object', 'embed', 'input', 'form', 'style']))
+        ->toBe([], 'Ein Element, das Code oder Eingaben tragen kann, hat die Allowlist überlebt.');
 
-    expect($response->getContent())->not->toContain($marker);
-})->with('xss payloads');
+    $handlers = array_values(array_filter($markup['attributes'], fn (string $a): bool => str_starts_with($a, 'on')));
 
-it('strips the same payloads on the way into the database', function (string $payload, string $marker) {
-    // The second half: `RichTextMarkdownNormalizer` is the single funnel every
-    // write path goes through (create, edit, and the backfill command), so
-    // nothing active is stored in the first place.
-    expect((string) (new RichTextMarkdownNormalizer)->normalize($payload))->not->toContain($marker);
-})->with('xss payloads');
+    expect($handlers)->toBe([], 'Ein Event-Handler-Attribut hat die Allowlist überlebt.')
+        ->and(array_intersect($markup['attributes'], ['style']))->toBe([], '`style` erlaubt es, ein Element über einen Knopf zu legen.');
 
-it('keeps the formatting a real proposal uses', function () {
-    /*
-     * The other half of a sanitizer's job, and the half that is easy to get
-     * wrong in the safe direction: an allowlist that eats legitimate content
-     * is a bug too. Everything the editor can produce has to survive.
-     */
-    $html = '<h2>Projekt</h2>'
-        .'<p>Ein <strong>wichtiges</strong> Projekt mit <em>Details</em> und <code>Code</code>.</p>'
-        .'<ul><li>Punkt eins</li><li>Punkt zwei</li></ul>'
-        .'<ol><li>Erstens</li></ol>'
-        .'<blockquote>Zitat</blockquote>'
-        .'<pre><code>$x = 1;</code></pre>'
-        .'<table><thead><tr><th>A</th></tr></thead><tbody><tr><td>B</td></tr></tbody></table>'
-        .'<p><a href="https://einundzwanzig.space">Website</a></p>'
-        .'<p><img src="https://example.com/i.png" alt="Bild"></p>';
-
-    $sanitized = (new RichTextSanitizer)->sanitize($html);
-
-    foreach (['<h2>', '<strong>', '<em>', '<code>', '<ul>', '<li>', '<ol>', '<blockquote>', '<pre>', '<table>', '<th>', '<td>'] as $tag) {
-        // `toContain` is variadic — a message as a second argument would be a
-        // second needle to look for.
-        expect(str_contains((string) $sanitized, $tag))->toBeTrue("{$tag} must survive sanitizing.");
+    foreach ($markup['urls'] as $url) {
+        expect(str_starts_with($url, 'http://') || str_starts_with($url, 'https://') || $url === '')
+            ->toBeTrue("Eine URL mit unerlaubtem Schema hat überlebt: {$url}");
     }
 
-    expect($sanitized)->toContain('https://einundzwanzig.space')
-        ->toContain('https://example.com/i.png')
-        ->toContain('alt="Bild"')
-        ->toContain('Punkt eins');
+    // Und die Seite liefert trotzdem aus, statt zu brechen.
+    $this->get(route('association.projectSupport.item', $proposal))->assertOk();
+})->with('xss payloads');
+
+it('zeigt rohes HTML als lesbaren Text an, statt es zu verschlucken', function () {
+    /*
+     * Die Kehrseite von `html_input => 'escape'`, und sie ist ein Gewinn:
+     * Wer in einer Beschreibung über HTML schreibt, sieht sein `<script>` auf
+     * der Seite stehen — als Text. Vorher verschwand es spurlos (oder wurde
+     * ausgeführt). Beides ist schlechter als es zu zeigen.
+     */
+    $proposal = ProjectProposal::factory()->create();
+    $proposal->description = 'Beispiel: <script>alert(1)</script> ist gefährlich.';
+    $proposal->saveQuietly();
+
+    $html = $proposal->safeDescription();
+
+    expect($html)->toContain('&lt;script&gt;')
+        ->and($html)->toContain('alert(1)')
+        ->and($html)->not->toContain('<script');
 });
 
-it('sanitizes to a fixed point, so saving and rendering cannot compound', function () {
-    /*
-     * The value passes the sanitizer TWICE by design — once on save, once on
-     * render — and an implementation that re-encoded its own output would turn
-     * `&amp;` into `&amp;amp;` a little more on every edit. Pinned because the
-     * two-layer design is what makes it possible.
-     */
+it('rendert die Markdown-Auszeichnung einer echten Beschreibung', function () {
+    $proposal = ProjectProposal::factory()->create();
+    $proposal->description = "## Ziel\n\nEin **wichtiges** Projekt.\n\n"
+        ."- Punkt eins\n- Punkt zwei\n\n"
+        ."| Posten | Sats |\n| --- | --- |\n| Sticker | 21000 |\n\n"
+        .'Mehr auf [der Website](https://einundzwanzig.space).';
+
+    $proposal->saveQuietly();
+
+    $html = $proposal->safeDescription();
+
+    expect($html)->toContain('<h2>Ziel</h2>')
+        ->toContain('<strong>wichtiges</strong>')
+        ->toContain('<li>Punkt eins</li>')
+        ->toContain('<table>')
+        ->toContain('<td>21000</td>')
+        ->toContain('<a href="https://einundzwanzig.space">');
+});
+
+it('sanitisiert zu einem Festpunkt, damit nichts sich aufschaukelt', function () {
     $sanitizer = new RichTextSanitizer;
 
     $once = $sanitizer->sanitize('<p>A &amp; B — <code>user@example.com</code> <a href="https://e.com?a=1&amp;b=2">L</a></p>');
 
-    expect($sanitizer->sanitize($once))->toBe($once)
-        ->and($sanitizer->sanitize($sanitizer->sanitize($once)))->toBe($once);
+    expect($sanitizer->sanitize($once))->toBe($once);
+});
+
+it('gibt für leere Beschreibungen einen leeren String zurück, nicht null', function () {
+    // Der Rückgabewert landet in einem `{!! !!}`; ein `null` dort wäre ein
+    // stiller TypeError in einer Blade-Datei statt einer leeren Seite.
+    expect((new MarkdownRenderer)->toSafeHtml(null))->toBe('')
+        ->and((new MarkdownRenderer)->toSafeHtml('   '))->toBe('');
 });

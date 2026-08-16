@@ -2,9 +2,10 @@
 
 use App\Models\ProjectProposal;
 use App\Support\NostrAuth;
-use App\Support\RichTextMarkdownNormalizer;
+use App\Support\MarkdownRenderer;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
+use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
@@ -71,9 +72,22 @@ class extends Component
         }
     }
 
-    public function convertMarkdownToHtml(string $markdown): string
+    /**
+     * Die Vorschau unter dem Eingabefeld.
+     *
+     * SERVERSEITIG UND NICHT IM BROWSER, und darin liegt der eigentliche Wert:
+     * Sie durchläuft denselben Renderer und denselben Sanitizer wie die
+     * Detailseite, zeigt also nicht eine Annäherung an das Ergebnis, sondern
+     * das Ergebnis. Ein Editor mit eigener JS-Vorschau (EasyMDE via marked,
+     * Toast UI via eigenem Parser) hätte hier einen zweiten, ungehärteten
+     * Renderpfad aufgemacht und dem Autor etwas anderes gezeigt, als die
+     * Seite später ausgibt — auf genau dem Feld, dessen XSS gerade erst
+     * geschlossen wurde.
+     */
+    #[Computed]
+    public function descriptionPreview(): string
     {
-        return (new RichTextMarkdownNormalizer)->toHtml($markdown);
+        return (new MarkdownRenderer)->toSafeHtml($this->form['description'] ?? null);
     }
 
     public function update(): void
@@ -102,7 +116,7 @@ class extends Component
 
         $this->project->update([
             'name' => $this->form['name'],
-            'description' => (new RichTextMarkdownNormalizer)->normalize($this->form['description']),
+            'description' => $this->form['description'],
             'support_in_sats' => (int) $this->form['support_in_sats'],
             'website' => $this->form['website'],
             'contact_via_nostr_dm' => (bool) ($this->form['contact_via_nostr_dm'] ?? true),
@@ -204,8 +218,12 @@ class extends Component
                                     @endif
                                 </div>
                                 <div>
-                                    <flux:editor wire:model="form.description" label="Beschreibung" description="Projektbeschreibung..." />
-                                    <flux:error name="form.description" />
+                                    <x-markdown-field
+                                        model="form.description"
+                                        label="Beschreibung"
+                                        description="Projektbeschreibung — Markdown ist erlaubt."
+                                        :preview="$this->descriptionPreview"
+                                    />
                                 </div>
 
                                 <flux:separator />
@@ -231,7 +249,6 @@ class extends Component
             </div>
         </div>
 
-        @include('partials.markdown-paste-listener')
     @else
         <div class="px-4 sm:px-6 lg:px-8 py-8 w-full max-w-9xl mx-auto">
             <flux:callout variant="warning" icon="exclamation-circle">

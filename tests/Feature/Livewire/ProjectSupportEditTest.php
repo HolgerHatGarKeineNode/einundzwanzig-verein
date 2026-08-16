@@ -111,7 +111,10 @@ it('updates project proposal successfully', function () {
 
     $this->project->refresh();
     expect($this->project->name)->toBe('Updated Name')
-        ->and($this->project->description)->toBe('<p>Updated Description</p>');
+        // Gespeichert wird der ROHTEXT. Seit das Feld ein Markdown-Feld ist,
+        // wandelt niemand mehr beim Speichern um — gerendert wird erst bei der
+        // Ausgabe, über ProjectProposal::safeDescription().
+        ->and($this->project->description)->toBe('Updated Description');
 });
 
 it('ignores accepted and sats_paid form keys even for board members — those fields no longer exist on the edit form', function () {

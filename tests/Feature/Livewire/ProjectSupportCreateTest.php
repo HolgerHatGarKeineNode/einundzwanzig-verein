@@ -94,7 +94,9 @@ it('creates project proposal successfully', function () {
     expect(ProjectProposal::count())->toBe(1);
     $project = ProjectProposal::first();
     expect($project->name)->toBe('Test Project')
-        ->and($project->description)->toBe('<p>This is a test project for unit testing purposes.</p>');
+        // Gespeichert wird der ROHTEXT, nicht gerendertes HTML — das Feld ist
+        // ein Markdown-Feld, und gerendert wird erst bei der Ausgabe.
+        ->and($project->description)->toBe('This is a test project for unit testing purposes.');
 });
 
 it('defaults to nostr dm contact and stores it that way when unchanged', function () {
