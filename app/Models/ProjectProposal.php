@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\ProjectProposalStatus;
+use App\Support\RichTextSanitizer;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -22,6 +23,32 @@ class ProjectProposal extends Model implements HasMedia
     use HasFactory;
     use HasSlug;
     use InteractsWithMedia;
+
+    /**
+     * Die Beschreibung, wie sie ausgegeben werden darf.
+     *
+     * DIE SICHERHEITSGRENZE LIEGT HIER, nicht beim Speichern. `description`
+     * wird mit `{!! !!}` gerendert — der einen Blade-Konstruktion, die nichts
+     * escapt —, und was in der Spalte steht, hat der Antragsteller geschrieben.
+     * Vor diesem Accessor lief ein gespeichertes `<script>` bei JEDEM Besucher
+     * der öffentlichen Detailseite; nachgemessen, ohne Anmeldung, Status 200.
+     *
+     * WARUM ZUSÄTZLICH ZUM SANITIZING IM `RichTextMarkdownNormalizer`, und
+     * nicht statt seiner: Der Normalizer sieht nur, was nach seiner Einführung
+     * geschrieben wurde. Zeilen, die vorher entstanden sind, kämen ungefiltert
+     * heraus — ausgerechnet die, die niemand geprüft hat. Dieser Accessor
+     * greift für jede Zeile, unabhängig davon, wann und über welchen Weg sie
+     * entstand.
+     *
+     * WER DIESE SPALTE AUSGIBT, NIMMT DIESEN ACCESSOR. `description` direkt in
+     * ein `{!! !!}` zu setzen ist der Fehler, den es hier zu verhindern gilt;
+     * `ProjectProposalXssTest` prüft deshalb die gerenderte Seite und nicht
+     * bloß diese Methode.
+     */
+    public function safeDescription(): ?string
+    {
+        return (new RichTextSanitizer)->sanitize($this->description);
+    }
 
     /**
      * Größe des aktuellen Vorstands laut Konfiguration.

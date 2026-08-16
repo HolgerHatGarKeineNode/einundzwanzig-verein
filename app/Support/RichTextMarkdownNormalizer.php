@@ -44,14 +44,45 @@ class RichTextMarkdownNormalizer
 
     /**
      * Render a raw Markdown string directly to HTML using the same
-     * configuration as normalize().
+     * configuration as normalize(), sanitized the same way.
+     *
+     * Reached from the paste listener in the editor, so its output goes back
+     * into the field a user then saves — same destination, same treatment.
      */
     public function toHtml(string $markdown): string
     {
-        return trim($this->renderer()->toHtml($markdown));
+        return (string) (new RichTextSanitizer)->sanitize(trim($this->renderer()->toHtml($markdown)));
     }
 
+    /**
+     * Normalize editor HTML, and sanitize whatever comes out of it.
+     *
+     * THE SANITIZING STEP IS NOT AN AFTERTHOUGHT HERE, it is the reason every
+     * return path below goes through one function. This method has three
+     * branches and two of them hand the input straight back — the structural
+     * one and the "does not look like Markdown" one — so for most real input
+     * the Markdown renderer never runs. Anything that relied on the renderer
+     * to strip active HTML therefore did not apply, and measurably did not: a
+     * plain `<script>` survived `normalize()` untouched and was written to the
+     * database, from where `{!! !!}` on the detail page executed it for every
+     * visitor.
+     *
+     * Sanitizing at the END of this method rather than inside each branch is
+     * deliberate: a branch added later cannot forget it. It is also only HALF
+     * of the fix — the other half is at the point of output, because rows
+     * written before this existed have never been through here. See
+     * {@see RichTextSanitizer} and `ProjectProposal::safeDescription()`.
+     */
     public function normalize(?string $html): ?string
+    {
+        return (new RichTextSanitizer)->sanitize($this->structure($html));
+    }
+
+    /**
+     * The normalization proper: turn pasted Markdown into real HTML, and leave
+     * genuine rich text alone.
+     */
+    private function structure(?string $html): ?string
     {
         if ($html === null || trim($html) === '') {
             return $html;

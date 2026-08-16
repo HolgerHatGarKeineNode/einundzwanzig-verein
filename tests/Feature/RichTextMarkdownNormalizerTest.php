@@ -90,7 +90,18 @@ it('preserves inline bold, code and links when converting pasted markdown', func
         .'<p><a href="https://example.com">Website</a></p>'
         .'<p># Heading</p>';
 
-    $result = $this->normalizer->normalize($html);
+    /*
+     * Compared after decoding entities, not byte for byte. The sanitizer the
+     * normalizer now ends with writes characters that are dangerous at a
+     * context boundary as numeric entities — `@` becomes `&#64;`, `=` inside a
+     * URL becomes `&#61;` — which a browser renders back to the original and a
+     * `toContain('<code>user@example.com</code>')` does not. Asserting on the
+     * decoded form keeps this test about what it is for (inline formatting
+     * survives the conversion) instead of pinning an escaping detail of a
+     * dependency. Verified idempotent: sanitizing twice yields the same
+     * string, so nothing accumulates across save and render.
+     */
+    $result = html_entity_decode($this->normalizer->normalize($html), ENT_QUOTES | ENT_HTML5);
 
     expect($result)->toContain('<h1')
         ->toContain('Heading')

@@ -4,15 +4,29 @@ namespace App\Console\Commands;
 
 use App\Models\ProjectProposal;
 use App\Support\RichTextMarkdownNormalizer;
+use App\Support\RichTextSanitizer;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 
+/**
+ * Since `RichTextMarkdownNormalizer::normalize()` ends in
+ * {@see RichTextSanitizer}, this command is also the backfill for rows written
+ * before that sanitizing existed: running it strips event handlers,
+ * `javascript:`/`data:` URLs and non-allowlisted elements from the stored
+ * value.
+ *
+ * IT IS NOT WHAT PROTECTS READERS, though, and must not be treated as such.
+ * The output side (`ProjectProposal::safeDescription()`) sanitizes on every
+ * render and therefore covers rows this command has never touched — including
+ * any written between a deploy and the next run. This is hygiene for the
+ * database; the guarantee lives at the point of output.
+ */
 #[Signature('project-proposals:normalize-descriptions
     {--dry-run : Show what would change without writing to the database}
     {--id=* : Limit to specific proposal IDs}
     {--show-diff : Print a short before/after preview for every change}')]
-#[Description('Normalize project proposal descriptions so all rows contain clean HTML (converts legacy plain-text and mixed Markdown/HTML content).')]
+#[Description('Normalize project proposal descriptions so all rows contain clean HTML (converts legacy plain-text and mixed Markdown/HTML content) and strip any active HTML they carry.')]
 class NormalizeProjectProposalDescriptions extends Command
 {
     public function handle(): int

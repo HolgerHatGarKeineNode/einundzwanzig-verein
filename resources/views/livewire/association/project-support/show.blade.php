@@ -507,7 +507,10 @@ new class extends Component {
                 </figure>
 
                 <div class="prose dark:prose-invert max-w-[68ch] break-words [&_code]:break-all [&_a]:break-all">
-                    {!! $projectProposal->description !!}
+                    {{-- safeDescription(), NIE description: die Spalte trägt vom
+                         Antragsteller geschriebenes HTML, und {!! !!} escapt nicht.
+                         Begründung am Accessor. --}}
+                    {!! $projectProposal->safeDescription() !!}
                 </div>
             </div>
 

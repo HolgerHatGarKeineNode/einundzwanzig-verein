@@ -37,7 +37,22 @@ return [
      * More info: https://spatie.be/docs/laravel-markdown/v1/using-the-blade-component/passing-options-to-commonmark
      */
     'commonmark_options' => [
-        'html_input' => 'allow',
+        /*
+         * `escape`, nicht `allow`. Mit `allow` liess CommonMark rohes HTML aus
+         * dem Markdown-Quelltext unveraendert durch — nachgemessen gingen
+         * `<img src=x onerror=…>`, `<svg onload=…>`, `<div onclick=…>` und ein
+         * rohes `<a href="javascript:…">` hindurch. Die
+         * DisallowedRawHtmlExtension unten faengt davon nur `<script>` und
+         * `<iframe>`; sie ist eine Denyliste und war nie als einzige Schranke
+         * gedacht. `allow_unsafe_links => false` greift ebenfalls nicht, weil
+         * es Markdown-LINKS prueft und kein rohes HTML-Attribut.
+         *
+         * Kostet keine echte Funktion: der Rich-Text dieser Anwendung kommt
+         * aus dem Editor (flux:editor) und laeuft ueber
+         * RichTextMarkdownNormalizer, nicht als rohes HTML in einem
+         * Markdown-Dokument.
+         */
+        'html_input' => 'escape',
         'allow_unsafe_links' => false,
     ],
 
