@@ -1,6 +1,7 @@
 <?php
 
 use App\Exceptions\Nip98Exception;
+use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\ThrottleApiV1;
 use App\Http\Middleware\VerifyApiClient;
 use App\Http\Middleware\VerifyNip98;
@@ -24,6 +25,13 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->api(prepend: [
             ThrottleRequests::class.':api',
         ]);
+
+        /*
+         * Sicherheits-Header auf JEDE Antwort, api und web, deshalb hier und
+         * nicht in einer der beiden Gruppen. Was sie tun und — wichtiger —
+         * welche Direktive bewusst fehlt, steht in der Klasse.
+         */
+        $middleware->append(SecurityHeaders::class);
 
         /*
          * Vertrauenswuerdige Proxys — Standard: KEINE.
