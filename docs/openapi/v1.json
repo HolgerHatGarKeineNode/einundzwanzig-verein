@@ -3,7 +3,7 @@
     "info": {
         "title": "EINUNDZWANZIG Membership API",
         "version": "1.0.0",
-        "description": "The membership API of the EINUNDZWANZIG association: apply for membership, pay the annual fee,\nread your own record and have it erased. It is meant for third-party clients acting on behalf of\na member \u2014 a Nostr client, a wallet, a community app.\n\n## Two identities, two credentials\n\nEvery request carries the **client key** of the calling application in `X-Api-Key`. Every request\nexcept `GET /api/v1/membership/config` additionally carries a **NIP-98 signature** identifying the\nend user. The two answer different questions \u2014 which application is calling, and who it is calling\nfor \u2014 and neither substitutes for the other. See the security schemes for how to build the\nsignature.\n\nThe subject of a request is always the pubkey that signed it. There is no parameter for it and a\npubkey sent in the path, the query or the body is refused. No endpoint on this API returns data\nabout another member.\n\n## Reading the membership status\n\nDO NOT EVALUATE `association_status` ON ITS OWN. It is the category the board assigned and it does\nnot lapse: under Art. 4.1 of the statutes a membership ends after a year without payment, but the\nassociation deliberately applies no hard cut, so a record can read `ACTIVE` while the current fee\nyear is unpaid. Such a person is not a member.\n\n`membership_status` is derived from the category **and** the payment and is the only correct answer\nto \"is this person a member right now\":\n\n| Value | Meaning |\n| --- | --- |\n| `none` | No application on record and no membership category. |\n| `awaiting_payment` | Applied for, current fee year unpaid, not a member yet. |\n| `member` | A membership category and the current fee year paid. |\n| `lapsed` | A membership category, but the current fee year is unpaid. |\n\nA client that renders `association_status` alone will call a lapsed member active, and two clients\ndoing it differently will publish two contradicting answers about the same person.\n\n## Joining, end to end\n\n1. `GET /api/v1/membership/config` \u2014 the fee, the currency and the current fee year.\n2. `POST /api/v1/membership/applications` \u2014 the application and the consent to the statutes. This\n   grants nothing on its own: the statutes tie the membership to the payment (Art. 4).\n3. `POST /api/v1/membership/payments/{year}/invoice` \u2014 a BTCPay checkout for that fee year. Send\n   the payer to `checkout_url`.\n4. The settled payment grants the membership. It normally arrives as a BTCPay webhook; if that\n   delivery is lost, `POST /api/v1/membership/payments/{year}/refresh` pulls the same result.\n\nPaid fees are not refundable (Art. 4.2), and erasure under\n`DELETE /api/v1/membership/me` therefore anonymises the bookkeeping entries rather than deleting\nthem.\n\n## Errors and quotas\n\nErrors are JSON objects with a single `message` field. Refusals are deliberately indistinguishable:\n\"no record for this pubkey\", \"not a member\" and \"no invoice for that year\" all answer `404` with\nthe same body, so the API cannot be used to look up who belongs to the association.\n\nRequests are counted per client key and per end-user pubkey, and invoice creation carries its own\nmuch tighter daily quota. Exceeding a quota answers `429` with `Retry-After`."
+        "description": "The membership API of the EINUNDZWANZIG association: apply for membership, pay the annual fee,\nread your own record and have it erased. It is meant for third-party clients acting on behalf of\na member \u2014 a Nostr client, a wallet, a community app.\n\n## Two identities, two credentials\n\nEvery request carries the **client key** of the calling application in `X-Api-Key`. On the main\nsurface \u2014 everything under `/api/v1/membership` except `GET /api/v1/membership/config` \u2014 each\nrequest additionally carries a **NIP-98 signature** identifying the end user. The two answer\ndifferent questions \u2014 which application is calling, and who it is calling for \u2014 and neither\nsubstitutes for the other. See the security schemes for how to build the signature.\n\nOn that surface the subject of a request is always the pubkey that signed it. There is no parameter\nfor it and a pubkey sent in the path, the query or the body is refused. No endpoint returns data\nabout another member.\n\n## The app branch\n\n`/api/v1/app/membership` is a second, smaller surface for a **native app that cannot produce a\nNIP-98 signature**. It carries the client key alone, and the subject is a `pubkey` field in the\nrequest body instead. Every endpoint on it is tagged **Native app**.\n\nThe trade is deliberate and it is worth reading before choosing this branch:\n\n- It has **three** endpoints \u2014 the configuration, the application and the invoice \u2014 and it will not\n  grow a fourth. There is **no `/me`, no `/payments` and no `/export`** here, because without a\n  signature those would answer questions about pubkeys the caller does not control.\n- Naming a pubkey is not proving it. A client key holder can file an application for any pubkey and\n  order a checkout for it; what that buys is the right to pay somebody else's fee, which is a gift\n  rather than an attack. **No membership is granted by either call** \u2014 the settled payment grants it,\n  exactly as on the main surface.\n- There is no `refresh` either. A settled payment reaches the association through the BTCPay webhook\n  and a scheduled reconciliation; an app client sees the result in the association's published member\n  list and has nothing to pull.\n\n**If your client can sign, use the main surface.** It is the one that can read a membership back.\n\n## Reading the membership status\n\nDO NOT EVALUATE `association_status` ON ITS OWN. It is the category the board assigned and it does\nnot lapse: under Art. 4.1 of the statutes a membership ends after a year without payment, but the\nassociation deliberately applies no hard cut, so a record can read `ACTIVE` while the current fee\nyear is unpaid. Such a person is not a member.\n\n`membership_status` is derived from the category **and** the payment and is the only correct answer\nto \"is this person a member right now\":\n\n| Value | Meaning |\n| --- | --- |\n| `none` | No application on record and no membership category. |\n| `awaiting_payment` | Applied for, current fee year unpaid, not a member yet. |\n| `member` | A membership category and the current fee year paid. |\n| `lapsed` | A membership category, but the current fee year is unpaid. |\n\nA client that renders `association_status` alone will call a lapsed member active, and two clients\ndoing it differently will publish two contradicting answers about the same person.\n\n## Before you write any code\n\nTwo things are issued by the association and cannot be obtained from this API:\n\n1. **A client key** for `X-Api-Key`. Every endpoint needs one.\n2. **An allowlisted return address**, if you want the payer to land back in your own flow after the\n   checkout. `return_url` is checked against a list kept on the server, and an address that is not\n   on it is refused with `422` rather than silently replaced.\n\nAsk for both in one message: [einundzwanzig.group](https://group.einundzwanzig.space/rooms/42466283723001275). Without the\nsecond, the checkout still works \u2014 the payer simply returns to the association's own page.\n\n## Joining, end to end\n\n1. `GET /api/v1/membership/config` \u2014 the fee, the currency and the current fee year.\n2. `POST /api/v1/membership/applications` \u2014 the application and the consent to the statutes. This\n   grants nothing on its own: the statutes tie the membership to the payment (Art. 4).\n3. `POST /api/v1/membership/payments/{year}/invoice` \u2014 a BTCPay checkout for that fee year. Send\n   the payer to `checkout_url`.\n4. The settled payment grants the membership. It normally arrives as a BTCPay webhook; if that\n   delivery is lost, `POST /api/v1/membership/payments/{year}/refresh` pulls the same result.\n\nThe app branch walks steps 1 to 3 under `/api/v1/app/membership` with a `pubkey` in the body instead\nof a signature. Step 4 is the same event on the server and needs nothing from the client.\n\nPaid fees are not refundable (Art. 4.2), and erasure under\n`DELETE /api/v1/membership/me` therefore anonymises the bookkeeping entries rather than deleting\nthem.\n\n## Errors and quotas\n\nErrors are JSON objects with a single `message` field. Refusals are deliberately indistinguishable:\n\"no record for this pubkey\", \"not a member\" and \"no invoice for that year\" all answer `404` with\nthe same body, so the API cannot be used to look up who belongs to the association.\n\nRequests are counted per client key and per end-user pubkey, and invoice creation carries its own\nmuch tighter daily quota. Exceeding a quota answers `429` with `Retry-After`."
     },
     "servers": [
         {
@@ -18,7 +18,7 @@
     "tags": [
         {
             "name": "Configuration",
-            "description": "What joining costs and what an application has to carry. The only part of this API that needs no end-user signature."
+            "description": "What joining costs and what an application has to carry. The one endpoint of the main surface that needs no end-user signature \u2014 send the client key alone."
         },
         {
             "name": "Membership",
@@ -492,7 +492,23 @@
                         }
                     },
                     "404": {
-                        "$ref": "#/components/responses/NotFoundHttpException"
+                        "description": "Either the pubkey has no membership record, or no invoice was ever created for that fee year. Which of the two is not disclosed, for the same reason it is not disclosed anywhere else on this API.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
                     },
                     "401": {
                         "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
@@ -544,7 +560,7 @@
         "/api/v1/membership/config": {
             "get": {
                 "operationId": "v1.membership.config",
-                "description": "The only endpoint on this API that does not require a NIP-98 signature:\nsend the client key alone. A client has to be able to show the fee\nbefore anybody has signed anything, and the response is association-wide\n\u2014 it is identical for every caller.\n\n`year` is the fee year the association is currently collecting, and it\nis the only year `POST /api/v1/membership/payments/{year}/invoice`\naccepts. `application.required_fields` and `application.optional_fields`\nname the body fields of `POST /api/v1/membership/applications`.",
+                "description": "Send the client key alone \u2014 this endpoint needs no NIP-98 signature on\neither surface. A client has to be able to show the fee before anybody\nhas signed anything, and the response is association-wide: it is\nidentical for every caller and on both branches.\n\n`year` is the fee year the association is currently collecting, and it\nis the only year the invoice endpoint of the same branch accepts.\n`application.required_fields` and `application.optional_fields` name the\nbody fields of the application endpoint of the same branch.",
                 "summary": "Get the annual fee and what an application must carry",
                 "tags": [
                     "Configuration"
@@ -617,7 +633,7 @@
         "/api/v1/app/membership/config": {
             "get": {
                 "operationId": "v1.app.membership.config",
-                "description": "The only endpoint on this API that does not require a NIP-98 signature:\nsend the client key alone. A client has to be able to show the fee\nbefore anybody has signed anything, and the response is association-wide\n\u2014 it is identical for every caller.\n\n`year` is the fee year the association is currently collecting, and it\nis the only year `POST /api/v1/membership/payments/{year}/invoice`\naccepts. `application.required_fields` and `application.optional_fields`\nname the body fields of `POST /api/v1/membership/applications`.",
+                "description": "Send the client key alone \u2014 this endpoint needs no NIP-98 signature on\neither surface. A client has to be able to show the fee before anybody\nhas signed anything, and the response is association-wide: it is\nidentical for every caller and on both branches.\n\n`year` is the fee year the association is currently collecting, and it\nis the only year the invoice endpoint of the same branch accepts.\n`application.required_fields` and `application.optional_fields` name the\nbody fields of the application endpoint of the same branch.",
                 "summary": "Get the annual fee and what an application must carry",
                 "tags": [
                     "Native app"
@@ -642,26 +658,7 @@
                         }
                     },
                     "401": {
-                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "message": {
-                                            "type": "string",
-                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
-                                        }
-                                    },
-                                    "required": [
-                                        "message"
-                                    ]
-                                }
-                            }
-                        }
-                    },
-                    "503": {
-                        "description": "The replay lock behind the NIP-98 verification is unreachable. The request was refused rather than waved through; nothing was written. Retry.",
+                        "description": "The client key is missing or unknown.",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -701,8 +698,7 @@
                 },
                 "security": [
                     {
-                        "clientKey": [],
-                        "nip98": []
+                        "clientKey": []
                     }
                 ]
             }
@@ -710,6 +706,8 @@
         "/api/v1/app/membership/applications": {
             "post": {
                 "operationId": "v1.app.membership.applications.store",
+                "description": "The application of `POST /api/v1/membership/applications` without a\nsignature: the subject is the `pubkey` field of the body, and the\ncalling application vouches for it. Everything else is identical \u2014 it\nrecords the data and the consent to the statutes, and it changes NO\nstatus. The statutes tie the membership to the payment of the annual fee\n(Art. 4), so this call alone makes nobody a member.\n\n201 the first time consent is recorded, 200 on a repeat. The consent\ntimestamp is the joining document: a repeat leaves it untouched and\nupdates only the contact fields actually sent, with an absent field left\nalone and an explicit `null` clearing the stored value.\n\n`association_status` and `paid` cannot be written through this endpoint.\nThe membership category is raised by a settled fee and by nothing else \u2014\nwhich is what keeps an unsigned surface from being able to grant\nanything.",
+                "summary": "Apply for membership on behalf of a named pubkey (app branch)",
                 "tags": [
                     "Native app"
                 ],
@@ -724,12 +722,38 @@
                     }
                 },
                 "responses": {
-                    "200": {
-                        "description": "",
+                    "201": {
+                        "description": "The consent to the statutes was recorded for the first time. The membership itself still waits for the annual fee.",
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "type": "string"
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/components/schemas/MembershipResource"
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "A repeat application. Contact data was updated where sent; `statutes_accepted_at` keeps the value it already had.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/components/schemas/MembershipResource"
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
                                 }
                             }
                         }
@@ -738,26 +762,7 @@
                         "$ref": "#/components/responses/ValidationException"
                     },
                     "401": {
-                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "message": {
-                                            "type": "string",
-                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
-                                        }
-                                    },
-                                    "required": [
-                                        "message"
-                                    ]
-                                }
-                            }
-                        }
-                    },
-                    "503": {
-                        "description": "The replay lock behind the NIP-98 verification is unreachable. The request was refused rather than waved through; nothing was written. Retry.",
+                        "description": "The client key is missing or unknown.",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -797,8 +802,7 @@
                 },
                 "security": [
                     {
-                        "clientKey": [],
-                        "nip98": []
+                        "clientKey": []
                     }
                 ]
             }
@@ -806,6 +810,8 @@
         "/api/v1/app/membership/payments/{year}/invoice": {
             "post": {
                 "operationId": "v1.app.membership.payments.invoice",
+                "description": "The checkout of `POST /api/v1/membership/payments/{year}/invoice`\nwithout a signature: the subject is the `pubkey` field of the body. Send\nthe payer to `checkout_url`, or pay `bolt11` directly if the client\nholds a Lightning wallet.\n\nIDEMPOTENT. A second call for a year that already has an invoice hands\nback that same invoice with `created: false` \u2014 the normal answer, not an\nerror. Nobody is charged twice by asking twice.\n\nOnly the CURRENT fee year is accepted, the one\n`GET /api/v1/app/membership/config` reports; any other year answers 404,\nas does a pubkey with no membership record \u2014 file the application first.\nThe two are deliberately indistinguishable.\n\n503 means BTCPay is unreachable or the fee is unusable on the current\nconfiguration. Nothing was charged and nothing was recorded; retry later.\nThis endpoint carries its own, much tighter quota than the rest of the\nAPI \u2014 every call spends a request against the association's own BTCPay\nkey.",
+                "summary": "Start, or hand back, the BTCPay checkout for one annual fee (app branch)",
                 "tags": [
                     "Native app"
                 ],
@@ -871,13 +877,29 @@
                         }
                     },
                     "404": {
-                        "$ref": "#/components/responses/NotFoundHttpException"
+                        "description": "Either the pubkey has no membership record, or `year` is not the fee year the association is currently collecting. WHICH OF THE TWO IS NOT DISCLOSED \u2014 telling them apart would answer \"is this pubkey known to the association\" to anyone who asked. Read the current year from the configuration endpoint, and file the application before asking for a checkout.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
                     },
                     "422": {
                         "$ref": "#/components/responses/ValidationException"
                     },
                     "401": {
-                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
+                        "description": "The client key is missing or unknown.",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -917,8 +939,7 @@
                 },
                 "security": [
                     {
-                        "clientKey": [],
-                        "nip98": []
+                        "clientKey": []
                     }
                 ]
             }
@@ -1135,7 +1156,23 @@
                         }
                     },
                     "404": {
-                        "$ref": "#/components/responses/NotFoundHttpException"
+                        "description": "Either the pubkey has no membership record, or `year` is not the fee year the association is currently collecting. WHICH OF THE TWO IS NOT DISCLOSED \u2014 telling them apart would answer \"is this pubkey known to the association\" to anyone who asked. Read the current year from the configuration endpoint, and file the application before asking for a checkout.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
                     },
                     "422": {
                         "$ref": "#/components/responses/ValidationException"
@@ -1192,13 +1229,13 @@
         "securitySchemes": {
             "clientKey": {
                 "type": "apiKey",
-                "description": "Identifies the CALLING APPLICATION \u2014 not the end user. Required on **every** endpoint of this API,\n`GET /api/v1/membership/config` included.\n\nSend the key the association issued to you in the `X-Api-Key` header:\n\n```http\nX-Api-Key: <your client key>\n```\n\nA missing or unknown key is answered with `401` before any data operation runs and before the\nsignature is verified. The key is never echoed back by any response and never appears in a log.\n\nIt is not a user credential and unlocks no member data on its own: every endpoint but the\nconfiguration one additionally requires a NIP-98 signature from the end user, and the association\nnever sees that user's private key.\n\nRequests are counted per client key and per end-user pubkey. Exceeding either quota answers `429`\nwith a `Retry-After` header.",
+                "description": "Identifies the CALLING APPLICATION \u2014 not the end user. Required on **every** endpoint of this API,\non both surfaces, `GET /api/v1/membership/config` included. On the app branch it is the ONLY\ncredential.\n\nSend the key the association issued to you in the `X-Api-Key` header:\n\n```http\nX-Api-Key: <your client key>\n```\n\n**You have to ask for one.** Keys are issued by the association and there is no self-service\nendpoint \u2014 request yours here: [einundzwanzig.group](https://group.einundzwanzig.space/rooms/42466283723001275). Ask for a\nreturn address to be allowlisted in the same message if your onboarding flow needs one; see\n`return_url` on the invoice endpoint for what that is.\n\nA missing or unknown key is answered with `401` before any data operation runs and before the\nsignature is verified. The key is never echoed back by any response and never appears in a log.\n\nIt is not a user credential and unlocks no member data on its own. On the main surface every\nendpoint but the configuration one additionally requires a NIP-98 signature from the end user, and\nthe association never sees that user's private key. On the app branch, where there is no signature,\nthe point holds by a different construction: that surface has no read endpoint at all, so a client\nkey alone can file an application and order a checkout \u2014 and can read nothing back.\n\nRequests are counted per client key and per end-user pubkey. Exceeding either quota answers `429`\nwith a `Retry-After` header.",
                 "in": "header",
                 "name": "X-Api-Key"
             },
             "nip98": {
                 "type": "http",
-                "description": "NIP-98 HTTP Auth \u2014 identifies the END USER a request is made for. Required on every endpoint except\n`GET /api/v1/membership/config`, **in addition to** the client key.\n\nSend a signed Nostr event of kind `27235`, JSON-encoded and then base64-encoded:\n\n```http\nAuthorization: Nostr <base64 of the event JSON>\n```\n\nThe private key stays with the user's signer. Neither the association nor the client operator ever\nholds it, which is what makes \"the subject is whoever signed\" a guarantee rather than a promise.\n\n## What the server checks\n\nIn this order, and each condition on its own:\n\n1. `kind` is `27235`.\n2. Tag `method` equals the HTTP method of the request, compared case-insensitively.\n3. Tag `u` equals the absolute request URL, compared byte for byte. Scheme, host and port come from\n   the server's own configuration \u2014 use the server URL listed above \u2014 while path and query come\n   from the request. A trailing slash or a different query string is a different URL.\n4. `created_at` is within **60 seconds** of server time, in either direction.\n5. If the request carries a body, its `Content-Type` must be exactly `application/json`. Anything\n   else, `multipart/form-data` above all, is refused with `415` \u2014 a body PHP has already consumed\n   cannot be checked against a signature.\n6. If the request carries a body, tag `payload` is the SHA-256 of the **raw body bytes**, lowercase\n   hex. It is hashed over the bytes actually sent, not over a re-encoding of them: sign and send\n   the same string.\n7. `id` is the SHA-256 of the NIP-01 serialisation `[0, pubkey, created_at, kind, tags, content]`,\n   JSON-encoded with slashes and unicode unescaped.\n8. `sig` is a valid BIP-340 Schnorr signature over `id`.\n9. The `id` has not been presented before. **Every event is accepted exactly once** and is\n   remembered for 150 seconds; a retried request needs a NEW event.\n\n`id` and `pubkey` must be 64 lowercase hex characters and `sig` 128. Uppercase hex is rejected even\nthough it verifies cryptographically \u2014 one private key would otherwise yield arbitrarily many\nidentities, each with its own quota.\n\nAny failed check answers `401` with the same body. Which one failed is deliberately not disclosed.\n\n## Building the credential\n\nWith a NIP-07 browser signer, which fills in `pubkey`, `id` and `sig`:\n\n```js\nconst url    = 'https://verein.einundzwanzig.space/api/v1/membership/applications'\nconst method = 'POST'\nconst body   = JSON.stringify({ statutes_accepted: true, email: 'satoshi@example.org' })\n\nconst sha256Hex = async (input) => {\n  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))\n  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')\n}\n\nconst tags = [\n  ['u', url],\n  ['method', method],\n  // Not required by the server, but two events built in the same second for the same URL and\n  // method would otherwise share an id \u2014 and the second one would be refused as a replay.\n  ['nonce', crypto.randomUUID()],\n]\n\nif (body) {\n  tags.push(['payload', await sha256Hex(body)])\n}\n\nconst event = await window.nostr.signEvent({\n  kind: 27235,\n  created_at: Math.floor(Date.now() / 1000),\n  tags,\n  content: '',\n})\n\nconst response = await fetch(url, {\n  method,\n  headers: {\n    'Content-Type': 'application/json',\n    'X-Api-Key': '<your client key>',\n    Authorization: 'Nostr ' + btoa(JSON.stringify(event)),\n  },\n  body,\n})\n```\n\nFor a GET there is no body: leave out the `payload` tag, the `Content-Type` header and the `body`\noption. Sending an empty JSON body such as `[]` is NOT the same thing \u2014 it counts as a body and\nthen demands a matching `payload` tag.\n\n## A decoded credential\n\nThis is what the base64 in the header decodes to:\n\n```json\n{\n  \"id\": \"5cf1b4f0e4b90a4a02f0f0a0b1c2d3e4f5061728394a5b6c7d8e9f0a1b2c3d4e\",\n  \"pubkey\": \"6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93\",\n  \"created_at\": 1785062400,\n  \"kind\": 27235,\n  \"tags\": [\n    [\"u\", \"https://verein.einundzwanzig.space/api/v1/membership/me\"],\n    [\"method\", \"GET\"],\n    [\"nonce\", \"0f2b7a1c9d3e4f50\"]\n  ],\n  \"content\": \"\",\n  \"sig\": \"908f5d1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6\"\n}\n```\n\n`content` is unused by this API and may stay empty. Tags other than `u`, `method` and `payload` are\nignored, so a `nonce` costs nothing.",
+                "description": "NIP-98 HTTP Auth \u2014 identifies the END USER a request is made for. Required on every endpoint of the\nmain surface except `GET /api/v1/membership/config`, **in addition to** the client key. The app\nbranch under `/api/v1/app/membership` uses none of this: it takes a `pubkey` in the body instead,\nand pays for that with having no read endpoint.\n\nSend a signed Nostr event of kind `27235`, JSON-encoded and then base64-encoded:\n\n```http\nAuthorization: Nostr <base64 of the event JSON>\n```\n\nThe private key stays with the user's signer. Neither the association nor the client operator ever\nholds it, which is what makes \"the subject is whoever signed\" a guarantee rather than a promise.\n\n## What the server checks\n\nIn this order, and each condition on its own:\n\n1. `kind` is `27235`.\n2. Tag `method` equals the HTTP method of the request, compared case-insensitively.\n3. Tag `u` equals the absolute request URL, compared byte for byte. Scheme, host and port come from\n   the server's own configuration \u2014 use the server URL listed above \u2014 while path and query come\n   from the request. A trailing slash or a different query string is a different URL.\n4. `created_at` is within **60 seconds** of server time, in either direction.\n5. If the request carries a body, its `Content-Type` must be exactly `application/json`. Anything\n   else, `multipart/form-data` above all, is refused with `415` \u2014 a body PHP has already consumed\n   cannot be checked against a signature.\n6. If the request carries a body, tag `payload` is the SHA-256 of the **raw body bytes**, lowercase\n   hex. It is hashed over the bytes actually sent, not over a re-encoding of them: sign and send\n   the same string.\n7. `id` is the SHA-256 of the NIP-01 serialisation `[0, pubkey, created_at, kind, tags, content]`,\n   JSON-encoded with slashes and unicode unescaped.\n8. `sig` is a valid BIP-340 Schnorr signature over `id`.\n9. The `id` has not been presented before. **Every event is accepted exactly once** and is\n   remembered for 150 seconds; a retried request needs a NEW event.\n\n`id` and `pubkey` must be 64 lowercase hex characters and `sig` 128. Uppercase hex is rejected even\nthough it verifies cryptographically \u2014 one private key would otherwise yield arbitrarily many\nidentities, each with its own quota.\n\nAny failed check answers `401` with the same body. Which one failed is deliberately not disclosed.\n\n## Building the credential\n\nWith a NIP-07 browser signer, which fills in `pubkey`, `id` and `sig`:\n\n```js\nconst url    = 'https://verein.einundzwanzig.space/api/v1/membership/applications'\nconst method = 'POST'\nconst body   = JSON.stringify({ statutes_accepted: true, email: 'satoshi@example.org' })\n\nconst sha256Hex = async (input) => {\n  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))\n  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')\n}\n\nconst tags = [\n  ['u', url],\n  ['method', method],\n  // Not required by the server, but two events built in the same second for the same URL and\n  // method would otherwise share an id \u2014 and the second one would be refused as a replay.\n  ['nonce', crypto.randomUUID()],\n]\n\nif (body) {\n  tags.push(['payload', await sha256Hex(body)])\n}\n\nconst event = await window.nostr.signEvent({\n  kind: 27235,\n  created_at: Math.floor(Date.now() / 1000),\n  tags,\n  content: '',\n})\n\nconst response = await fetch(url, {\n  method,\n  headers: {\n    'Content-Type': 'application/json',\n    'X-Api-Key': '<your client key>',\n    Authorization: 'Nostr ' + btoa(JSON.stringify(event)),\n  },\n  body,\n})\n```\n\nFor a GET there is no body: leave out the `payload` tag, the `Content-Type` header and the `body`\noption. Sending an empty JSON body such as `[]` is NOT the same thing \u2014 it counts as a body and\nthen demands a matching `payload` tag.\n\n## A decoded credential\n\nThis is what the base64 in the header decodes to:\n\n```json\n{\n  \"id\": \"5cf1b4f0e4b90a4a02f0f0a0b1c2d3e4f5061728394a5b6c7d8e9f0a1b2c3d4e\",\n  \"pubkey\": \"6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93\",\n  \"created_at\": 1785062400,\n  \"kind\": 27235,\n  \"tags\": [\n    [\"u\", \"https://verein.einundzwanzig.space/api/v1/membership/me\"],\n    [\"method\", \"GET\"],\n    [\"nonce\", \"0f2b7a1c9d3e4f50\"]\n  ],\n  \"content\": \"\",\n  \"sig\": \"908f5d1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6\"\n}\n```\n\n`content` is unused by this API and may stay empty. Tags other than `u`, `method` and `payload` are\nignored, so a `nonce` costs nothing.",
                 "scheme": "nostr"
             }
         },
@@ -1347,7 +1384,7 @@
                         "properties": {
                             "required_fields": {
                                 "type": "array",
-                                "description": "The body fields `POST /api/v1/membership/applications` requires on a first application. The consent is the only one: the statutes demand no legal name, no address and no date of birth.",
+                                "description": "The body fields an application requires on a first application. The consent is the only one: the statutes demand no legal name, no address and no date of birth. ON THE APP BRANCH ADD `pubkey`, which this list does not name \u2014 the response is association-wide and identical on both branches, and `pubkey` is a property of the branch rather than of the association. `POST /api/v1/app/membership/applications` documents it as required.",
                                 "prefixItems": [
                                     {
                                         "type": "string",
@@ -1994,15 +2031,18 @@
             },
             "StoreAppApplicationRequest": {
                 "type": "object",
-                "description": "The body of `POST /api/v1/app/membership/applications` \u2014 the NATIVE APP\nbranch of the membership API.\n\nThe difference to {@see StoreApplicationRequest} is exactly one thing, and\nit is the whole reason this class exists instead of a flag on the other:\nthe subject. On the NIP-98 surface the pubkey comes from a verified\nsignature and can never be a body field; on the app surface there IS no\nsignature \u2014 deliberate (the native app already knows its signer's pubkey\nand the payment itself is the proof that matters). So here the pubkey is a\nREQUIRED body field, canonically validated, and the trust boundary shifts\naccordingly: the calling application (client key) vouches for the value,\nnot the key holder.\n\nWhat that costs, said plainly: a caller with a valid client key can create\nor update a member record for a pubkey of their choosing and order an\ninvoice on the association's BTCPay quota \u2014 never getting access, because\npaying somebody else's fee is a gift, not an attack. Read endpoints\n(/me, /payments, /export) do not exist on this surface at all: without a\nsignature they would be a membership-roll oracle for foreign pubkeys.\n\n`statutes_accepted` keeps the `accepted` rule from the web branch: the\nconsent is recorded by THIS endpoint and an explicit refusal must fail\nvalidation, not silently record a non-consent.",
+                "description": "The body of an application on the APP BRANCH. It is the body of `POST /api/v1/membership/applications` plus the one field that surface refuses: `pubkey`, which here names the subject because no signature does.\n\nEverything else behaves identically \u2014 the consent is recorded once and never refreshed, an omitted field is left untouched, an explicit `null` clears the stored value. As on the main surface this call grants no membership: the settled annual fee does that and nothing else.",
                 "properties": {
                     "pubkey": {
                         "type": "string",
-                        "description": "NIP-01 spelling, enforced as everywhere else in this API: hex,\n64 characters, lowercase. A pubkey in any other spelling is a\ndifferent identity in every byte comparison downstream (relay\nmember list, rate limiter, record lookup).",
-                        "pattern": "^[0-9a-f]{64}$"
+                        "description": "The Nostr public key the application is for. REQUIRED HERE and refused on the main surface, where the signature names the subject instead. 64 lowercase hex characters (NIP-01); any other spelling is refused with 422, uppercase hex included \u2014 one private key would otherwise yield arbitrarily many identities, each with its own quota.\n\nNAMING A KEY IS NOT PROVING IT. On this branch the calling application vouches for the value and the association cannot check it, which is why the branch has no endpoint that reads anything back. Nothing is granted by naming a pubkey \u2014 the settled annual fee grants the membership.",
+                        "pattern": "^[0-9a-f]{64}$",
+                        "examples": [
+                            "6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93"
+                        ]
                     },
                     "statutes_accepted": {
-                        "description": "Same semantics as the web branch: required for the first\napplication, `sometimes` afterwards so a repeat neither needs\nnor refreshes the joining document.",
+                        "description": "Consent to the statutes. Send `true`. Required on a first application and optional afterwards \u2014 the consent is given once, and a repeat application neither needs it again nor may overwrite the recorded timestamp. An explicit `false` is a refusal and is rejected with 422 rather than silently recorded as a non-consent. The other accepted spellings are Laravel's `accepted` rule and are listed for completeness.",
                         "enum": [
                             "yes",
                             "on",
@@ -2017,6 +2057,10 @@
                             "string",
                             "null"
                         ],
+                        "description": "Free-form text the applicant wants on record, up to 2000 characters. Disclosed only back to its own author, through `GET /api/v1/membership/export`.",
+                        "examples": [
+                            "I have been running the local meetup since 2023 and would like to join."
+                        ],
                         "maxLength": 2000
                     },
                     "email": {
@@ -2025,18 +2069,26 @@
                             "null"
                         ],
                         "format": "email",
+                        "description": "Contact e-mail address. Optional \u2014 the statutes let invitations travel by online publication, so a membership does not depend on it.",
+                        "examples": [
+                            "satoshi@example.org"
+                        ],
                         "maxLength": 255
                     },
                     "no_email": {
-                        "type": "boolean"
+                        "type": "boolean",
+                        "description": "Set to true to state that this person does not want to be contacted by e-mail."
                     },
                     "nip05_handle": {
                         "type": [
                             "string",
                             "null"
                         ],
-                        "description": "Literally the same rules as everywhere else, from the same\nconstant on the model \u2014 an API surface that accepts what the UI\nrefuses is a second definition of a NIP-05 handle. Unique check\nignores the named subject's own record, mirroring the web\nbranch's ignore of the signer's.",
+                        "description": "The local part of a NIP-05 identifier the association serves as `<handle>@einundzwanzig.space`. Lowercase letters, digits, hyphen and underscore only, because it becomes part of a public .well-known/nostr.json. Handles are unique across members; a taken one is refused with 422. It is a public identifier by design, so refusing it discloses nothing.",
                         "pattern": "^[a-z0-9_-]+$",
+                        "examples": [
+                            "satoshi"
+                        ],
                         "maxLength": 255
                     }
                 },
@@ -2048,17 +2100,22 @@
             },
             "StoreAppInvoiceRequest": {
                 "type": "object",
-                "description": "The body of `POST /api/v1/app/membership/payments/{year}/invoice` \u2014 the\nNATIVE APP branch of the invoice endpoint.\n\nIdentical to {@see StoreInvoiceRequest} except for the one field the app\nbranch cannot do without: `pubkey`, required and canonically validated,\nbecause there is no signature to name the subject (see\n{@see StoreAppApplicationRequest} for what that means).\n\n`return_url` keeps the allowlist: it is the one value a client sends that\nleaves the association (BTCPay redirects the payer's browser there), so it\nis checked against the server-side list \u2014 for the app the entry\n`http://127.0.0.1/verein/zurueck`, the NativePHP local server the checkout\ncan reach on the same device.",
+                "description": "The body of an invoice request on the APP BRANCH. Unlike its counterpart on the main surface this body is REQUIRED, because it carries `pubkey` \u2014 the subject of the checkout, which no signature supplies here.\n\n`return_url` is the only other field that is read, and it is optional. Amount, currency and fee year are not request values: the first two come from the association's configuration and the year from the path.",
                 "properties": {
                     "pubkey": {
                         "type": "string",
-                        "pattern": "^[0-9a-f]{64}$"
+                        "description": "The Nostr public key the checkout is for. REQUIRED HERE and refused on the main surface, where the signature names the subject instead. A pubkey with no membership record answers 404 \u2014 file the application first. 64 lowercase hex characters (NIP-01); any other spelling is refused with 422, uppercase hex included \u2014 one private key would otherwise yield arbitrarily many identities, each with its own quota.\n\nNAMING A KEY IS NOT PROVING IT. On this branch the calling application vouches for the value and the association cannot check it, which is why the branch has no endpoint that reads anything back. Nothing is granted by naming a pubkey \u2014 the settled annual fee grants the membership.",
+                        "pattern": "^[0-9a-f]{64}$",
+                        "examples": [
+                            "6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93"
+                        ]
                     },
                     "return_url": {
                         "type": [
                             "string",
                             "null"
                         ],
+                        "description": "Where the payer is sent after the checkout, and optional. A value must be one of the addresses configured on the server \u2014 for this branch that is the local address the native app serves \u2014 and anything else is refused with 422 rather than silently replaced. ASK FOR YOUR ADDRESS TO BE ALLOWLISTED BEFORE YOU SEND ONE; it is not on the list until the association puts it there: https://group.einundzwanzig.space/rooms/42466283723001275. It only takes effect on the call that actually creates the invoice; on an idempotent repeat the redirect belongs to the invoice that already exists.",
                         "maxLength": 2048
                     }
                 },
@@ -2136,7 +2193,7 @@
                             "string",
                             "null"
                         ],
-                        "description": "Where the payer is sent after the checkout. Optional: omit it (or send null) and the payer returns to the association's own profile page, which is what happened before this field existed. A value must be one of the addresses configured on the server; anything else is refused with 422 rather than silently replaced, so that a rejected address is never mistaken for an accepted one. It only takes effect on the call that actually creates the invoice \u2014 on an idempotent repeat the redirect belongs to the invoice that already exists.",
+                        "description": "Where the payer is sent after the checkout. Optional: omit it (or send null) and the payer returns to the association's own profile page, which is what happened before this field existed. ASK FOR YOUR ADDRESS TO BE ALLOWLISTED BEFORE YOU SEND ONE \u2014 the value is checked against a list kept on the server, and your own URL is not on it until the association puts it there: https://group.einundzwanzig.space/rooms/42466283723001275. This is not bureaucracy but the reason the field is safe to have: the value ends up in BTCPay's `redirectURL`, so an unchecked one would let any key holder bounce a payer off the association's domain to anywhere. An address that is not on the list is refused with 422 rather than silently replaced, so that a rejected address is never mistaken for an accepted one. It only takes effect on the call that actually creates the invoice \u2014 on an idempotent repeat the redirect belongs to the invoice that already exists.",
                         "examples": [
                             "https://einundzwanzig.group/verein/beitritt"
                         ],

@@ -7,9 +7,9 @@ use Illuminate\Support\Facades\Route;
  * Two guarantees `OpenApiDocumentationTest.php` does not give, because both
  * need a second source of truth next to the committed file.
  *
- * COVERAGE, IN BOTH DIRECTIONS. `documents exactly the eight /api/v1
+ * COVERAGE, IN BOTH DIRECTIONS. `documents exactly the eleven /api/v1
  * endpoints` in the sibling file pins the document against a hardcoded list
- * of eight operations — it catches the document drifting from THAT LIST, not
+ * of eleven operations — it catches the document drifting from THAT LIST, not
  * the list (or the document) drifting from `routes/api.php`. A new route
  * added to the group and never exported would leave that test, and every
  * other test in this repo, green. The tests below compare the document
@@ -95,7 +95,7 @@ function contractTestSpecOperations(array $document): array
  * Filtered on the literal prefix `api/v1/` rather than on a denylist of the
  * four routes that must NOT appear here — the two legacy endpoints
  * (`GET /api/members/{year}`, `GET /api/nostr/profile/{key}`) and the two
- * documentation routes (`docs/v1/api`, `docs/v1/api.json`). None of those
+ * documentation routes (`docs/api`, `docs/api.json`). None of those
  * four URIs start with `api/v1/`, so all four fall out on their own; a fifth
  * route added under `api/v1/*` tomorrow is caught by the SAME condition that
  * already governs what Scramble documents (config/scramble.php,

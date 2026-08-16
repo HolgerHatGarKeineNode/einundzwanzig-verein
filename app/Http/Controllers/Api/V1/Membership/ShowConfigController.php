@@ -8,10 +8,13 @@ use Illuminate\Http\Request;
 
 /**
  * GET /api/v1/membership/config — what joining costs and what an application
- * must carry.
+ * must carry. SERVES BOTH SURFACES: the app branch routes
+ * `GET /api/v1/app/membership/config` to this same controller, because the
+ * answer is association-wide and there is nothing about it a branch could
+ * change.
  *
- * THE ONLY /api/v1 ENDPOINT WITHOUT NIP-98, and the condition for that is
- * visible in the code: it never touches `subject()`, never reads
+ * THE ONLY ENDPOINT OF THE MAIN SURFACE WITHOUT NIP-98, and the condition for
+ * that is visible in the code: it never touches `subject()`, never reads
  * `ApiIdentity::pubkey()` and never queries a member record. A client has to be
  * able to show the fee before anyone has signed anything — requiring a
  * signature to learn the price would mean a prospective member must
@@ -30,15 +33,15 @@ class ShowConfigController extends ApiV1Controller
     /**
      * Get the annual fee and what an application must carry.
      *
-     * The only endpoint on this API that does not require a NIP-98 signature:
-     * send the client key alone. A client has to be able to show the fee
-     * before anybody has signed anything, and the response is association-wide
-     * — it is identical for every caller.
+     * Send the client key alone — this endpoint needs no NIP-98 signature on
+     * either surface. A client has to be able to show the fee before anybody
+     * has signed anything, and the response is association-wide: it is
+     * identical for every caller and on both branches.
      *
      * `year` is the fee year the association is currently collecting, and it
-     * is the only year `POST /api/v1/membership/payments/{year}/invoice`
-     * accepts. `application.required_fields` and `application.optional_fields`
-     * name the body fields of `POST /api/v1/membership/applications`.
+     * is the only year the invoice endpoint of the same branch accepts.
+     * `application.required_fields` and `application.optional_fields` name the
+     * body fields of the application endpoint of the same branch.
      */
     public function __invoke(Request $request): MembershipConfigResource
     {

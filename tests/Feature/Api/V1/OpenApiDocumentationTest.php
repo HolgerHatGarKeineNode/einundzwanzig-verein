@@ -1,7 +1,9 @@
 <?php
 
+use App\Http\Middleware\VerifyNip98;
 use App\Providers\ApiDocumentationServiceProvider;
 use App\Support\OpenApi\MembershipApiDocumentTransformer;
+use Illuminate\Routing\Router;
 use swentel\nostr\Key\Key;
 
 /*
@@ -20,9 +22,9 @@ use swentel\nostr\Key\Key;
  * implements against, and it is a file in the repository rather than something
  * generated on demand. A file can be edited by hand, can be re-exported from a
  * branch that had extra routes, or can go stale. What must never change
- * silently is its perimeter: eight documented endpoints, both authentication
- * schemes, and the warning about `association_status` — the one field on this
- * API a consumer can get wrong without noticing.
+ * silently is its perimeter: the eleven documented operations, both
+ * authentication schemes, and the warning about `association_status` — the one
+ * field on this API a consumer can get wrong without noticing.
  */
 
 /**
@@ -78,8 +80,9 @@ function openApiProseFields(array $node, string $path = ''): array
 }
 
 /**
- * The eight endpoints this API consists of, method and path exactly as the
- * document has to spell them.
+ * The eleven operations this API consists of — eight on the NIP-98 surface and
+ * three on the app branch — method and path exactly as the document has to
+ * spell them.
  *
  * @return list<array{0: string, 1: string}>
  */
@@ -109,6 +112,64 @@ beforeEach(function () {
      * cached before it.
      */
     config(['scramble.cache.store' => null]);
+});
+
+it('serves the versioned document under the path the package would have claimed', function () {
+    /*
+     * `docs/api` is the path the PACKAGE registers its own `default` API on.
+     * `ApiDocumentationServiceProvider` withdraws it with `expose(false)` and
+     * publishes the `v1` API there instead. If that withdrawal ever stops
+     * working — a Scramble release moving when its routes are registered would
+     * do it — nothing throws and nothing 404s.
+     *
+     * WHAT WOULD BE LOST IS THE TRANSFORMER, NOT THE PATHS, and getting that
+     * wrong is what made two earlier versions of this test worthless. The
+     * default API is handed our own `config('scramble')`, `api_path` included,
+     * so its document covers the same eleven `api/v1` operations ours does —
+     * measured: ten paths, neither legacy endpoint among them. What it does
+     * not carry is `MembershipApiDocumentTransformer`, which is registered on
+     * the `v1` API alone. A package win therefore serves a document with the
+     * right paths and NO `security`, no tags and none of the prose.
+     *
+     * So the assertion is on something only the transformer produces. The two
+     * discarded approaches, and why each was vacuous:
+     *   - Counting routes and comparing names. A `RouteCollection` is keyed by
+     *     method+URI and OVERWRITES on collision
+     *     (Illuminate\Routing\RouteCollection::addToCollections), so the count
+     *     is structurally pinned to one; and the loser keeps its entry in the
+     *     name list, so the name lookup passes as well. Both stayed green
+     *     through a simulated takeover that served a foreign body.
+     *   - Asserting on the SET OF PATHS. Green against the untransformed
+     *     document, because that document has the very same paths.
+     */
+    $response = $this->get('/'.ApiDocumentationServiceProvider::DOCUMENT_PATH);
+
+    $response->assertOk();
+
+    expect($response->json('paths./api/v1/app/membership/applications.post.security'))
+        ->toBe([[MembershipApiDocumentTransformer::CLIENT_KEY_SCHEME => []]],
+            'The document served under '.ApiDocumentationServiceProvider::DOCUMENT_PATH.' did not pass through '
+            .'MembershipApiDocumentTransformer. Something other than the `v1` API is answering that path.');
+
+    /*
+     * And the reference renders that same document rather than a second one
+     * some other route might be serving. It embeds it as `@json($spec)`, so
+     * the content appears slash-escaped (`\/api\/v1\/...`) — searched for in
+     * the form json_encode actually produces rather than in the form it has in
+     * the document, which is why the plain spelling finds nothing here.
+     *
+     * The tag is transformer-only for the same reason as above: Scramble left
+     * to itself tags an operation with its controller's class name. Asserted
+     * positively rather than as the absence of `StoreAppApplication` — that
+     * string is also the stem of the request-body SCHEMA name, which the
+     * document carries either way.
+     */
+    $embedded = fn (string $value): string => trim((string) json_encode($value), '"');
+
+    $this->get('/'.ApiDocumentationServiceProvider::UI_PATH)
+        ->assertOk()
+        ->assertSee($embedded('/api/v1/app/membership/applications'), escape: false)
+        ->assertSee($embedded('Native app'), escape: false);
 });
 
 it('serves the reference without any credential', function () {
@@ -267,26 +328,175 @@ it('carries a NIP-98 example complete enough to build an event from', function (
         ->and($description)->toContain('application/json');
 });
 
-it('requires only the client key for the configuration endpoint', function () {
-    $operation = exportedOpenApiDocument()['paths']['/api/v1/membership/config']['get'];
+/**
+ * Which `[method, /uri]` operations the SERVER verifies a NIP-98 signature on.
+ *
+ * The ground truth both credential tests below measure against, read off the
+ * resolved middleware of the real routes. Deliberately not shared with
+ * `MembershipApiDocumentTransformer::requiresSignature()`: a test that called
+ * the very method it is checking would assert that the code agrees with
+ * itself.
+ *
+ * @return array<string, bool>
+ */
+function signedApiV1Routes(): array
+{
+    $router = app(Router::class);
+    $signed = [];
 
-    expect($operation['security'])->toBe([[
-        MembershipApiDocumentTransformer::CLIENT_KEY_SCHEME => [],
-    ]]);
-});
+    foreach ($router->getRoutes() as $route) {
+        $resolved = $router->resolveMiddleware($route->gatherMiddleware(), $route->excludedMiddleware());
 
-it('requires both schemes on every other endpoint', function () {
+        // Same shape as the transformer's own check, deliberately: a looser
+        // one here (`str_starts_with` without the colon) would also match a
+        // future `VerifyNip98Strict`, and the test would then disagree with
+        // the code for a reason that has nothing to do with the document.
+        $verifies = (bool) array_filter(
+            $resolved,
+            fn (mixed $middleware): bool => is_string($middleware)
+                && ($middleware === VerifyNip98::class || str_starts_with($middleware, VerifyNip98::class.':')),
+        );
+
+        foreach ($route->methods() as $method) {
+            $signed[strtolower($method).' /'.$route->uri()] = $verifies;
+        }
+    }
+
+    return $signed;
+}
+
+it('documents the credentials each endpoint actually verifies', function () {
+    /*
+     * MEASURED AGAINST THE ROUTES, NOT AGAINST A LIST, and that is the whole
+     * value of this test.
+     *
+     * It used to be two tests over a hardcoded split — the configuration
+     * endpoint needs the client key, "every other endpoint" needs both — and
+     * the app branch (P8) sailed through both of them green while the
+     * published document told a third party to sign three requests that have
+     * no signature check behind them at all. A list cannot catch a new branch;
+     * it IS the thing that goes stale. Reading `VerifyNip98` off the route
+     * makes the assertion say what it means: the document must describe the
+     * credential the server verifies.
+     */
     $document = exportedOpenApiDocument();
+    $signedRoutes = signedApiV1Routes();
 
     foreach (documentedApiV1Operations() as [$method, $path]) {
-        if ($path === '/api/v1/membership/config') {
+        $isSigned = $signedRoutes["{$method} {$path}"]
+            ?? throw new RuntimeException("The document covers {$method} {$path}, which matches no route.");
+
+        expect($document['paths'][$path][$method]['security'])->toBe([$isSigned
+            ? [
+                MembershipApiDocumentTransformer::CLIENT_KEY_SCHEME => [],
+                MembershipApiDocumentTransformer::NIP98_SCHEME => [],
+            ]
+            : [MembershipApiDocumentTransformer::CLIENT_KEY_SCHEME => []],
+        ], $isSigned
+            ? "{$method} {$path} verifies a NIP-98 signature, so the document must ask for one."
+            : "{$method} {$path} verifies NO signature, so the document must not ask for one.");
+    }
+});
+
+it('never describes a NIP-98 failure on an endpoint that verifies no signature', function () {
+    /*
+     * The second half of the same defect, and `security` alone does not catch
+     * it: the app-branch operations carried a 401 blaming "the NIP-98
+     * credential" and a 503 about "the replay lock behind the NIP-98
+     * verification" — two mechanisms that do not exist on that surface. A
+     * client developer debugging a 401 there would have looked for a signature
+     * bug forever.
+     *
+     * Which endpoints those are is read from the ROUTES, not from the
+     * document's own `security` block. Deriving it from the document would
+     * make this test assert nothing but the document's internal consistency —
+     * it would go green on a document that is wrong in both halves at once,
+     * which is precisely the state this change found.
+     */
+    $document = exportedOpenApiDocument();
+    $signedRoutes = signedApiV1Routes();
+
+    foreach (documentedApiV1Operations() as [$method, $path]) {
+        $operation = $document['paths'][$path][$method];
+
+        $isSigned = $signedRoutes["{$method} {$path}"]
+            ?? throw new RuntimeException("The document covers {$method} {$path}, which matches no route.");
+
+        if ($isSigned) {
             continue;
         }
 
-        expect($document['paths'][$path][$method]['security'])->toBe([[
-            MembershipApiDocumentTransformer::CLIENT_KEY_SCHEME => [],
-            MembershipApiDocumentTransformer::NIP98_SCHEME => [],
-        ]], "{$method} {$path} must require the client key AND a NIP-98 signature.");
+        foreach ($operation['responses'] as $code => $response) {
+            expect(str_contains($response['description'] ?? '', 'NIP-98'))
+                ->toBeFalse("{$method} {$path} answers {$code} with prose about a NIP-98 check it does not perform.");
+        }
+    }
+});
+
+it('publishes the app branch as a client-key-only surface with a pubkey in the body', function () {
+    /*
+     * The three things a client of the app branch has to be told, and none of
+     * them is inferable from the code Scramble reads: that the subject is a
+     * body field, that the field is mandatory, and that a first application
+     * answers 201 rather than 200 (Scramble sees `->setStatusCode()` and gives
+     * up, documenting only 200 — a client treating 201 as a failure would
+     * never complete a first join).
+     */
+    $document = exportedOpenApiDocument();
+
+    foreach (['StoreAppApplicationRequest', 'StoreAppInvoiceRequest'] as $schema) {
+        $body = $document['components']['schemas'][$schema];
+
+        // `toContain` is variadic — a second argument would be a second value
+        // to look for, not a failure message.
+        expect($body['required'] ?? [])->toContain('pubkey')
+            ->and($body['properties']['pubkey']['pattern'] ?? null)
+            ->toBe('^[0-9a-f]{64}$', "{$schema}.pubkey must be documented as a required, canonical pubkey.");
+    }
+
+    expect(array_keys($document['paths']['/api/v1/app/membership/applications']['post']['responses']))
+        ->toContain(201);
+
+    // And no read surface, which is the price the branch pays for having no
+    // signature. A `/me`, `/payments` or `/export` under `app/` would be an
+    // oracle for foreign pubkeys.
+    foreach (array_keys($document['paths']) as $path) {
+        if (! str_starts_with($path, '/api/v1/app/')) {
+            continue;
+        }
+
+        expect($path)->toBeIn([
+            '/api/v1/app/membership/config',
+            '/api/v1/app/membership/applications',
+            '/api/v1/app/membership/payments/{year}/invoice',
+        ], "{$path} is a fourth endpoint on the unsigned surface. See routes/api.php for why there are three.");
+    }
+});
+
+it('tells a client where to ask for the two things it cannot obtain itself', function () {
+    /*
+     * A client key and an allowlisted `return_url` are both issued by the
+     * association, and neither is reachable through this API. Without an
+     * address in the document a developer meets them as a 401 and a 422 that
+     * look like bugs in their own code — the one failure mode reading the
+     * documentation harder cannot fix.
+     *
+     * Pinned in three places because a reader arrives at three different ones:
+     * the introduction, the client-key scheme, and the `return_url` field of
+     * each branch, which is where the question actually comes up.
+     */
+    $document = exportedOpenApiDocument();
+    $contact = 'group.einundzwanzig.space';
+
+    expect($document['info']['description'])->toContain($contact)
+        ->and($document['components']['securitySchemes'][MembershipApiDocumentTransformer::CLIENT_KEY_SCHEME]['description'])
+        ->toContain($contact);
+
+    foreach (['StoreInvoiceRequest', 'StoreAppInvoiceRequest'] as $schema) {
+        // `toContain` is variadic, so the message goes on an expectation that
+        // takes one.
+        expect(str_contains($document['components']['schemas'][$schema]['properties']['return_url']['description'], $contact))
+            ->toBeTrue("{$schema}.return_url must say where to have an address allowlisted.");
     }
 });
 

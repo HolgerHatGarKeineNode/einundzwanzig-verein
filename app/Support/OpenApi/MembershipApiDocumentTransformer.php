@@ -2,6 +2,9 @@
 
 namespace App\Support\OpenApi;
 
+use App\Http\Middleware\VerifyNip98;
+use App\Http\Requests\Api\V1\StoreAppApplicationRequest;
+use App\Http\Requests\Api\V1\StoreAppInvoiceRequest;
 use App\Http\Requests\Api\V1\StoreApplicationRequest;
 use App\Http\Requests\Api\V1\StoreInvoiceRequest;
 use App\Http\Resources\Api\V1\InvoiceResource;
@@ -10,6 +13,7 @@ use App\Http\Resources\Api\V1\MembershipExportResource;
 use App\Http\Resources\Api\V1\MembershipResource;
 use App\Http\Resources\Api\V1\PaymentEventResource;
 use Dedoc\Scramble\Contracts\DocumentTransformer;
+use Dedoc\Scramble\Exceptions\OpenApiReferenceTargetNotFoundException;
 use Dedoc\Scramble\OpenApiContext;
 use Dedoc\Scramble\Support\Generator\OpenApi;
 use Dedoc\Scramble\Support\Generator\Operation;
@@ -25,6 +29,7 @@ use Dedoc\Scramble\Support\Generator\Types\IntegerType;
 use Dedoc\Scramble\Support\Generator\Types\ObjectType;
 use Dedoc\Scramble\Support\Generator\Types\StringType;
 use Dedoc\Scramble\Support\Generator\Types\Type;
+use Illuminate\Routing\Router;
 use RuntimeException;
 
 /**
@@ -38,10 +43,12 @@ use RuntimeException;
  * written out, and it is written out from `App\Support\Nip98` rather than from
  * memory.
  *
- * THE SECURITY PER OPERATION — seven endpoints need the client key AND the
- * end-user signature, `GET /membership/config` needs only the first. That
- * distinction lives in the route file as a middleware list, and Scramble's
- * middleware-based strategy only recognises Laravel's own `auth` guards.
+ * THE SECURITY PER OPERATION — the main surface needs the client key AND the
+ * end-user signature, while `GET /membership/config` and the whole app branch
+ * get by on the key alone. That distinction lives in the route file as a
+ * middleware list, and Scramble's middleware-based strategy only recognises
+ * Laravel's own `auth` guards — so it is read back off the routes here
+ * (`requiresSignature()`) rather than restated as a list.
  *
  * THE CORRECTIONS — Scramble infers response shapes from the code, and where
  * a JsonResource is built from an array rather than from a model it infers
@@ -68,9 +75,35 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
     public const NIP98_SCHEME = 'nip98';
 
     /**
-     * The one operation that gets by on the client key alone.
+     * The operations that carry a NIP-98 signature, resolved once per document
+     * from the routes themselves.
+     *
+     * NOT a hardcoded list, and that is the whole point. It used to be one —
+     * `PUBLIC_CONFIG_OPERATION = 'get api/v1/membership/config'`, everything
+     * else signed — and the app branch (P8) walked straight through it: three
+     * endpoints that have no NIP-98 middleware at all were published as
+     * requiring a signature, error responses included. A list is a second copy
+     * of a decision that lives in `routes/api.php`, and copies drift silently.
+     * Read from `VerifyNip98` being on the route or not, the document cannot
+     * disagree with what the server actually verifies.
+     *
+     * @var array<string, bool>|null
      */
-    private const PUBLIC_CONFIG_OPERATION = 'get api/v1/membership/config';
+    private ?array $signedOperations = null;
+
+    /**
+     * Where a third party asks the association for the two things it cannot
+     * give itself: a client key, and an entry on the return-address allowlist.
+     *
+     * Both are server-side decisions — `VerifyApiClient` checks the key
+     * against the association's own list, and `InvoiceReturnUrl::isAllowed()`
+     * checks `return_url` against `einundzwanzig.config.invoice_return_urls`.
+     * A client developer therefore cannot get either by reading harder or by
+     * trying again; without the address in this document, the only signal is a
+     * 401 or a 422 that looks like a bug in their own code. Named next to both
+     * of the fields it unblocks, because that is where the question comes up.
+     */
+    private const CONTACT_URL = 'https://group.einundzwanzig.space/rooms/42466283723001275';
 
     /**
      * The warning a consumer has to read, in the one wording that is repeated
@@ -87,9 +120,73 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
         .'from both the category and the payment and is the only correct answer to "is this person a member '
         .'right now".';
 
+    /**
+     * Whether the route behind an operation verifies a NIP-98 signature.
+     *
+     * TWO THINGS ARE RESOLVED HERE RATHER THAN READ LITERALLY, and each covers
+     * a way of reaching the middleware that a naive check would miss.
+     *
+     * The GROUP. The signed endpoints of the main surface reach `VerifyNip98`
+     * through the group name `api.v1` (bootstrap/app.php); a raw
+     * `gatherMiddleware()` would see only that string and report every one of
+     * them as unsigned. The routes that list their middleware individually —
+     * both `/config` endpoints — pass through the same call unchanged, so one
+     * path covers both spellings.
+     *
+     * The PARAMETER. Middleware may be written `Class::class.':argument'`, as
+     * `ThrottleApiV1` is on these very routes. `VerifyNip98` takes none today,
+     * but a strict equality check would answer "unsigned" the day it does —
+     * publishing a documented-as-open endpoint that in fact demands a
+     * signature. Matched on the class prefix instead.
+     */
+    private function requiresSignature(Operation $operation): bool
+    {
+        if ($this->signedOperations === null) {
+            $router = app(Router::class);
+            $this->signedOperations = [];
+
+            foreach ($router->getRoutes() as $route) {
+                $resolved = $router->resolveMiddleware(
+                    $route->gatherMiddleware(),
+                    $route->excludedMiddleware(),
+                );
+
+                $verifiesSignature = array_any(
+                    $resolved,
+                    fn (mixed $middleware): bool => is_string($middleware)
+                        && ($middleware === VerifyNip98::class || str_starts_with($middleware, VerifyNip98::class.':')),
+                );
+
+                foreach ($route->methods() as $method) {
+                    $this->signedOperations[strtolower($method).' '.$route->uri()] = $verifiesSignature;
+                }
+            }
+        }
+
+        $key = $operation->method.' '.$operation->path;
+
+        return $this->signedOperations[$key] ?? throw new RuntimeException(
+            "Operation [{$key}] matches no registered route, so whether it needs a NIP-98 signature cannot be established."
+        );
+    }
+
+    /**
+     * Fill `{{CONTACT_URL}}` into a block of documentation prose.
+     *
+     * The prose lives in nowdoc blocks — single-quoted heredocs, which
+     * interpolate nothing — and that is deliberate: they hold `$` signs,
+     * braces and backticks of example code that a parsing heredoc would try to
+     * read as PHP. A placeholder plus one substitution keeps both properties,
+     * the literal blocks and a contact address that exists exactly once.
+     */
+    private function withContactUrl(string $markdown): string
+    {
+        return str_replace('{{CONTACT_URL}}', self::CONTACT_URL, $markdown);
+    }
+
     public function handle(OpenApi $document, OpenApiContext $context): void
     {
-        $document->info->setDescription($this->apiDescription());
+        $document->info->setDescription($this->withContactUrl($this->apiDescription()));
 
         $this->addSecuritySchemes($document);
         $this->describeComponentSchemas($document);
@@ -103,7 +200,7 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
     }
 
     /**
-     * The four groups the reference lists the endpoints under.
+     * The five groups the reference lists the endpoints under.
      *
      * Without them Scramble tags each operation with its controller's class
      * name, and the sidebar reads `StoreInvoice`, `ShowConfig`,
@@ -116,7 +213,7 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
     private function tagDescriptions(): array
     {
         return [
-            'Configuration' => 'What joining costs and what an application has to carry. The only part of this API that needs no end-user signature.',
+            'Configuration' => 'What joining costs and what an application has to carry. The one endpoint of the main surface that needs no end-user signature — send the client key alone.',
             'Membership' => 'Applying, and reading your own membership.',
             'Payments' => 'The annual fee: the checkout for it, and the record of the ones already paid.',
             'Personal data' => 'The two rights a data subject exercises directly — access and erasure.',
@@ -167,15 +264,36 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
 
         ## Two identities, two credentials
 
-        Every request carries the **client key** of the calling application in `X-Api-Key`. Every request
-        except `GET /api/v1/membership/config` additionally carries a **NIP-98 signature** identifying the
-        end user. The two answer different questions — which application is calling, and who it is calling
-        for — and neither substitutes for the other. See the security schemes for how to build the
-        signature.
+        Every request carries the **client key** of the calling application in `X-Api-Key`. On the main
+        surface — everything under `/api/v1/membership` except `GET /api/v1/membership/config` — each
+        request additionally carries a **NIP-98 signature** identifying the end user. The two answer
+        different questions — which application is calling, and who it is calling for — and neither
+        substitutes for the other. See the security schemes for how to build the signature.
 
-        The subject of a request is always the pubkey that signed it. There is no parameter for it and a
-        pubkey sent in the path, the query or the body is refused. No endpoint on this API returns data
+        On that surface the subject of a request is always the pubkey that signed it. There is no parameter
+        for it and a pubkey sent in the path, the query or the body is refused. No endpoint returns data
         about another member.
+
+        ## The app branch
+
+        `/api/v1/app/membership` is a second, smaller surface for a **native app that cannot produce a
+        NIP-98 signature**. It carries the client key alone, and the subject is a `pubkey` field in the
+        request body instead. Every endpoint on it is tagged **Native app**.
+
+        The trade is deliberate and it is worth reading before choosing this branch:
+
+        - It has **three** endpoints — the configuration, the application and the invoice — and it will not
+          grow a fourth. There is **no `/me`, no `/payments` and no `/export`** here, because without a
+          signature those would answer questions about pubkeys the caller does not control.
+        - Naming a pubkey is not proving it. A client key holder can file an application for any pubkey and
+          order a checkout for it; what that buys is the right to pay somebody else's fee, which is a gift
+          rather than an attack. **No membership is granted by either call** — the settled payment grants it,
+          exactly as on the main surface.
+        - There is no `refresh` either. A settled payment reaches the association through the BTCPay webhook
+          and a scheduled reconciliation; an app client sees the result in the association's published member
+          list and has nothing to pull.
+
+        **If your client can sign, use the main surface.** It is the one that can read a membership back.
 
         ## Reading the membership status
 
@@ -197,6 +315,18 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
         A client that renders `association_status` alone will call a lapsed member active, and two clients
         doing it differently will publish two contradicting answers about the same person.
 
+        ## Before you write any code
+
+        Two things are issued by the association and cannot be obtained from this API:
+
+        1. **A client key** for `X-Api-Key`. Every endpoint needs one.
+        2. **An allowlisted return address**, if you want the payer to land back in your own flow after the
+           checkout. `return_url` is checked against a list kept on the server, and an address that is not
+           on it is refused with `422` rather than silently replaced.
+
+        Ask for both in one message: [einundzwanzig.group]({{CONTACT_URL}}). Without the
+        second, the checkout still works — the payer simply returns to the association's own page.
+
         ## Joining, end to end
 
         1. `GET /api/v1/membership/config` — the fee, the currency and the current fee year.
@@ -206,6 +336,9 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
            the payer to `checkout_url`.
         4. The settled payment grants the membership. It normally arrives as a BTCPay webhook; if that
            delivery is lost, `POST /api/v1/membership/payments/{year}/refresh` pulls the same result.
+
+        The app branch walks steps 1 to 3 under `/api/v1/app/membership` with a `pubkey` in the body instead
+        of a signature. Step 4 is the same event on the server and needs nothing from the client.
 
         Paid fees are not refundable (Art. 4.2), and erasure under
         `DELETE /api/v1/membership/me` therefore anonymises the bookkeeping entries rather than deleting
@@ -232,7 +365,7 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
             self::CLIENT_KEY_SCHEME,
             SecurityScheme::apiKey('header', 'X-Api-Key')
                 ->as(self::CLIENT_KEY_SCHEME)
-                ->setDescription($this->clientKeyDescription()),
+                ->setDescription($this->withContactUrl($this->clientKeyDescription())),
         );
 
         $document->components->addSecurityScheme(
@@ -247,7 +380,8 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
     {
         return <<<'MARKDOWN'
         Identifies the CALLING APPLICATION — not the end user. Required on **every** endpoint of this API,
-        `GET /api/v1/membership/config` included.
+        on both surfaces, `GET /api/v1/membership/config` included. On the app branch it is the ONLY
+        credential.
 
         Send the key the association issued to you in the `X-Api-Key` header:
 
@@ -255,12 +389,19 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
         X-Api-Key: <your client key>
         ```
 
+        **You have to ask for one.** Keys are issued by the association and there is no self-service
+        endpoint — request yours here: [einundzwanzig.group]({{CONTACT_URL}}). Ask for a
+        return address to be allowlisted in the same message if your onboarding flow needs one; see
+        `return_url` on the invoice endpoint for what that is.
+
         A missing or unknown key is answered with `401` before any data operation runs and before the
         signature is verified. The key is never echoed back by any response and never appears in a log.
 
-        It is not a user credential and unlocks no member data on its own: every endpoint but the
-        configuration one additionally requires a NIP-98 signature from the end user, and the association
-        never sees that user's private key.
+        It is not a user credential and unlocks no member data on its own. On the main surface every
+        endpoint but the configuration one additionally requires a NIP-98 signature from the end user, and
+        the association never sees that user's private key. On the app branch, where there is no signature,
+        the point holds by a different construction: that surface has no read endpoint at all, so a client
+        key alone can file an application and order a checkout — and can read nothing back.
 
         Requests are counted per client key and per end-user pubkey. Exceeding either quota answers `429`
         with a `Retry-After` header.
@@ -270,8 +411,10 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
     private function nip98Description(): string
     {
         return <<<'MARKDOWN'
-        NIP-98 HTTP Auth — identifies the END USER a request is made for. Required on every endpoint except
-        `GET /api/v1/membership/config`, **in addition to** the client key.
+        NIP-98 HTTP Auth — identifies the END USER a request is made for. Required on every endpoint of the
+        main surface except `GET /api/v1/membership/config`, **in addition to** the client key. The app
+        branch under `/api/v1/app/membership` uses none of this: it takes a `pubkey` in the body instead,
+        and pays for that with having no read endpoint.
 
         Send a signed Nostr event of kind `27235`, JSON-encoded and then base64-encoded:
 
@@ -390,7 +533,7 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
     private function describeOperation(OpenApi $document, Operation $operation): void
     {
         $key = $operation->method.' '.$operation->path;
-        $isPublicConfig = $key === self::PUBLIC_CONFIG_OPERATION;
+        $isSigned = $this->requiresSignature($operation);
 
         $tag = $this->operationTags()[$key] ?? throw new RuntimeException(
             "Operation [{$key}] has no documentation group. A new /api/v1 endpoint needs one in MembershipApiDocumentTransformer."
@@ -401,22 +544,22 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
         /*
          * Stated on every operation rather than once at the top of the
          * document. A global default would be read by the renderer but not by
-         * a person scrolling to a single endpoint, and this API has exactly
-         * one exception to the rule — which is precisely the case a global
-         * default hides.
+         * a person scrolling to a single endpoint, and this API has TWO groups
+         * of exceptions to the rule — the configuration endpoint and the whole
+         * app branch — which is precisely what a global default hides.
          */
         $operation->security = [
-            new SecurityRequirement($isPublicConfig
-                ? [self::CLIENT_KEY_SCHEME => []]
-                : [self::CLIENT_KEY_SCHEME => [], self::NIP98_SCHEME => []]),
+            new SecurityRequirement($isSigned
+                ? [self::CLIENT_KEY_SCHEME => [], self::NIP98_SCHEME => []]
+                : [self::CLIENT_KEY_SCHEME => []]),
         ];
 
-        $this->addErrorResponse($operation, 401, $isPublicConfig
-            ? 'The client key is missing or unknown.'
-            : 'The client key is missing or unknown, or the NIP-98 credential failed verification. Which of '
-                .'the two, and which condition of the credential, is deliberately not disclosed.');
+        $this->addErrorResponse($operation, 401, $isSigned
+            ? 'The client key is missing or unknown, or the NIP-98 credential failed verification. Which of '
+                .'the two, and which condition of the credential, is deliberately not disclosed.'
+            : 'The client key is missing or unknown.');
 
-        if (! $isPublicConfig) {
+        if ($isSigned) {
             $this->addErrorResponse($operation, 503,
                 'The replay lock behind the NIP-98 verification is unreachable. The request was refused '
                 .'rather than waved through; nothing was written. Retry.');
@@ -426,12 +569,41 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
             'A quota was exceeded — per client key, per end-user pubkey, or, for invoice creation, the '
             .'daily invoice quota. `Retry-After` says how long to wait.');
 
-        if ($operation->path === 'api/v1/membership/applications') {
-            $this->addErrorResponse($operation, 415,
-                'The request carried a body with a `Content-Type` other than `application/json`. The '
-                .'NIP-98 `payload` tag can only be checked against a body PHP has not already consumed.');
+        if (str_ends_with($operation->path, 'membership/applications')) {
+            /*
+             * 415 only where a signature is verified. The status comes out of
+             * the NIP-98 check, which refuses a body PHP has already consumed
+             * because the `payload` tag could no longer be compared against
+             * it; on the app branch there is no such tag and no such refusal,
+             * and documenting one would describe a wall that is not there.
+             */
+            if ($isSigned) {
+                $this->addErrorResponse($operation, 415,
+                    'The request carried a body with a `Content-Type` other than `application/json`. The '
+                    .'NIP-98 `payload` tag can only be checked against a body PHP has not already consumed.');
+            }
 
             $this->describeApplicationResponses($document, $operation);
+        }
+
+        /*
+         * THE DELIBERATELY AMBIGUOUS 404, and the one thing about this API a
+         * client developer cannot work out from a failing request. Scramble
+         * publishes the framework's shared "Not found" for it, which reads
+         * like an ordinary missing resource and sends the reader looking for
+         * the one cause that produced it. There are two, they are indist-
+         * inguishable on purpose, and only one of them is worth acting on.
+         */
+        if (str_contains($operation->path, 'payments/{year}')) {
+            $this->addErrorResponse($operation, 404, str_contains($operation->path, 'invoice')
+                ? 'Either the pubkey has no membership record, or `year` is not the fee year the association is '
+                    .'currently collecting. WHICH OF THE TWO IS NOT DISCLOSED — telling them apart would answer '
+                    .'"is this pubkey known to the association" to anyone who asked. Read the current year from the '
+                    .'configuration endpoint, and file the application before asking for a checkout.'
+                : 'Either the pubkey has no membership record, or no invoice was ever created for that fee year. '
+                    .'Which of the two is not disclosed, for the same reason it is not disclosed anywhere else on '
+                    .'this API.',
+                replace: true);
         }
 
         $this->describeYearParameter($operation);
@@ -439,26 +611,67 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
     }
 
     /**
-     * Add a `message`-only error response unless the generator produced one
-     * for that status already.
+     * The status code a generated response answers under, whether it is a
+     * response or a reference to a shared one.
+     *
+     * The reference arm is not decoration. Scramble emits the framework's own
+     * 404 and 422 as `$ref`s into `components/responses`, and the code lives
+     * on the TARGET — `Operation::toArray()` resolves the reference for
+     * exactly this reason. A check that only understood `Response` would
+     * report "no 404 here" for an operation that plainly documents one, and
+     * `addErrorResponse()` would then append a second entry that silently
+     * overwrites the first in the emitted map.
      */
-    private function addErrorResponse(Operation $operation, int $code, string $description): void
+    private function responseCode(mixed $response): ?int
     {
-        foreach ($operation->responses ?? [] as $existing) {
-            if ($existing instanceof Response && (int) $existing->code === $code) {
-                return;
+        if ($response instanceof Reference) {
+            try {
+                $response = $response->resolve();
+            } catch (OpenApiReferenceTargetNotFoundException) {
+                return null;
             }
+        }
+
+        return $response instanceof Response && $response->code !== null
+            ? (int) $response->code
+            : null;
+    }
+
+    /**
+     * Add a `message`-only error response for a status the generator has not
+     * produced — or, with `$replace`, restate one it produced generically.
+     */
+    private function addErrorResponse(Operation $operation, int $code, string $description, bool $replace = false): void
+    {
+        $existingIndex = null;
+
+        foreach ($operation->responses ?? [] as $index => $existing) {
+            if ($this->responseCode($existing) === $code) {
+                $existingIndex = $index;
+
+                break;
+            }
+        }
+
+        if ($existingIndex !== null && ! $replace) {
+            return;
         }
 
         $body = (new ObjectType)
             ->addProperty('message', (new StringType)->setDescription('A human-readable summary. It carries no detail a caller could use to distinguish one cause from another.'))
             ->setRequired(['message']);
 
-        $operation->addResponse(
-            Response::make($code)
-                ->setDescription($description)
-                ->setContent('application/json', Schema::fromType($body))
-        );
+        $response = Response::make($code)
+            ->setDescription($description)
+            ->setContent('application/json', Schema::fromType($body));
+
+        if ($existingIndex !== null) {
+            $operation->responses[$existingIndex] = $response;
+
+            return;
+        }
+
+        $operation->addResponse($response);
     }
 
     /**
@@ -608,6 +821,45 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
         if (! $invoiceSchema instanceof Schema || ! $invoiceSchema->type instanceof ObjectType) {
             throw new RuntimeException('The invoice request body is missing from the generated document.');
         }
+
+        /*
+         * The two app-branch bodies. Their class docblocks are written for
+         * whoever maintains this application — they argue about trust
+         * boundaries and name the sibling class the rule was copied from — and
+         * Scramble would publish that argument verbatim. Restated here for the
+         * reader who has to fill the body in.
+         */
+        $appApplicationSchema = $document->components->schemas[$this->schemaName($document, StoreAppApplicationRequest::class)] ?? null;
+
+        if (! $appApplicationSchema instanceof Schema || ! $appApplicationSchema->type instanceof ObjectType) {
+            throw new RuntimeException('The app-branch application request body is missing from the generated document.');
+        }
+
+        $appApplicationSchema->type->setDescription(
+            'The body of an application on the APP BRANCH. It is the body of `POST /api/v1/membership/applications` '
+            .'plus the one field that surface refuses: `pubkey`, which here names the subject because no '
+            .'signature does.'
+            ."\n\n"
+            .'Everything else behaves identically — the consent is recorded once and never refreshed, an omitted '
+            .'field is left untouched, an explicit `null` clears the stored value. As on the main surface this '
+            .'call grants no membership: the settled annual fee does that and nothing else.'
+        );
+
+        $appInvoiceSchema = $document->components->schemas[$this->schemaName($document, StoreAppInvoiceRequest::class)] ?? null;
+
+        if (! $appInvoiceSchema instanceof Schema || ! $appInvoiceSchema->type instanceof ObjectType) {
+            throw new RuntimeException('The app-branch invoice request body is missing from the generated document.');
+        }
+
+        $appInvoiceSchema->type->setDescription(
+            'The body of an invoice request on the APP BRANCH. Unlike its counterpart on the main surface this '
+            .'body is REQUIRED, because it carries `pubkey` — the subject of the checkout, which no signature '
+            .'supplies here.'
+            ."\n\n"
+            .'`return_url` is the only other field that is read, and it is optional. Amount, currency and fee '
+            .'year are not request values: the first two come from the association\'s configuration and the year '
+            .'from the path.'
+        );
 
         $invoiceSchema->type->setDescription(
             'The body of an invoice request, and `return_url` is the only field of it that is read. Amount, '
@@ -805,7 +1057,11 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
                     'examples' => ['2024-04-20'],
                 ],
                 'application.required_fields' => [
-                    'description' => 'The body fields `POST /api/v1/membership/applications` requires on a first application. The consent is the only one: the statutes demand no legal name, no address and no date of birth.',
+                    'description' => 'The body fields an application requires on a first application. The consent is the only one: '
+                        .'the statutes demand no legal name, no address and no date of birth. '
+                        .'ON THE APP BRANCH ADD `pubkey`, which this list does not name — the response is association-wide '
+                        .'and identical on both branches, and `pubkey` is a property of the branch rather than of the '
+                        .'association. `POST /api/v1/app/membership/applications` documents it as required.',
                 ],
                 'application.optional_fields' => [
                     'description' => 'The body fields that application may additionally carry. An absent field is left alone, an explicit null clears the stored value.',
@@ -997,32 +1253,97 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
                 'nostr_profile.updated_at' => ['description' => 'When this cache entry was last refreshed, ISO 8601.', 'format' => 'date-time'],
             ],
 
-            StoreApplicationRequest::class => [
-                'statutes_accepted' => [
-                    'description' => 'Consent to the statutes. Send `true`. Required on a first application and optional afterwards — the consent is given once, and a repeat application neither needs it again nor may overwrite the recorded timestamp. An explicit `false` is a refusal and is rejected with 422 rather than silently recorded as a non-consent. The other accepted spellings are Laravel\'s `accepted` rule and are listed for completeness.',
-                ],
-                'application_text' => [
-                    'description' => 'Free-form text the applicant wants on record, up to 2000 characters. Disclosed only back to its own author, through `GET /api/v1/membership/export`.',
-                    'examples' => ['I have been running the local meetup since 2023 and would like to join.'],
-                ],
-                'email' => [
-                    'description' => 'Contact e-mail address. Optional — the statutes let invitations travel by online publication, so a membership does not depend on it.',
-                    'examples' => ['satoshi@example.org'],
-                ],
-                'no_email' => [
-                    'description' => 'Set to true to state that this person does not want to be contacted by e-mail.',
-                ],
-                'nip05_handle' => [
-                    'description' => 'The local part of a NIP-05 identifier the association serves as `<handle>@einundzwanzig.space`. Lowercase letters, digits, hyphen and underscore only, because it becomes part of a public .well-known/nostr.json. Handles are unique across members; a taken one is refused with 422. It is a public identifier by design, so refusing it discloses nothing.',
-                    'examples' => ['satoshi'],
+            StoreApplicationRequest::class => $this->applicationBodyFields(),
+
+            /*
+             * The same five fields, plus the subject. Shared rather than
+             * copied: the two form requests validate identically apart from
+             * `pubkey` (StoreAppApplicationRequest says so in as many words),
+             * and two hand-maintained copies of the same prose would drift the
+             * first time one of the rules is touched.
+             */
+            StoreAppApplicationRequest::class => array_merge($this->applicationBodyFields(), [
+                'pubkey' => $this->appSubjectField(
+                    'The Nostr public key the application is for. REQUIRED HERE and refused on the main surface, '
+                    .'where the signature names the subject instead.'
+                ),
+            ]),
+
+            StoreAppInvoiceRequest::class => [
+                'pubkey' => $this->appSubjectField(
+                    'The Nostr public key the checkout is for. REQUIRED HERE and refused on the main surface, '
+                    .'where the signature names the subject instead. A pubkey with no membership record answers '
+                    .'404 — file the application first.'
+                ),
+                'return_url' => [
+                    'description' => 'Where the payer is sent after the checkout, and optional. A value must be one of '
+                        .'the addresses configured on the server — for this branch that is the local address the '
+                        .'native app serves — and anything else is refused with 422 rather than silently replaced. '
+                        .'ASK FOR YOUR ADDRESS TO BE ALLOWLISTED BEFORE YOU SEND ONE; it is not on the list until the '
+                        .'association puts it there: '.self::CONTACT_URL.'. '
+                        .'It only takes effect on the call that actually creates the invoice; on an idempotent '
+                        .'repeat the redirect belongs to the invoice that already exists.',
                 ],
             ],
 
             StoreInvoiceRequest::class => [
                 'return_url' => [
-                    'description' => 'Where the payer is sent after the checkout. Optional: omit it (or send null) and the payer returns to the association\'s own profile page, which is what happened before this field existed. A value must be one of the addresses configured on the server; anything else is refused with 422 rather than silently replaced, so that a rejected address is never mistaken for an accepted one. It only takes effect on the call that actually creates the invoice — on an idempotent repeat the redirect belongs to the invoice that already exists.',
+                    'description' => 'Where the payer is sent after the checkout. Optional: omit it (or send null) and the payer returns to the association\'s own profile page, which is what happened before this field existed. '
+                        .'ASK FOR YOUR ADDRESS TO BE ALLOWLISTED BEFORE YOU SEND ONE — the value is checked against a list kept on the server, and your own URL is not on it until the association puts it there: '.self::CONTACT_URL.'. '
+                        .'This is not bureaucracy but the reason the field is safe to have: the value ends up in BTCPay\'s `redirectURL`, so an unchecked one would let any key holder bounce a payer off the association\'s domain to anywhere. An address that is not on the list is refused with 422 rather than silently replaced, so that a rejected address is never mistaken for an accepted one. '
+                        .'It only takes effect on the call that actually creates the invoice — on an idempotent repeat the redirect belongs to the invoice that already exists.',
                     'examples' => ['https://einundzwanzig.group/verein/beitritt'],
                 ],
+            ],
+        ];
+    }
+
+    /**
+     * The `pubkey` body field of both app-branch endpoints.
+     *
+     * @return array<string, mixed>
+     */
+    private function appSubjectField(string $lead): array
+    {
+        return [
+            'description' => $lead
+                .' 64 lowercase hex characters (NIP-01); any other spelling is refused with 422, uppercase hex'
+                .' included — one private key would otherwise yield arbitrarily many identities, each with its'
+                .' own quota.'
+                ."\n\n"
+                .'NAMING A KEY IS NOT PROVING IT. On this branch the calling application vouches for the value and'
+                .' the association cannot check it, which is why the branch has no endpoint that reads anything'
+                .' back. Nothing is granted by naming a pubkey — the settled annual fee grants the membership.',
+            'pattern' => '^[0-9a-f]{64}$',
+            'examples' => ['6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93'],
+        ];
+    }
+
+    /**
+     * The five body fields an application carries on either surface.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function applicationBodyFields(): array
+    {
+        return [
+            'statutes_accepted' => [
+                'description' => 'Consent to the statutes. Send `true`. Required on a first application and optional afterwards — the consent is given once, and a repeat application neither needs it again nor may overwrite the recorded timestamp. An explicit `false` is a refusal and is rejected with 422 rather than silently recorded as a non-consent. The other accepted spellings are Laravel\'s `accepted` rule and are listed for completeness.',
+            ],
+            'application_text' => [
+                'description' => 'Free-form text the applicant wants on record, up to 2000 characters. Disclosed only back to its own author, through `GET /api/v1/membership/export`.',
+                'examples' => ['I have been running the local meetup since 2023 and would like to join.'],
+            ],
+            'email' => [
+                'description' => 'Contact e-mail address. Optional — the statutes let invitations travel by online publication, so a membership does not depend on it.',
+                'examples' => ['satoshi@example.org'],
+            ],
+            'no_email' => [
+                'description' => 'Set to true to state that this person does not want to be contacted by e-mail.',
+            ],
+            'nip05_handle' => [
+                'description' => 'The local part of a NIP-05 identifier the association serves as `<handle>@einundzwanzig.space`. Lowercase letters, digits, hyphen and underscore only, because it becomes part of a public .well-known/nostr.json. Handles are unique across members; a taken one is refused with 422. It is a public identifier by design, so refusing it discloses nothing.',
+                'examples' => ['satoshi'],
             ],
         ];
     }

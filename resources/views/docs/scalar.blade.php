@@ -15,7 +15,7 @@
 
     Die Seite ist oeffentlich (config/scramble.php, `middleware`) und enthaelt
     kein Geheimnis: das eingebettete Dokument ist dasselbe, das unter
-    /docs/v1/api.json ausgeliefert wird.
+    /docs/api.json ausgeliefert wird.
 --}}
 <!doctype html>
 <html lang="en">

@@ -52,7 +52,7 @@ class AppServiceProvider extends ServiceProvider
         });
 
         /*
-         * Die beiden Doku-Routen (/docs/v1/api und /docs/v1/api.json).
+         * Die beiden Doku-Routen (/docs/api und /docs/api.json).
          *
          * Sie sind bewusst oeffentlich, und sie sind teuer: Scramble baut das
          * OpenAPI-Dokument bei JEDEM Aufruf neu — CacheableGenerator LIEST

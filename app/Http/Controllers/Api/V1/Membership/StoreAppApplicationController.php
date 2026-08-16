@@ -29,6 +29,26 @@ class StoreAppApplicationController extends ApiV1Controller
      */
     private const CONTACT_FIELDS = ['application_text', 'email', 'no_email', 'nip05_handle'];
 
+    /**
+     * Apply for membership on behalf of a named pubkey (app branch).
+     *
+     * The application of `POST /api/v1/membership/applications` without a
+     * signature: the subject is the `pubkey` field of the body, and the
+     * calling application vouches for it. Everything else is identical — it
+     * records the data and the consent to the statutes, and it changes NO
+     * status. The statutes tie the membership to the payment of the annual fee
+     * (Art. 4), so this call alone makes nobody a member.
+     *
+     * 201 the first time consent is recorded, 200 on a repeat. The consent
+     * timestamp is the joining document: a repeat leaves it untouched and
+     * updates only the contact fields actually sent, with an absent field left
+     * alone and an explicit `null` clearing the stored value.
+     *
+     * `association_status` and `paid` cannot be written through this endpoint.
+     * The membership category is raised by a settled fee and by nothing else —
+     * which is what keeps an unsigned surface from being able to grant
+     * anything.
+     */
     public function __invoke(StoreAppApplicationRequest $request): JsonResponse
     {
         $pubkey = (string) $request->validated('pubkey');
