@@ -31,6 +31,10 @@
         {
             "name": "Personal data",
             "description": "The two rights a data subject exercises directly \u2014 access and erasure."
+        },
+        {
+            "name": "Native app",
+            "description": "The branch for the TWENTY ONE Companion app: same membership, same payment, but the subject is a pubkey in the body instead of a signature \u2014 the app knows its signer, and the payment itself is the proof. Three endpoints, deliberately no read surface."
         }
     ],
     "paths": {
@@ -606,6 +610,315 @@
                 "security": [
                     {
                         "clientKey": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/app/membership/config": {
+            "get": {
+                "operationId": "v1.app.membership.config",
+                "description": "The only endpoint on this API that does not require a NIP-98 signature:\nsend the client key alone. A client has to be able to show the fee\nbefore anybody has signed anything, and the response is association-wide\n\u2014 it is identical for every caller.\n\n`year` is the fee year the association is currently collecting, and it\nis the only year `POST /api/v1/membership/payments/{year}/invoice`\naccepts. `application.required_fields` and `application.optional_fields`\nname the body fields of `POST /api/v1/membership/applications`.",
+                "summary": "Get the annual fee and what an application must carry",
+                "tags": [
+                    "Native app"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "`MembershipConfigResource`",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/components/schemas/MembershipConfigResource"
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "The replay lock behind the NIP-98 verification is unreachable. The request was refused rather than waved through; nothing was written. Retry.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "A quota was exceeded \u2014 per client key, per end-user pubkey, or, for invoice creation, the daily invoice quota. `Retry-After` says how long to wait.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "clientKey": [],
+                        "nip98": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/app/membership/applications": {
+            "post": {
+                "operationId": "v1.app.membership.applications.store",
+                "tags": [
+                    "Native app"
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/StoreAppApplicationRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/ValidationException"
+                    },
+                    "401": {
+                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "The replay lock behind the NIP-98 verification is unreachable. The request was refused rather than waved through; nothing was written. Retry.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "A quota was exceeded \u2014 per client key, per end-user pubkey, or, for invoice creation, the daily invoice quota. `Retry-After` says how long to wait.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "clientKey": [],
+                        "nip98": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/app/membership/payments/{year}/invoice": {
+            "post": {
+                "operationId": "v1.app.membership.payments.invoice",
+                "tags": [
+                    "Native app"
+                ],
+                "parameters": [
+                    {
+                        "name": "year",
+                        "in": "path",
+                        "required": true,
+                        "description": "The fee year to be paid. Only the CURRENT fee year is accepted \u2014 the one `GET /api/v1/membership/config` reports. Any other year answers 404.",
+                        "schema": {
+                            "type": "string",
+                            "pattern": "^[0-9]{4}$"
+                        },
+                        "example": "2026"
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/StoreAppInvoiceRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "`InvoiceResource`",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/components/schemas/InvoiceResource"
+                                        }
+                                    },
+                                    "required": [
+                                        "data"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "Error overview."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "$ref": "#/components/responses/NotFoundHttpException"
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/ValidationException"
+                    },
+                    "401": {
+                        "description": "The client key is missing or unknown, or the NIP-98 credential failed verification. Which of the two, and which condition of the credential, is deliberately not disclosed.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "A quota was exceeded \u2014 per client key, per end-user pubkey, or, for invoice creation, the daily invoice quota. `Retry-After` says how long to wait.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "description": "A human-readable summary. It carries no detail a caller could use to distinguish one cause from another."
+                                        }
+                                    },
+                                    "required": [
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "clientKey": [],
+                        "nip98": []
                     }
                 ]
             }
@@ -1678,6 +1991,81 @@
                     "receipt_url"
                 ],
                 "title": "PaymentEventResource"
+            },
+            "StoreAppApplicationRequest": {
+                "type": "object",
+                "description": "The body of `POST /api/v1/app/membership/applications` \u2014 the NATIVE APP\nbranch of the membership API.\n\nThe difference to {@see StoreApplicationRequest} is exactly one thing, and\nit is the whole reason this class exists instead of a flag on the other:\nthe subject. On the NIP-98 surface the pubkey comes from a verified\nsignature and can never be a body field; on the app surface there IS no\nsignature \u2014 deliberate (the native app already knows its signer's pubkey\nand the payment itself is the proof that matters). So here the pubkey is a\nREQUIRED body field, canonically validated, and the trust boundary shifts\naccordingly: the calling application (client key) vouches for the value,\nnot the key holder.\n\nWhat that costs, said plainly: a caller with a valid client key can create\nor update a member record for a pubkey of their choosing and order an\ninvoice on the association's BTCPay quota \u2014 never getting access, because\npaying somebody else's fee is a gift, not an attack. Read endpoints\n(/me, /payments, /export) do not exist on this surface at all: without a\nsignature they would be a membership-roll oracle for foreign pubkeys.\n\n`statutes_accepted` keeps the `accepted` rule from the web branch: the\nconsent is recorded by THIS endpoint and an explicit refusal must fail\nvalidation, not silently record a non-consent.",
+                "properties": {
+                    "pubkey": {
+                        "type": "string",
+                        "description": "NIP-01 spelling, enforced as everywhere else in this API: hex,\n64 characters, lowercase. A pubkey in any other spelling is a\ndifferent identity in every byte comparison downstream (relay\nmember list, rate limiter, record lookup).",
+                        "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "statutes_accepted": {
+                        "description": "Same semantics as the web branch: required for the first\napplication, `sometimes` afterwards so a repeat neither needs\nnor refreshes the joining document.",
+                        "enum": [
+                            "yes",
+                            "on",
+                            "1",
+                            1,
+                            "true",
+                            true
+                        ]
+                    },
+                    "application_text": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "maxLength": 2000
+                    },
+                    "email": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "email",
+                        "maxLength": 255
+                    },
+                    "no_email": {
+                        "type": "boolean"
+                    },
+                    "nip05_handle": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Literally the same rules as everywhere else, from the same\nconstant on the model \u2014 an API surface that accepts what the UI\nrefuses is a second definition of a NIP-05 handle. Unique check\nignores the named subject's own record, mirroring the web\nbranch's ignore of the signer's.",
+                        "pattern": "^[a-z0-9_-]+$",
+                        "maxLength": 255
+                    }
+                },
+                "required": [
+                    "pubkey",
+                    "statutes_accepted"
+                ],
+                "title": "StoreAppApplicationRequest"
+            },
+            "StoreAppInvoiceRequest": {
+                "type": "object",
+                "description": "The body of `POST /api/v1/app/membership/payments/{year}/invoice` \u2014 the\nNATIVE APP branch of the invoice endpoint.\n\nIdentical to {@see StoreInvoiceRequest} except for the one field the app\nbranch cannot do without: `pubkey`, required and canonically validated,\nbecause there is no signature to name the subject (see\n{@see StoreAppApplicationRequest} for what that means).\n\n`return_url` keeps the allowlist: it is the one value a client sends that\nleaves the association (BTCPay redirects the payer's browser there), so it\nis checked against the server-side list \u2014 for the app the entry\n`http://127.0.0.1/verein/zurueck`, the NativePHP local server the checkout\ncan reach on the same device.",
+                "properties": {
+                    "pubkey": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "return_url": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "maxLength": 2048
+                    }
+                },
+                "required": [
+                    "pubkey"
+                ],
+                "title": "StoreAppInvoiceRequest"
             },
             "StoreApplicationRequest": {
                 "type": "object",

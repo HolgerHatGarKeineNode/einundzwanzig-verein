@@ -120,6 +120,7 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
             'Membership' => 'Applying, and reading your own membership.',
             'Payments' => 'The annual fee: the checkout for it, and the record of the ones already paid.',
             'Personal data' => 'The two rights a data subject exercises directly — access and erasure.',
+            'Native app' => 'The branch for the TWENTY ONE Companion app: same membership, same payment, but the subject is a pubkey in the body instead of a signature — the app knows its signer, and the payment itself is the proof. Three endpoints, deliberately no read surface.',
         ];
     }
 
@@ -139,6 +140,9 @@ class MembershipApiDocumentTransformer implements DocumentTransformer
             'post api/v1/membership/payments/{year}/refresh' => 'Payments',
             'get api/v1/membership/export' => 'Personal data',
             'delete api/v1/membership/me' => 'Personal data',
+            'get api/v1/app/membership/config' => 'Native app',
+            'post api/v1/app/membership/applications' => 'Native app',
+            'post api/v1/app/membership/payments/{year}/invoice' => 'Native app',
         ];
     }
 

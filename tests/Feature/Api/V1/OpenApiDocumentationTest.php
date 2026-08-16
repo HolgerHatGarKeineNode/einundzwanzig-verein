@@ -94,6 +94,9 @@ function documentedApiV1Operations(): array
         ['post', '/api/v1/membership/applications'],
         ['post', '/api/v1/membership/payments/{year}/invoice'],
         ['post', '/api/v1/membership/payments/{year}/refresh'],
+        ['get', '/api/v1/app/membership/config'],
+        ['post', '/api/v1/app/membership/applications'],
+        ['post', '/api/v1/app/membership/payments/{year}/invoice'],
     ];
 }
 
@@ -190,7 +193,7 @@ it('exports a 3.1.0 document', function () {
     expect(exportedOpenApiDocument()['openapi'])->toBe('3.1.0');
 });
 
-it('documents exactly the eight /api/v1 endpoints', function () {
+it('documents exactly the eleven /api/v1 endpoints', function () {
     $paths = exportedOpenApiDocument()['paths'];
 
     $documented = [];
@@ -216,7 +219,13 @@ it('leaves the two unversioned legacy endpoints out', function () {
         ->and($paths)->not->toContain('/api/nostr/profile/{key}');
 
     foreach ($paths as $path) {
-        expect($path)->toStartWith('/api/v1/membership');
+        /*
+         * Zwei Praefixe sind erlaubt: der NIP-98-Zweig und der App-Zweig
+         * (Subjekt im Body). Alles andere waere eine dritte Flaeche, die es
+         * nicht gibt.
+         */
+        expect($path)->toMatch('/^\/api\/v1\/(app\/)?membership/')
+            ->not->toStartWith('/api/v1/membership-app');
     }
 });
 

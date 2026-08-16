@@ -8,6 +8,8 @@ use App\Http\Controllers\Api\V1\Membership\ListPaymentsController;
 use App\Http\Controllers\Api\V1\Membership\RefreshPaymentController;
 use App\Http\Controllers\Api\V1\Membership\ShowConfigController;
 use App\Http\Controllers\Api\V1\Membership\ShowMembershipController;
+use App\Http\Controllers\Api\V1\Membership\StoreAppApplicationController;
+use App\Http\Controllers\Api\V1\Membership\StoreAppInvoiceController;
 use App\Http\Controllers\Api\V1\Membership\StoreApplicationController;
 use App\Http\Controllers\Api\V1\Membership\StoreInvoiceController;
 use App\Http\Middleware\ThrottleApiV1;
@@ -76,5 +78,39 @@ Route::prefix('v1/membership')->name('api.v1.membership.')->group(function () {
         Route::post('/payments/{year}/refresh', RefreshPaymentController::class)
             ->where('year', '[0-9]{4}')
             ->name('payments.refresh');
+    });
+});
+
+/*
+ * Der App-Zweig: dieselbe Mitgliedschafts-API fuer die NATIVE App, ohne
+ * NIP-98 (Entscheid des Auftraggebers: die App nennt ihren npub, die Zahlung
+ * ist die Beglaubigung — Begruendung und Grenzen in
+ * StoreAppApplicationRequest). DREI Endpunkte, absichtlich nicht mehr:
+ *
+ *   GET  /config            — Beitrag und Statuten, wie im Web-Zweig
+ *   POST /applications      — Antrag + Statuten-Zustimmung, Subjekt im Body
+ *   POST /payments/{y}/invoice — BTCPay-Checkout, Subjekt im Body
+ *
+ * ES GIBT KEIN /me, KEIN /payments (Liste) und KEIN /export hier: ohne
+ * Signatur waeren das Orakel fuer die Mitgliedsdaten FREMDER Pubkeys. Und
+ * `refresh` fehlt ebenso — der App-Client hat keinen Weg, eine Zahlung beim
+ * Verein nachziehen zu muessen: Webhook und Cron entscheiden serverseitig,
+ * der Client sieht die Freischaltung ueber die relay-signierte Liste. Wer
+ * heute einen vierten Endpunkt hier anfuegt, erweitert die Antwort auf die
+ * Frage „was darf ein Client-Key ohne Signatur?“ — und die lautet: Antrag
+ * stellen und eine Rechnung ziehen, mehr nicht.
+ */
+Route::prefix('v1/app/membership')->name('api.v1.app.membership.')->group(function () {
+    Route::get('/config', ShowConfigController::class)
+        ->middleware([VerifyApiClient::class, ThrottleApiV1::class.':api-v1'])
+        ->name('config');
+
+    Route::middleware('api.v1.app')->group(function () {
+        Route::post('/applications', StoreAppApplicationController::class)->name('applications.store');
+
+        Route::post('/payments/{year}/invoice', StoreAppInvoiceController::class)
+            ->where('year', '[0-9]{4}')
+            ->middleware(ThrottleApiV1::class.':api-v1-invoice')
+            ->name('payments.invoice');
     });
 });

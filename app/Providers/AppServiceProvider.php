@@ -106,7 +106,7 @@ class AppServiceProvider extends ServiceProvider
                 Limit::perMinute((int) ($limits['client_per_minute'] ?? 120))
                     ->by('api-v1:client:'.(ApiIdentity::client($request) ?? 'unresolved')),
                 Limit::perMinute((int) ($limits['pubkey_per_minute'] ?? 30))
-                    ->by('api-v1:pubkey:'.(ApiIdentity::pubkeyOrNull($request) ?? $request->ip())),
+                    ->by('api-v1:pubkey:'.self::limiterPubkey($request)),
             ];
         });
 
@@ -122,7 +122,27 @@ class AppServiceProvider extends ServiceProvider
             $limits = (array) config('einundzwanzig.config.api_rate_limits', []);
 
             return Limit::perDay((int) ($limits['invoice_per_day'] ?? 3))
-                ->by('api-v1-invoice:pubkey:'.(ApiIdentity::pubkeyOrNull($request) ?? $request->ip()));
+                ->by('api-v1-invoice:pubkey:'.self::limiterPubkey($request));
         });
+    }
+
+    /**
+     * Der Pubkey-Schluessel der Kontingente: signiert, wenn einer da ist,
+     * sonst der BEHAUPTETE aus dem Body (App-Zweig), sonst die IP.
+     *
+     * Der Body-Fallback ist ein Behauptungswert — ein Aufrufer kann ihn
+     * rotieren, um seinen Eimer zu wechseln. Das ist bekannt und getragen:
+     * der Client-Eimer (kryptografisch festgenagelt) und der IP-Eimer
+     * bleiben, und das Invoice-Kontingent schuetzt Vereinsgeld gegen
+     * Versehentliches, nicht gegen einen entschlossenen Schluesselinhaber.
+     * Der Rueckgriff auf die IP allein wuerge dagegen alle App-Nutzer
+     * hinter dem Group-Proxy in EINEN Eimer — der Schaden waere real,
+     * die Angriffsflaeche bleibt.
+     */
+    private static function limiterPubkey(Request $request): string
+    {
+        $pubkey = ApiIdentity::pubkeyOrNull($request) ?? (string) $request->input('pubkey');
+
+        return $pubkey !== '' ? $pubkey : $request->ip();
     }
 }

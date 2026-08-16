@@ -111,6 +111,20 @@ return Application::configure(basePath: dirname(__DIR__))
             VerifyNip98::class,
             ThrottleApiV1::class.':api-v1',
         ]);
+
+        /*
+         * App-Zweig der API (P8): dieselbe Kette MINUS VerifyNip98. Der
+         * Entfall ist kein Versehen, das ist das Design — die native App
+         * nennt ihren npub im Body, und die Zahlung ist die Beglaubigung
+         * (Begruendung und Grenzen: StoreAppApplicationRequest). Client-Key
+         * und Kontingent bleiben: der Schluessel attribuiert den Aufrufer,
+         * und das Kontingent zaehlt pro Client-Name und pro Body-Pubkey
+         * (AppServiceProvider).
+         */
+        $middleware->group('api.v1.app', [
+            VerifyApiClient::class,
+            ThrottleApiV1::class.':api-v1',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // Record Livewire tampering exceptions, then return false to stop them
