@@ -1,33 +1,41 @@
-@blaze
+@blaze(fold: true, safe: ['name'])
 
 @props([
     'dismissible' => null,
+    'escapable' => null,
     'position' => null,
     'closable' => null,
     'trigger' => null,
     'variant' => null,
+    'scroll' => null,
     'flyout' => null,
     'name' => null,
 ])
 
 @php
+// Blaze doesn't support View::share, this supplements it...
+$__livewire = $__env->shared('__livewire');
+
 if ($variant === 'flyout') {
     $flyout = true;
     $variant = null;
 }
 
 $closable ??= $variant === 'bare' ? false : true;
+$overflow = $scroll === 'body' && ! $flyout;
 
 if ($flyout) {
     $classes = Flux::classes()
         ->add(match ($variant) {
             default => match($position) {
-                'bottom' => 'fixed m-0 p-8 min-w-[100vw] overflow-y-auto mt-auto [--flux-flyout-translate:translateY(50px)] border-t',
+                // For bottom flyout we intentionally use 100% instead of 100vw because Firefox includes scrollbar gutter in vw...
+                'bottom' => 'fixed m-0 p-8 min-w-[100%] overflow-y-auto mt-auto [--flux-flyout-translate:translateY(50px)] border-t',
                 'left' => 'fixed m-0 p-8 max-h-dvh min-h-dvh md:[:where(&)]:min-w-[25rem] overflow-y-auto mr-auto [--flux-flyout-translate:translateX(-50px)] border-e rtl:mr-0 rtl:ml-auto rtl:[--flux-flyout-translate:translateX(50px)]',
                 default => 'fixed m-0 p-8 max-h-dvh min-h-dvh md:[:where(&)]:min-w-[25rem] overflow-y-auto ml-auto [--flux-flyout-translate:translateX(50px)] border-s rtl:ml-0 rtl:mr-auto rtl:[--flux-flyout-translate:translateX(-50px)]',
             },
             'floating' => match($position) {
-                'bottom' => 'fixed m-2 p-8 min-w-[calc(100vw-1rem)] overflow-y-auto mt-auto [--flux-flyout-translate:translateY(50px)]',
+                // For bottom flyout we intentionally use 100% instead of 100vw because Firefox includes scrollbar gutter in vw...
+                'bottom' => 'fixed m-2 p-8 min-w-[calc(100%-1rem)] overflow-y-auto mt-auto [--flux-flyout-translate:translateY(50px)]',
                 'left' => 'fixed m-2 p-8 max-h-[calc(100dvh-1rem)] min-h-[calc(100dvh-1rem)] md:[:where(&)]:min-w-[25rem] overflow-y-auto mr-auto [--flux-flyout-translate:translateX(-50px)] rtl:mr-0 rtl:ml-auto rtl:[--flux-flyout-translate:translateX(50px)]',
                 default => 'fixed m-2 p-8 max-h-[calc(100dvh-1rem)] min-h-[calc(100dvh-1rem)] md:[:where(&)]:min-w-[25rem] overflow-y-auto ml-auto [--flux-flyout-translate:translateX(50px)] rtl:ml-0 rtl:mr-auto rtl:[--flux-flyout-translate:translateX(-50px)]',
             },
@@ -36,6 +44,19 @@ if ($flyout) {
         ->add(match ($variant) {
             default => 'bg-bg-surface border-border-subtle',
             'floating' => 'bg-bg-surface ring ring-border-default shadow-lg rounded-xl',
+            'bare' => 'bg-transparent',
+        });
+} elseif ($overflow) {
+    $classes = Flux::classes();
+
+    $contentClasses = Flux::classes()
+        ->add('relative')
+        ->add(match ($variant) {
+            default => 'p-6 [:where(&)]:max-w-xl [:where(&)]:min-w-xs shadow-lg rounded-xl',
+            'bare' => '',
+        })
+        ->add(match ($variant) {
+            default => 'bg-bg-surface ring ring-border-default shadow-lg rounded-xl',
             'bare' => 'bg-transparent',
         });
 } else {
@@ -59,14 +80,12 @@ if (($wireModel = $attributes->wire('model')) && $wireModel->directive && ! $wir
     $attributes = $attributes->merge([$wireModel->directive => $wireModel->value]);
 }
 
-// Support <flux:modal ... @close="?"> syntax...
 if ($attributes['@close'] ?? null) {
     $attributes['wire:close'] = $attributes['@close'];
 
     unset($attributes['@close']);
 }
 
-// Support <flux:modal ... @cancel="?"> syntax...
 if ($attributes['@cancel'] ?? null) {
     $attributes['wire:cancel'] = $attributes['@cancel'];
 
@@ -77,7 +96,16 @@ if ($dismissible === false) {
     $attributes = $attributes->merge(['disable-click-outside' => '']);
 }
 
-[ $styleAttributes, $attributes ] = Flux::splitAttributes($attributes, ['autofocus', 'class', 'style', 'wire:close', 'x-on:close', 'wire:cancel', 'x-on:cancel']);
+if ($escapable === false) {
+    $attributes = $attributes->merge(['disable-escape' => '']);
+}
+
+[ $contentAttributes, $attributes ] = Flux::splitAttributes($attributes, ['autofocus', 'class', 'style']);
+[ $dialogAttributes, $attributes ] = Flux::splitAttributes($attributes, ['wire:close', 'x-on:close', 'wire:cancel', 'x-on:cancel']);
+
+if (! $overflow) {
+    $dialogAttributes = $dialogAttributes->merge($contentAttributes->getAttributes());
+}
 @endphp
 
 <ui-modal {{ $attributes }} data-flux-modal>
@@ -87,32 +115,40 @@ if ($dismissible === false) {
 
     <dialog
         wire:ignore.self {{-- This needs to be here because the dialog element adds a "close" attribute that isn't durable... --}}
-        {{ $styleAttributes->class($classes) }}
-        @if ($name) data-modal="{{ $name }}" @endif
-        @if ($flyout) data-flux-flyout @endif
-        x-data
-        @isset($__livewire)
-            x-on:modal-show.document="
-                if ($event.detail.name === @js($name) && ($event.detail.scope === @js($__livewire->getId()))) $el.showModal();
-                if ($event.detail.name === @js($name) && (! $event.detail.scope)) $el.showModal();
-            "
-            x-on:modal-close.document="
-                if ($event.detail.name === @js($name) && ($event.detail.scope === @js($__livewire->getId()))) $el.close();
-                if (! $event.detail.name || ($event.detail.name === @js($name) && (! $event.detail.scope))) $el.close();
-            "
-        @else
-            x-on:modal-show.document="if ($event.detail.name === @js($name) && (! $event.detail.scope)) $el.showModal()"
-            x-on:modal-close.document="if (! $event.detail.name || ($event.detail.name === @js($name) && (! $event.detail.scope))) $el.close()"
-        @endif
+        {{ $dialogAttributes->class($classes) }}
+        <?php if ($name): ?> data-modal="{{ $name }}" <?php endif; ?>
+        <?php if ($flyout): ?> data-flux-flyout <?php endif; ?>
+        <?php if ($overflow): ?> data-flux-modal-overflow <?php endif; ?>
+        @unblaze(scope: ['name' => $name])
+        x-data="fluxModal(@js($scope['name']), @js(isset($__livewire) ? $__livewire->getId() : null))"
+        @endunblaze
+        x-on:modal-show.document="handleShow($event)"
+        x-on:modal-close.document="handleClose($event)"
     >
-        {{ $slot }}
+        <?php if ($overflow): ?>
+            <div class="flex min-h-full items-center justify-center p-4 sm:p-6">
+                <div {{ $contentAttributes->class($contentClasses) }} data-flux-modal-content>
+                    {{ $slot }}
 
-        <?php if ($closable): ?>
-            <div class="absolute top-0 end-0 mt-4 me-4">
-                <flux:modal.close>
-                    <flux:button variant="ghost" icon="x-mark" size="sm" aria-label="Close modal" class="text-text-tertiary! hover:text-text-primary!"></flux:button>
-                </flux:modal.close>
+                    <?php if ($closable): ?>
+                        <div class="absolute top-0 end-0 mt-4 me-4">
+                            <flux:modal.close>
+                                <flux:button variant="ghost" icon="x-mark" size="sm" aria-label="{{ __('Close modal') }}" class="text-text-tertiary! hover:text-text-primary!"></flux:button>
+                            </flux:modal.close>
+                        </div>
+                    <?php endif; ?>
+                </div>
             </div>
+        <?php else: ?>
+            {{ $slot }}
+
+            <?php if ($closable): ?>
+                <div class="absolute top-0 end-0 mt-4 me-4">
+                    <flux:modal.close>
+                        <flux:button variant="ghost" icon="x-mark" size="sm" aria-label="{{ __('Close modal') }}" class="text-text-tertiary! hover:text-text-primary!"></flux:button>
+                    </flux:modal.close>
+                </div>
+            <?php endif; ?>
         <?php endif; ?>
     </dialog>
 </ui-modal>

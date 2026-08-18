@@ -1,4 +1,4 @@
-@blaze
+@blaze(fold: true)
 
 @props([
     'inline' => false,
@@ -9,6 +9,7 @@
 
 @php
 $classes = Flux::classes()
+    ->add('[:where(&)]:font-normal')
     ->add(match ($size) {
         'xl' => 'text-lg',
         'lg' => 'text-base',
@@ -35,7 +36,7 @@ $classes = Flux::classes()
         'rose' => 'text-rose-600 dark:text-rose-400',
     } : match ($variant) {
         'strong' => '[:where(&)]:text-text-primary',
-        'subtle' => '[:where(&)]:text-text-disabled',
+        'subtle' => '[:where(&)]:text-text-tertiary',
         default => '[:where(&)]:text-text-secondary',
     })
     ;

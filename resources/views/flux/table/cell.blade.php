@@ -1,4 +1,4 @@
-@blaze
+@blaze(fold: true)
 
 @props([
     'align' => 'start',
@@ -8,10 +8,12 @@
 
 @php
 $classes = Flux::classes()
-    ->add('py-3 px-3 first:ps-0 last:pe-0 text-sm')
+    ->add('[:where(&)]:py-3 [:where(&)]:px-3 first:ps-0 last:pe-0 text-sm')
     ->add(match($align) {
-        'center' => 'text-center',
-        'end' => 'text-end',
+        'center' => 'text-center [&>*]:mx-auto',
+        'end' => 'text-end [&>*]:ms-auto',
+        // Right is @deprecated but needed for backwards compatibility...
+        'right' => 'text-end [&>*]:ms-auto',
         default => '',
     })
     ->add(match ($variant) {

@@ -1,4 +1,4 @@
-@blaze
+@blaze(fold: true, unsafe: ['icon:trailing', 'icon:variant'])
 
 @php $iconTrailing ??= $attributes->pluck('icon:trailing'); @endphp
 @php $iconVariant ??= $attributes->pluck('icon:variant'); @endphp
@@ -61,14 +61,12 @@ $suffixClasses = Flux::classes()
 
     {{ $slot }}
 
-    <?php if ($suffix): ?>
-        <?php if (is_string($suffix)): ?>
-            <div class="{{ $suffixClasses }}">
-                {{ $suffix }}
-            </div>
-        <?php else: ?>
+    <?php if (is_string($suffix) && $suffix !== ''): ?>
+        <div class="{{ $suffixClasses }}">
             {{ $suffix }}
-        <?php endif; ?>
+        </div>
+    <?php elseif ($suffix): ?>
+        {{ $suffix }}
     <?php endif; ?>
 
     <?php if (is_string($iconTrailing) && $iconTrailing !== ''): ?>

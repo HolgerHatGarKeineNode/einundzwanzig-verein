@@ -32,7 +32,18 @@
 ----------------------------------------- */
 @source "../views/**/*.blade.php";
 @source "../js/**/*.js";
-@source "../../vendor/livewire/flux/dist/**/*.blade.php";
+/* Flux' Blades liegen in stubs/resources/views, NICHT in dist/ — dort stehen nur
+   flux.css, flux.min.js und manifest.json. Der frühere dist/-Pfad hier zeigte also
+   auf ein Verzeichnis ohne eine einzige Blade-Datei und war wirkungslos.
+   Gemessen (2026-08-18, nach dem Entfernen der 563 publizierten Kopien): das
+   gebaute CSS ist mit und ohne diese beiden Zeilen praktisch gleich groß
+   (406 871 gegen 407 077 Bytes) — die tatsächlich gerenderten Flux-Utilities sind
+   also schon anderweitig abgedeckt. Die Korrektur steht trotzdem hier, weil ein
+   Quellpfad ins Leere kein Zustand ist, auf den man sich beim nächsten
+   Flux-Upgrade verlassen möchte. Beide Pakete, weil die Pro-Komponenten
+   (tabs, command, chart …) einen eigenen Stub-Baum haben. */
+@source "../../vendor/livewire/flux/stubs/resources/views/**/*.blade.php";
+@source "../../vendor/livewire/flux-pro/stubs/resources/views/**/*.blade.php";
 /* Chat-Partials des Packages: Tailwind scannt vendor/ nicht von allein, sonst
    fehlen die Utilities der Raum-Ansicht im gebauten CSS. Bewusst nur die
    partials/ — nicht die ganzen Package-Views, von denen wir nichts rendern. */
