@@ -320,7 +320,7 @@ new class extends Component {
                                 ])>
                             <flux:icon :name="$status->icon()" variant="micro" aria-hidden="true"/>
                             <span>{{ $status->label() }}</span>
-                            <span @class(['text-text-disabled' => $this->statusCounts[$status->value] === 0 && ! $isActive])>
+                            <span @class(['text-text-tertiary' => $this->statusCounts[$status->value] === 0 && ! $isActive])>
                                 {{ $this->statusCounts[$status->value] }}
                             </span>
                         </button>
@@ -341,7 +341,7 @@ new class extends Component {
                                 ])>
                             <flux:icon name="hand-raised" variant="micro" aria-hidden="true"/>
                             <span>Fehlende Stimme</span>
-                            <span @class(['text-text-disabled' => $this->statusCounts['awaiting_my_vote'] === 0 && ! $isActive])>
+                            <span @class(['text-text-tertiary' => $this->statusCounts['awaiting_my_vote'] === 0 && ! $isActive])>
                                 {{ $this->statusCounts['awaiting_my_vote'] }}
                             </span>
                         </button>
