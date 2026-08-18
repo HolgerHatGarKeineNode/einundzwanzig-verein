@@ -39,7 +39,7 @@ $indicatorClasses = Flux::classes()
         // We have to add the dark variant of the `translate-x-[0.9375rem]` to ensure that if `.dark` is added to an element mid way
         // down the DOM instead of on the root HTML element, that the above `dark:translate-x-[0.125rem]` doesn't over ride it...
         'dark:group-data-checked:translate-x-[0.9375rem] dark:rtl:group-data-checked:-translate-x-[0.9375rem]',
-        'group-data-checked:bg-text-primary',
+        'group-data-checked:bg-accent-foreground',
     ]);
 @endphp
 
