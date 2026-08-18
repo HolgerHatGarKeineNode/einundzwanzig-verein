@@ -116,7 +116,7 @@ $classes = Flux::classes()
         'filled'  => 'bg-bg-elevated disabled:bg-bg-surface',
     })
     ->add(match ($variant) { // Text color
-        'outline' => 'text-text-primary disabled:text-text-disabled placeholder-text-disabled disabled:placeholder-text-disabled/70',
+        'outline' => 'text-text-primary disabled:text-text-disabled placeholder-text-tertiary disabled:placeholder-text-disabled/70',
         'filled'  => 'text-text-primary placeholder-text-tertiary disabled:placeholder-text-disabled',
     })
     ->add(match ($variant) { // Border...
