@@ -4,10 +4,21 @@
         "opencode",
         "phpstorm"
     ],
+    "cloud": false,
     "editors": [
         "claude_code",
         "opencode",
         "phpstorm"
     ],
-    "guidelines": []
+    "guidelines": true,
+    "skills": [
+        "infer-conventions",
+        "laravel-best-practices",
+        "configure-nightwatch",
+        "fluxui-development",
+        "livewire-development",
+        "volt-development",
+        "pest-testing",
+        "tailwindcss-development"
+    ]
 }
