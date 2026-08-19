@@ -646,7 +646,22 @@ new class extends Component {
 
             @if($currentPleb)
                 <!-- Logged-in User Info -->
-                <flux:card class="!bg-bg-surface !border-border-subtle">
+                {{-- Hier standen `!bg-bg-surface !border-border-subtle` — ersatzlos entfernt,
+                     und zwar als TOTE Klassen, nicht als Vereinfachung.
+
+                     Gegenprobe im gebauten CSS am 2026-08-19: weder `.\!bg-bg-surface` noch
+                     `.\!border-border-subtle` kommt darin vor, die Klassen haben nie etwas
+                     bewirkt. Der Grund ist die Tailwind-Version: das `!`-PRAEFIX ist die alte
+                     v3-Schreibweise, in v4 gehoert das Ausrufezeichen HINTER die Utility. Im
+                     selben Abgleich erzeugte das Praefix in `mim-pulse-flux` (4.0.7) und
+                     `mim-cockpit` (4.1.12) noch CSS, hier unter 4.1.18 nicht mehr. Solche
+                     Klassen sind also Zeitbomben: sie funktionieren, bis jemand Tailwind
+                     anhebt, und fallen dann lautlos aus.
+
+                     Die Karte holt Hintergrund und Rahmen aus ihrer eigenen publizierten View
+                     (`flux/card/index.blade.php`). Bewusst ersatzlos statt umgeschrieben: ein
+                     `bg-bg-surface` ohne `!` waere eine NEUE Regel, die vorher nicht galt. --}}
+                <flux:card>
                     <div class="flex items-start gap-4">
                         <img
                             class="w-12 h-12 rounded-full shrink-0 border-2 border-border-default"
