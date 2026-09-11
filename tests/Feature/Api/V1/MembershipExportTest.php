@@ -26,7 +26,7 @@ beforeEach(function () {
  */
 function exportSubject(): array
 {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new Key)->getPublicKey($privkey);
 
     $pleb = EinundzwanzigPleb::factory()->create([
@@ -125,7 +125,7 @@ it('hands out everything stored about the caller, including the fields every oth
 it('exports the data of the signing pubkey and of nobody else', function () {
     $subject = exportSubject();
 
-    $strangerPubkey = (new Key)->getPublicKey((new Key)->generatePrivateKey());
+    $strangerPubkey = (new Key)->getPublicKey(testPrivateKey());
 
     $stranger = EinundzwanzigPleb::factory()->create([
         // A real npub, not the factory's faker word: a three-letter word makes

@@ -84,7 +84,7 @@ beforeEach(function () {
  */
 function nfSignedCall(?array $attributes = null, bool $paid = false): TestResponse
 {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new Key)->getPublicKey($privkey);
 
     if ($attributes !== null) {

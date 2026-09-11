@@ -325,7 +325,7 @@ function massSubject(): array
 {
     config(['einundzwanzig.config.api_client_keys' => ['einundzwanzig-group' => MASS_CLIENT_KEY]]);
 
-    $privkey = (new NostrKey)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new NostrKey)->getPublicKey($privkey);
 
     $pleb = EinundzwanzigPleb::factory()->create([
@@ -396,7 +396,7 @@ it('refuses an application naming a foreign pubkey and writes nothing', function
 
 it('refuses an application naming a foreign npub and writes nothing', function () {
     $subject = massSubject();
-    $strangerPubkey = (new NostrKey)->getPublicKey((new NostrKey)->generatePrivateKey());
+    $strangerPubkey = (new NostrKey)->getPublicKey(testPrivateKey());
 
     $response = apiV1SignedRequest(
         'POST',
@@ -415,7 +415,7 @@ it('refuses an application naming a foreign npub and writes nothing', function (
 });
 
 it('keeps the signed pubkey and npub on the record an application creates', function () {
-    $privkey = (new NostrKey)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new NostrKey)->getPublicKey($privkey);
 
     config(['einundzwanzig.config.api_client_keys' => ['einundzwanzig-group' => MASS_CLIENT_KEY]]);

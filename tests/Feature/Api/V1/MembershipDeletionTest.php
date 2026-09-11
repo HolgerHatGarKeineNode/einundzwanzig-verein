@@ -38,7 +38,7 @@ beforeEach(function () {
  */
 function deletionSubject(): array
 {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new Key)->getPublicKey($privkey);
 
     $pleb = EinundzwanzigPleb::factory()->create([
@@ -347,7 +347,7 @@ it('answers a repeated erasure the same way and changes nothing more', function 
 it('erases the caller and never a bystander', function () {
     $subject = deletionSubject();
 
-    $bystanderPrivkey = (new Key)->generatePrivateKey();
+    $bystanderPrivkey = testPrivateKey();
     $bystanderPubkey = (new Key)->getPublicKey($bystanderPrivkey);
 
     $bystander = EinundzwanzigPleb::factory()->create([

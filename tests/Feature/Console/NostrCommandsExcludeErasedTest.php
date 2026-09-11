@@ -56,8 +56,8 @@ class ProbingFetchEvents extends FetchEvents
  */
 function erasedAndKeptMember(): array
 {
-    $erasedPubkey = (new Key)->getPublicKey((new Key)->generatePrivateKey());
-    $keptPubkey = (new Key)->getPublicKey((new Key)->generatePrivateKey());
+    $erasedPubkey = (new Key)->getPublicKey(testPrivateKey());
+    $keptPubkey = (new Key)->getPublicKey(testPrivateKey());
 
     $erased = EinundzwanzigPleb::factory()->create([
         'pubkey' => $erasedPubkey,

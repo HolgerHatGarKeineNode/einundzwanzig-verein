@@ -1,7 +1,6 @@
 <?php
 
 use Illuminate\Testing\TestResponse;
-use swentel\nostr\Key\Key;
 
 /*
  * Two independent buckets, deliberately not keyed by IP.
@@ -37,7 +36,7 @@ it('throttles a single pubkey', function () {
         'einundzwanzig.config.api_rate_limits.client_per_minute' => 100,
     ]);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
 
     rateLimitedPing($privkey)->assertSuccessful();
     rateLimitedPing($privkey)->assertSuccessful();
@@ -82,7 +81,7 @@ it('does not let one client exhaust another client quota', function () {
 it('throttles invoice creation per pubkey and day', function () {
     config(['einundzwanzig.config.api_rate_limits.invoice_per_day' => 1]);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
 
     rateLimitedPing($privkey, '/api/v1/_ping-invoice')->assertSuccessful();
     rateLimitedPing($privkey, '/api/v1/_ping-invoice')->assertStatus(429);

@@ -113,7 +113,7 @@ function retSentRedirectUrl(): ?string
 }
 
 it('sends an allowed return address to BTCPay', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     retMemberFor($privkey);
 
     retInvoiceCall($privkey, ['return_url' => RET_ALLOWED_URL])['response']
@@ -128,7 +128,7 @@ it('keeps the association profile page when no return address is sent', function
      * THE UNCHANGED CASE, and the one that matters most: every caller that
      * existed before this field must see byte for byte what it saw before.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     retMemberFor($privkey);
 
     retInvoiceCall($privkey)['response']->assertOk();
@@ -137,7 +137,7 @@ it('keeps the association profile page when no return address is sent', function
 });
 
 it('keeps the association profile page when the return address is explicitly null', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     retMemberFor($privkey);
 
     retInvoiceCall($privkey, ['return_url' => null])['response']->assertOk();
@@ -151,7 +151,7 @@ it('refuses a return address that is not on the allowlist and orders no invoice'
      * happens in the form request, before the controller runs, so a probe
      * cannot burn the association's invoice quota either.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     retMemberFor($privkey);
 
     $call = retInvoiceCall($privkey, ['return_url' => $candidate]);
@@ -186,7 +186,7 @@ it('treats an empty return address as no return address, not as a bypass', funct
      * to BTCPay is the association's own profile page. Nothing a client sent
      * ends up in `redirectURL`, which is the property that matters.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     retMemberFor($privkey);
 
     retInvoiceCall($privkey, ['return_url' => ''])['response']->assertOk();
@@ -202,7 +202,7 @@ it('refuses every return address when the allowlist is empty', function () {
      */
     config(['einundzwanzig.config.invoice_return_urls' => []]);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     retMemberFor($privkey);
 
     retInvoiceCall($privkey, ['return_url' => RET_ALLOWED_URL])['response']
@@ -220,7 +220,7 @@ it('checks the return address on the idempotent repeat as well', function () {
      * invoice happens to exist already: that is the state in which a probe
      * would be told "fine" and would keep probing.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     retMemberFor($privkey);
 
     retInvoiceCall($privkey)['response']->assertOk()->assertJsonPath('data.created', true);
@@ -241,7 +241,7 @@ it('leaves the redirect of an existing invoice alone on the idempotent repeat', 
      * rewrite it. Documented on the endpoint so that a client which needs a
      * different return address knows it needs a different invoice.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     retMemberFor($privkey);
 
     retInvoiceCall($privkey)['response']->assertOk()->assertJsonPath('data.created', true);
@@ -267,7 +267,7 @@ it('still ignores amount, currency and year next to a valid return address', fun
      * the configuration and the fee year from the path; a body naming them
      * changes nothing, and adding `return_url` did not open a door for them.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     retMemberFor($privkey);
 
     retInvoiceCall($privkey, [

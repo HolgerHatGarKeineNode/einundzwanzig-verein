@@ -124,7 +124,7 @@ function bolt11InvoiceCall(string $privkey): array
 it('hands the lightning payment request of a freshly created invoice to the client', function () {
     bolt11FakeBtcPay(Http::response(bolt11MethodsWithLightning()));
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     bolt11MemberFor($privkey);
 
     $call = bolt11InvoiceCall($privkey);
@@ -155,7 +155,7 @@ it('hands back the same lightning payment request on the idempotent second call'
      */
     bolt11FakeBtcPay(Http::response(bolt11MethodsWithLightning()));
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     bolt11MemberFor($privkey);
 
     $first = bolt11InvoiceCall($privkey);
@@ -194,7 +194,7 @@ it('answers null, never an empty string, when the invoice carries no lightning m
         ['paymentMethodId' => 'BTC-LNURL', 'destination' => '', 'currency' => 'BTC'],
     ]));
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     bolt11MemberFor($privkey);
 
     $call = bolt11InvoiceCall($privkey);
@@ -216,7 +216,7 @@ it('reads the lightning method by its id and not by the first destination it fin
      */
     bolt11FakeBtcPay(Http::response($methods));
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     bolt11MemberFor($privkey);
 
     bolt11InvoiceCall($privkey)['response']
@@ -243,7 +243,7 @@ it('treats a lightning method with a blank destination as no lightning method', 
         ['paymentMethodId' => 'BTC-LN', 'destination' => $destination],
     ]));
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     bolt11MemberFor($privkey);
 
     $call = bolt11InvoiceCall($privkey);
@@ -269,7 +269,7 @@ it('still hands out the checkout when the payment-methods call fails', function 
      */
     bolt11FakeBtcPay($stub);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     bolt11MemberFor($privkey);
 
     $call = bolt11InvoiceCall($privkey);
@@ -314,7 +314,7 @@ it('reports the lightning payment request on the refresh endpoint too', function
         ]),
     ]);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pleb = bolt11MemberFor($privkey);
 
     PaymentEvent::factory()->create([

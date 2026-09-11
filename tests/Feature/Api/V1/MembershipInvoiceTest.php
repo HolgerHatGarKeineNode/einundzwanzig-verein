@@ -121,7 +121,7 @@ it('lets a long-standing member without recorded consent create an invoice', fun
      * would have locked out exactly those members whose membership already
      * exists and who have nothing left to consent to.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pleb = invMemberFor($privkey, [
         'statutes_accepted_at' => null,
         'applied_at' => null,
@@ -141,7 +141,7 @@ it('lets a long-standing member without recorded consent create an invoice', fun
 });
 
 it('ignores amount, currency and year sent in the body', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     invMemberFor($privkey);
 
     $call = invoiceCall($privkey, body: [
@@ -177,7 +177,7 @@ it('is idempotent per pubkey and year: one invoice, one BTCPay request', functio
      * leaving a second open invoice behind — an unaccounted one that, if paid,
      * produces money without a booking.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     invMemberFor($privkey);
 
     $first = invoiceCall($privkey);
@@ -205,7 +205,7 @@ it('refuses a BTCPay 200 that carries no invoice id', function () {
      */
     invFakeBtcPay(['status' => 'New']);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     invMemberFor($privkey);
 
     $call = invoiceCall($privkey);
@@ -233,7 +233,7 @@ it('refuses an invoice id that is not one', function (string $invoiceId) {
      */
     invFakeBtcPay(['id' => $invoiceId]);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     invMemberFor($privkey);
 
     $call = invoiceCall($privkey);
@@ -262,7 +262,7 @@ it('hands out one invoice once BTCPay answers properly again', function () {
      * id never reached us) is the reconciliation job's business in P5, and the
      * plan already names it.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     invMemberFor($privkey);
 
     invFakeBtcPay(['status' => 'New']);
@@ -290,7 +290,7 @@ it('hands out one invoice once BTCPay answers properly again', function () {
 it('answers 503 when BTCPay refuses the invoice outright', function () {
     invFakeBtcPay(['error' => 'boom'], 500);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     invMemberFor($privkey);
 
     $call = invoiceCall($privkey);
@@ -311,7 +311,7 @@ it('refuses any year but the current fee year', function () {
      * different one. And since a settled fee constitutes a membership, an open
      * year would let somebody join by paying a fee for 1970.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     invMemberFor($privkey);
 
     $past = invoiceCall($privkey, year: (int) now()->year - 1);
@@ -345,7 +345,7 @@ it('refuses a pubkey without a member record and spends nothing at BTCPay', func
 });
 
 it('follows a travelled clock into the next fee year', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     invMemberFor($privkey);
 
     $this->travelTo(Carbon::parse('2027-01-01 00:00:01'));
@@ -359,7 +359,7 @@ it('follows a travelled clock into the next fee year', function () {
 });
 
 it('returns only the allowed fields and never personal data', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     invMemberFor($privkey, [
         'email' => 'private@example.test',
         'application_text' => 'my private application prose',
@@ -409,7 +409,7 @@ it('refuses to create an invoice when the fee is not configured', function (int|
 
     invFakeBtcPay(['id' => 'inv-should-not-exist', 'status' => 'New']);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pleb = invMemberFor($privkey);
 
     invoiceCall($privkey)['response']->assertStatus(503);
@@ -432,7 +432,7 @@ it('still refuses when a fee year already exists, so no zero payload goes out', 
      * already there, resolvePaymentEvent() never reaches its guard, and
      * `invoicePayload()` happily asks BTCPay for `amount: 0`.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pleb = invMemberFor($privkey);
 
     PaymentEvent::factory()->create([

@@ -20,7 +20,7 @@ use swentel\nostr\Key\Key;
 function generateNpubHexPair(): array
 {
     $key = new Key;
-    $privateHex = $key->generatePrivateKey();
+    $privateHex = testPrivateKey();
     $publicHex = $key->getPublicKey($privateHex);
 
     return [$key->convertPublicKeyToBech32($publicHex), $publicHex];

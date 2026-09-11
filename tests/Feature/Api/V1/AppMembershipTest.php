@@ -50,7 +50,7 @@ function appCall(string $path, ?array $body = null): TestResponse
 }
 
 it('refuses an application without a client key', function () {
-    $pubkey = (new Key)->getPublicKey((new Key)->generatePrivateKey());
+    $pubkey = (new Key)->getPublicKey(testPrivateKey());
 
     $this->postJson('/api/v1/app/membership/applications', [
         'pubkey' => $pubkey,
@@ -61,7 +61,7 @@ it('refuses an application without a client key', function () {
 });
 
 it('records a first application with consent from the body pubkey', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new Key)->getPublicKey($privkey);
 
     $response = appCall('/api/v1/app/membership/applications', [
@@ -80,7 +80,7 @@ it('records a first application with consent from the body pubkey', function () 
 });
 
 it('answers a repeat application with 200 and leaves the consent untouched', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new Key)->getPublicKey($privkey);
 
     EinundzwanzigPleb::factory()->create([
@@ -101,7 +101,7 @@ it('answers a repeat application with 200 and leaves the consent untouched', fun
 
 it('refuses a pubkey in any other spelling', function () {
     appCall('/api/v1/app/membership/applications', [
-        'pubkey' => strtoupper((new Key)->getPublicKey((new Key)->generatePrivateKey())),
+        'pubkey' => strtoupper((new Key)->getPublicKey(testPrivateKey())),
         'statutes_accepted' => true,
     ])->assertUnprocessable();
 
@@ -114,7 +114,7 @@ it('refuses a pubkey in any other spelling', function () {
 });
 
 it('refuses a first application without accepted statutes', function () {
-    $pubkey = (new Key)->getPublicKey((new Key)->generatePrivateKey());
+    $pubkey = (new Key)->getPublicKey(testPrivateKey());
 
     appCall('/api/v1/app/membership/applications', [
         'pubkey' => $pubkey,
@@ -125,7 +125,7 @@ it('refuses a first application without accepted statutes', function () {
 });
 
 it('hands out an invoice for a body pubkey without any signature', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new Key)->getPublicKey($privkey);
 
     EinundzwanzigPleb::factory()->create([
@@ -144,7 +144,7 @@ it('hands out an invoice for a body pubkey without any signature', function () {
 });
 
 it('refuses an invoice for a pubkey without a record, without saying which part failed', function () {
-    $pubkey = (new Key)->getPublicKey((new Key)->generatePrivateKey());
+    $pubkey = (new Key)->getPublicKey(testPrivateKey());
 
     appCall('/api/v1/app/membership/payments/'.now()->year.'/invoice', [
         'pubkey' => $pubkey,
@@ -155,7 +155,7 @@ it('refuses an invoice for a pubkey without a record, without saying which part 
 });
 
 it('refuses a return_url that is not on the allowlist', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new Key)->getPublicKey($privkey);
 
     EinundzwanzigPleb::factory()->create([
@@ -179,7 +179,7 @@ it('has no read surface: /me answers 404 on the app branch', function () {
 });
 
 it('counts the invoice quota per body pubkey', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new Key)->getPublicKey($privkey);
 
     EinundzwanzigPleb::factory()->create([
@@ -199,7 +199,7 @@ it('counts the invoice quota per body pubkey', function () {
      * aus AppServiceProvider::limiterPubkey() ist keine gemeinschaftliche
      * IP-Falle fuer alle App-Nutzer.
      */
-    $other = (new Key)->getPublicKey((new Key)->generatePrivateKey());
+    $other = (new Key)->getPublicKey(testPrivateKey());
 
     EinundzwanzigPleb::factory()->create([
         'pubkey' => $other,

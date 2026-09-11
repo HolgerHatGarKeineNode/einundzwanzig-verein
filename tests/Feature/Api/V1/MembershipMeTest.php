@@ -66,7 +66,7 @@ it('reports "none" for a pubkey that has no record at all', function () {
 });
 
 it('reports "none" for a record that never applied', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     meMemberFor($privkey, [
         'association_status' => AssociationStatus::DEFAULT,
         'applied_at' => null,
@@ -78,7 +78,7 @@ it('reports "none" for a record that never applied', function () {
 });
 
 it('reports "awaiting_payment" after an application while the year is unpaid', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pleb = meMemberFor($privkey, [
         'association_status' => AssociationStatus::DEFAULT,
         'applied_at' => now(),
@@ -99,7 +99,7 @@ it('reports "awaiting_payment" after an application while the year is unpaid', f
 });
 
 it('reports "member" for a category with the current year paid', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pleb = meMemberFor($privkey, [
         'association_status' => AssociationStatus::PASSIVE,
         'applied_at' => now(),
@@ -132,7 +132,7 @@ it('reports "member" for a category with the current year paid', function () {
  * would satisfy the first and fail the second.
  */
 it('reports "lapsed" while association_status still reads ACTIVE', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $paidYear = (int) date('Y');
 
     $pleb = meMemberFor($privkey, [
@@ -174,7 +174,7 @@ it('reports "lapsed" while association_status still reads ACTIVE', function () {
  */
 
 it('ignores a pubkey in the query and answers for the signed one', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $mine = meMemberFor($privkey, ['association_status' => AssociationStatus::DEFAULT]);
 
     // My own pubkey passed along explicitly: accepted, and it changes nothing.
@@ -188,7 +188,7 @@ it('ignores a pubkey in the query and answers for the signed one', function () {
 });
 
 it('refuses to answer for somebody else named in the query', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     meMemberFor($privkey);
 
     $stranger = EinundzwanzigPleb::factory()->create([
@@ -219,7 +219,7 @@ it('refuses to answer for somebody else named in the query', function () {
  */
 
 it('returns only the allowed fields and never personal data', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pleb = meMemberFor($privkey, [
         'association_status' => AssociationStatus::ACTIVE,
         'email' => 'private@example.test',
@@ -275,7 +275,7 @@ it('keeps error responses down to a message', function () {
      */
     config(['app.debug' => false]);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     meMemberFor($privkey, ['email' => 'private@example.test']);
 
     $stranger = EinundzwanzigPleb::factory()->create(['email' => 'stranger@example.test']);

@@ -34,7 +34,7 @@ beforeEach(function () {
  */
 function refSubject(array $attributes = [], bool $paid = false): array
 {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new Key)->getPublicKey($privkey);
 
     $pleb = EinundzwanzigPleb::factory()->create($attributes + [
@@ -347,7 +347,7 @@ it('does not promote through refresh on a settled fee for a past year', function
         'id' => 'inv-1970', 'status' => 'Settled', 'amount' => '21000', 'currency' => 'SATS',
     ])]);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new Key)->getPublicKey($privkey);
 
     $pleb = EinundzwanzigPleb::factory()->create([
@@ -452,7 +452,7 @@ it('reports on a past year without rewriting its fee', function () {
 
     Queue::fake();
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new Key)->getPublicKey($privkey);
     $pastYear = (int) now()->year - 3;
 

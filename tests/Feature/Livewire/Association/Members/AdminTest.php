@@ -373,7 +373,7 @@ it('forbids unauthorized members from reading the paginated list', function () {
 it('keeps an erased member out of the board overview and the export', function () {
     EinundzwanzigPleb::factory()->create(['pubkey' => ALLOWED_ADMIN_PUBKEY]);
 
-    $erasedPubkey = (new NostrKey)->getPublicKey((new NostrKey)->generatePrivateKey());
+    $erasedPubkey = (new NostrKey)->getPublicKey(testPrivateKey());
 
     $erased = EinundzwanzigPleb::factory()->create([
         'pubkey' => $erasedPubkey,

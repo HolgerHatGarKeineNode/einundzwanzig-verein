@@ -119,7 +119,7 @@ it('refuses an explicit refusal of the statutes', function () {
 });
 
 it('answers a second application with 200 and never moves the consent timestamp', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $consentedAt = Carbon::parse('2026-03-01 12:00:00');
 
     applyMemberFor($privkey, [
@@ -152,7 +152,7 @@ it('needs no renewed consent for a second application', function () {
      * the stored timestamp is the document, and demanding it again would
      * pretend the answer mattered when it would be discarded.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     applyMemberFor($privkey, ['statutes_accepted_at' => Carbon::parse('2026-03-01 12:00:00')]);
 
     applyCall(['application_text' => 'no consent field in this body'], $privkey)['response']
@@ -166,7 +166,7 @@ it('does not read a missing field as an instruction to delete', function () {
      * it", that operator could erase a member's e-mail address while the
      * member's own signature vouched for the request.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     applyMemberFor($privkey, [
         'statutes_accepted_at' => Carbon::parse('2026-03-01 12:00:00'),
         'email' => 'keep-me@example.test',
@@ -192,7 +192,7 @@ it('clears a field the client explicitly sends as null', function () {
      * and a member would have no way to withdraw their e-mail address short of
      * erasing the whole record.
      */
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     applyMemberFor($privkey, [
         'statutes_accepted_at' => Carbon::parse('2026-03-01 12:00:00'),
         'email' => 'remove-me@example.test',
@@ -297,7 +297,7 @@ it('accepts a well-formed NIP-05 handle', function () {
 });
 
 it('lets a member keep their own NIP-05 handle on a repeat application', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     applyMemberFor($privkey, [
         'statutes_accepted_at' => Carbon::parse('2026-03-01 12:00:00'),
         'nip05_handle' => 'mine',

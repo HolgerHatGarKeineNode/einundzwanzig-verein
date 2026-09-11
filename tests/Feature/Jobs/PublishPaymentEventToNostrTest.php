@@ -7,7 +7,6 @@ use App\Support\NostrAuth;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
-use swentel\nostr\Key\Key;
 
 it('queues the kind-32121 publication instead of running it in the request', function () {
     Queue::fake();
@@ -57,7 +56,7 @@ it('never overwrites an event id that is already set', function () {
      * held, not that the relay was merely unconfigured.
      */
     config()->set('services.relay', 'http://relay.invalid');
-    config()->set('services.nostr', (new Key)->generatePrivateKey());
+    config()->set('services.nostr', testPrivateKey());
 
     $pleb = EinundzwanzigPleb::factory()->active()->create();
 

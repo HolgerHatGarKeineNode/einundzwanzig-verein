@@ -390,7 +390,7 @@ it('gives a case variant no rate-limit budget of its own', function () {
         'einundzwanzig.config.api_rate_limits.client_per_minute' => 100,
     ]);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
 
     nip98Get(makeNip98Event(apiV1PingUrl(), privkey: $privkey)['event'])->assertSuccessful();
     nip98Get(makeNip98Event(apiV1PingUrl(), privkey: $privkey)['event'])->assertStatus(429);
@@ -454,7 +454,7 @@ it('still rejects a differing query string', function () {
 it('refuses a subject named "key" in the body', function () {
     // `key` is the spelling this repository already uses for a pubkey in a
     // route (routes/api.php: /nostr/profile/{key}).
-    $foreign = (new Key)->getPublicKey((new Key)->generatePrivateKey());
+    $foreign = (new Key)->getPublicKey(testPrivateKey());
     $body = json_encode(['key' => $foreign]);
 
     $signed = makeNip98Event(apiV1PingUrl(), 'POST', $body);
@@ -503,7 +503,7 @@ it('rejects an unparsable NIP-98 credential', function (string $header, string $
 ]);
 
 it('refuses a subject in the path that differs from the signed pubkey', function () {
-    $foreign = (new Key)->getPublicKey((new Key)->generatePrivateKey());
+    $foreign = (new Key)->getPublicKey(testPrivateKey());
     $url = apiV1PingUrl('/'.$foreign);
 
     $signed = makeNip98Event($url, 'POST', '[]');
@@ -515,7 +515,7 @@ it('refuses a subject in the path that differs from the signed pubkey', function
 });
 
 it('refuses a subject in the body that differs from the signed pubkey', function () {
-    $foreign = (new Key)->getPublicKey((new Key)->generatePrivateKey());
+    $foreign = (new Key)->getPublicKey(testPrivateKey());
     $body = json_encode(['pubkey' => $foreign]);
 
     $signed = makeNip98Event(apiV1PingUrl(), 'POST', $body);
@@ -527,7 +527,7 @@ it('refuses a subject in the body that differs from the signed pubkey', function
 
 it('refuses a foreign npub in the body just as it refuses a foreign hex pubkey', function () {
     $key = new Key;
-    $foreignNpub = $key->convertPublicKeyToBech32($key->getPublicKey($key->generatePrivateKey()));
+    $foreignNpub = $key->convertPublicKeyToBech32($key->getPublicKey(testPrivateKey()));
     $body = json_encode(['npub' => $foreignNpub]);
 
     $signed = makeNip98Event(apiV1PingUrl(), 'POST', $body);
@@ -537,7 +537,7 @@ it('refuses a foreign npub in the body just as it refuses a foreign hex pubkey',
 
 it('accepts a subject in the path that is the signed pubkey', function () {
     $key = new Key;
-    $privkey = $key->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = $key->getPublicKey($privkey);
 
     $signed = makeNip98Event(apiV1PingUrl('/'.$pubkey), 'POST', '[]', privkey: $privkey);

@@ -105,7 +105,7 @@ it('records a missing Authorization header', function () {
 });
 
 it('puts no personal data and no secret into the entry', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pubkey = (new Key)->getPublicKey($privkey);
 
     /*

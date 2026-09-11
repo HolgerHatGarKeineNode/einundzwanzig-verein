@@ -35,7 +35,7 @@ it('requires a NIP-98 signature', function () {
 });
 
 it('returns the caller’s own fee history, newest year first', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pleb = payMemberFor($privkey, ['association_status' => AssociationStatus::ACTIVE]);
 
     PaymentEvent::factory()->paid()->create([
@@ -70,7 +70,7 @@ it('returns the caller’s own fee history, newest year first', function () {
 });
 
 it('never returns another member’s payments', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $mine = payMemberFor($privkey);
 
     PaymentEvent::factory()->paid()->create([
@@ -111,7 +111,7 @@ it('returns an empty collection for a pubkey without a record', function () {
 });
 
 it('returns only the allowed fields and never personal data', function () {
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     $pleb = payMemberFor($privkey, [
         'email' => 'private@example.test',
         'application_text' => 'my private application prose',
@@ -153,7 +153,7 @@ it('returns only the allowed fields and never personal data', function () {
 it('keeps error responses down to a message', function () {
     config(['app.debug' => false]);
 
-    $privkey = (new Key)->generatePrivateKey();
+    $privkey = testPrivateKey();
     payMemberFor($privkey, ['email' => 'private@example.test']);
 
     $stranger = EinundzwanzigPleb::factory()->create(['email' => 'stranger@example.test']);

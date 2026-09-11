@@ -192,6 +192,24 @@ expect()->extend('toBeNostrHexKey', function () {
 */
 
 /**
+ * A freshly generated nostr private key, always 64 hex characters.
+ *
+ * `Key::generatePrivateKey()` returns `BN::toString('hex')`, which drops leading
+ * zero bytes: roughly one key in 400 comes back 62 characters long. That used to
+ * pass unnoticed, but `paragonie/ecc` v2.6.0 added a length check to
+ * `SchnorrSigner::sign()` ("Private key must be a 32-byte hex string"), so an
+ * unpadded key now throws — turning every signing helper below into a test that
+ * fails a fraction of a percent of the time.
+ *
+ * Left-padding restores the 32-byte form without changing the key's value, so the
+ * derived pubkey and signature are the ones the short string always meant.
+ */
+function testPrivateKey(): string
+{
+    return str_pad((new Key)->generatePrivateKey(), 64, '0', STR_PAD_LEFT);
+}
+
+/**
  * Build a NIP-42-style kind-22242 login event signed with a freshly generated
  * keypair. Returns the signed event as the plain array that the frontend
  * dispatches to Livewire (post-JSON round-trip), plus the pubkey for assertions.
@@ -208,7 +226,7 @@ expect()->extend('toBeNostrHexKey', function () {
 function makeSignedLoginEvent(string $challenge, ?int $createdAt = null, ?string $privkey = null): array
 {
     $key = new Key;
-    $privkey ??= $key->generatePrivateKey();
+    $privkey ??= testPrivateKey();
     $pubkey = $key->getPublicKey($privkey);
 
     $event = new Event;
@@ -264,7 +282,7 @@ function makeNip98Event(
     int $kind = 27235,
 ): array {
     $key = new Key;
-    $privkey ??= $key->generatePrivateKey();
+    $privkey ??= testPrivateKey();
     $pubkey = $key->getPublicKey($privkey);
 
     $tags = [
@@ -335,7 +353,7 @@ function nip98Header(array $event): string
 function makeUppercasePubkeyNip98Event(string $url, ?string $privkey = null, string $method = 'GET'): array
 {
     $key = new Key;
-    $privkey ??= $key->generatePrivateKey();
+    $privkey ??= testPrivateKey();
     $pubkey = strtoupper($key->getPublicKey($privkey));
 
     $tags = [
