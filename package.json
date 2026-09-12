@@ -21,13 +21,11 @@
         "vite": "^8.0.0"
     },
     "dependencies": {
-        "@einundzwanzig/group": "github:HolgerHatGarKeineNode/einundzwanzig-group-package#7f4233a",
+        "@einundzwanzig/group": "github:HolgerHatGarKeineNode/einundzwanzig-group-package#cfe4f3b",
         "@github/markdown-toolbar-element": "^2.2.3",
-        "@isomorphic-git/lightning-fs": "^4.7.0",
         "@tailwindcss/vite": "^4.1.18",
         "concurrently": "^10.0.0",
         "emojibase": "^17.0.0",
-        "isomorphic-git": "^1.42.2",
         "shiki": "^4.0.0",
         "ws": "^8.21.0"
     },
