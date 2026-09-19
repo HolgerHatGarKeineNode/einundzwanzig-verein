@@ -104,6 +104,14 @@
             "@php artisan config:clear --ansi",
             "@test:lint",
             "@php artisan test"
+        ],
+        "test:feature": [
+            "Composer\\Config::disableProcessTimeout",
+            "@php artisan test tests/Feature"
+        ],
+        "test:unit": [
+            "Composer\\Config::disableProcessTimeout",
+            "@php artisan test tests/Unit"
         ]
     },
     "extra": {
