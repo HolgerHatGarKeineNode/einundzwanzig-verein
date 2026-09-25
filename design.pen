@@ -1061,7 +1061,7 @@
                                       "id": "YSVCp",
                                       "name": "lightningUrl",
                                       "fill": "$text-secondary",
-                                      "content": "03a0bf5b8a02c208cc5eda2f1f009564a97c15f743458a1568e2808a8ab3d7d0f0@42.171.139.240:9911",
+                                      "content": "02ce7b8a6bc3fb6245ecdcf67b25d80d03e1fea02459ae9af9e64ac1590139e467@62.171.139.240:9911",
                                       "fontFamily": "Inconsolata",
                                       "fontSize": 11,
                                       "fontWeight": "normal"

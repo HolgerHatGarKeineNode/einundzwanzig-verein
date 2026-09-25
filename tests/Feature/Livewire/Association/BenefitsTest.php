@@ -93,6 +93,21 @@ it('copies the buzz relay url for active members', function () {
         ->assertHasNoErrors();
 });
 
+it('shows and copies the current watchtower uri for active members', function () {
+    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
+    NostrAuth::login($pleb->pubkey);
+
+    $uri = '02ce7b8a6bc3fb6245ecdcf67b25d80d03e1fea02459ae9af9e64ac1590139e467@62.171.139.240:9911';
+
+    $component = Livewire::test('association.benefits')
+        ->assertSee($uri)
+        ->assertDontSee('03a09f56bba3d2c200cc55eda2f1f069564a97c1fb74345e1560e2868a8ab3d7d0')
+        ->call('copyWatchtowerUrl')
+        ->assertHasNoErrors();
+
+    expect(json_encode($component->effects))->toContain($uri);
+});
+
 it('refuses the reserved NIP-05 name on the benefits screen', function () {
     /*
      * The third write path for a handle, and it has to refuse exactly what the

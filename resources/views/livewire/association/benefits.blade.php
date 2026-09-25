@@ -112,7 +112,7 @@ new class extends Component
 
     public function copyWatchtowerUrl(): void
     {
-        $watchtowerUrl = '03a09f56bba3d2c200cc55eda2f1f069564a97c1fb74345e1560e2868a8ab3d7d0@62.171.139.240:9911';
+        $watchtowerUrl = '02ce7b8a6bc3fb6245ecdcf67b25d80d03e1fea02459ae9af9e64ac1590139e467@62.171.139.240:9911';
         $this->js("navigator.clipboard.writeText('{$watchtowerUrl}')");
         Flux::toast('Watchtower-Adresse in die Zwischenablage kopiert!');
     }
@@ -388,7 +388,7 @@ new class extends Component
                         class="flex-1 text-left text-xs bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded text-zinc-700 dark:text-zinc-300 font-mono cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors break-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                         wire:click="copyWatchtowerUrl"
                         title="Klicken zum Kopieren">
-                        <code>03a09f56bba3d2c200cc55eda2f1f069564a97c1fb74345e1560e2868a8ab3d7d0@62.171.139.240:9911</code>
+                        <code>02ce7b8a6bc3fb6245ecdcf67b25d80d03e1fea02459ae9af9e64ac1590139e467@62.171.139.240:9911</code>
                     </button>
                     <flux:button wire:click="copyWatchtowerUrl" size="sm" variant="ghost" icon="clipboard"
                                  aria-label="Watchtower-Adresse kopieren"/>
