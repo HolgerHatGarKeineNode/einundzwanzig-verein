@@ -53,6 +53,7 @@
         <flux:separator vertical class="mx-1 h-5" />
 
         <flux:button as="button" type="button" size="sm" variant="ghost" icon="link" data-md-button md-link title="Link" aria-label="Link" />
+        <flux:button as="button" type="button" size="sm" variant="ghost" icon="photo" data-md-button md-image title="Bild (https-URL)" aria-label="Bild" />
         <flux:button as="button" type="button" size="sm" variant="ghost" icon="code-bracket" data-md-button md-code title="Code" aria-label="Code" />
     </markdown-toolbar>
 
@@ -68,7 +69,7 @@
         rows="{{ $rows }}"
         resize="vertical"
         class="font-mono text-sm"
-        placeholder="Markdown ist erlaubt: **fett**, # Überschrift, - Aufzählung, | Tabellen |"
+        placeholder="Markdown ist erlaubt: **fett**, # Überschrift, - Aufzählung, ![Bild](https://…). Leerzeile = neuer Absatz."
     />
 
     <flux:error name="{{ $model }}" />
@@ -79,7 +80,7 @@
             <flux:callout.text>
                 {{-- Genau das HTML, das die Detailseite später ausgibt: derselbe
                      Renderer, derselbe Sanitizer. --}}
-                <div class="prose dark:prose-invert max-w-none break-words [&_code]:break-all [&_a]:break-all">
+                <div class="prose max-w-none break-words [&_code]:break-all [&_a]:break-all">
                     {!! $preview !!}
                 </div>
             </flux:callout.text>

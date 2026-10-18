@@ -25,6 +25,9 @@
 @import "./components/flux-overrides.css";
 @import "./components/custom.css";
 @import "./components/group-chat.css";
+@import "./components/prose.css";
+
+@plugin "@tailwindcss/typography";
 
 /* ----------------------------------------
    Content Scanning (Tailwind v4 CSS-first)

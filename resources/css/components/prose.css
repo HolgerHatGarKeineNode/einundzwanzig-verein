@@ -1,0 +1,58 @@
+/**
+ * Rendered Markdown (.prose)
+ *
+ * The typography plugin supplies the spacing between paragraphs, headings,
+ * lists, quotes, tables and images. Without it `.prose` is a no-op and
+ * Tailwind's preflight resets every margin to zero, so a description renders
+ * as one wall of text — which is exactly how project proposals looked until
+ * the plugin was added.
+ *
+ * Only the colours are mapped here, onto the design tokens. The site is
+ * dark-first and does not always carry `.dark`, so the dark palette is the
+ * default instead of being tied to `dark:prose-invert`.
+ *
+ * Unlayered on purpose: the plugin's own `.prose` rule sits in a cascade
+ * layer, and unlayered declarations win over layered ones regardless of
+ * source order.
+ */
+.prose {
+    --tw-prose-body: var(--color-text-muted);
+    --tw-prose-headings: var(--color-text-primary);
+    --tw-prose-lead: var(--color-text-secondary);
+    --tw-prose-links: var(--color-orange-500);
+    --tw-prose-bold: var(--color-text-primary);
+    --tw-prose-counters: var(--color-text-tertiary);
+    --tw-prose-bullets: var(--color-orange-500);
+    --tw-prose-hr: var(--color-border-default);
+    --tw-prose-quotes: var(--color-text-secondary);
+    --tw-prose-quote-borders: var(--color-orange-800);
+    --tw-prose-captions: var(--color-text-tertiary);
+    --tw-prose-kbd: var(--color-text-primary);
+    --tw-prose-code: var(--color-text-primary);
+    --tw-prose-pre-code: var(--color-text-muted);
+    --tw-prose-pre-bg: var(--color-bg-elevated);
+    --tw-prose-th-borders: var(--color-border-default);
+    --tw-prose-td-borders: var(--color-border-subtle);
+
+    line-height: 1.7;
+}
+
+.prose a {
+    text-decoration-color: var(--color-orange-800);
+    text-underline-offset: 3px;
+}
+
+.prose a:hover {
+    color: var(--color-orange-400);
+}
+
+.prose img {
+    border-radius: 0.5rem;
+    max-width: 100%;
+    height: auto;
+}
+
+/* Headings in a monospace face read larger than their size suggests. */
+.prose :where(h1) {
+    font-size: 1.75em;
+}

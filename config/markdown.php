@@ -13,7 +13,12 @@ return [
          *
          * More info: https://spatie.be/docs/laravel-markdown/v1/installation-setup
          */
-        'enabled' => true,
+        /*
+         * Off. Shiki spawns a Node process per uncached render, and the
+         * colours it emits are inline `style` attributes that
+         * RichTextSanitizer strips anyway — the cost bought nothing.
+         */
+        'enabled' => false,
 
         /*
          * The name of or path to a Shiki theme
@@ -26,7 +31,11 @@ return [
     /*
      * When enabled, anchor links will be added to all titles
      */
-    'add_anchors_to_headings' => true,
+    /*
+     * Off. The permalink is a relative `#…` link, which RichTextSanitizer
+     * refuses, so the anchor never reached the page.
+     */
+    'add_anchors_to_headings' => false,
 
     /**
      * When enabled, anchors will be rendered as links.
@@ -57,6 +66,16 @@ return [
          */
         'html_input' => 'escape',
         'allow_unsafe_links' => false,
+
+        /*
+         * A single line break in the textarea is a line break on the page,
+         * as in a GitHub comment. Strict CommonMark would join the lines with
+         * a space, which is not what anyone typing into a plain textarea
+         * expects. A blank line still starts a new paragraph.
+         */
+        'renderer' => [
+            'soft_break' => "<br />\n",
+        ],
     ],
 
     /*

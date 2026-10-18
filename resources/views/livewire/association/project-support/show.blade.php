@@ -506,7 +506,7 @@ new class extends Component {
                          alt="" width="448" height="448" loading="lazy" decoding="async">
                 </figure>
 
-                <div class="prose dark:prose-invert max-w-[68ch] break-words [&_code]:break-all [&_a]:break-all">
+                <div class="prose max-w-[68ch] break-words [&_code]:break-all [&_a]:break-all">
                     {{-- safeDescription(), NIE description: die Spalte trägt vom
                          Antragsteller geschriebenes HTML, und {!! !!} escapt nicht.
                          Begründung am Accessor. --}}
