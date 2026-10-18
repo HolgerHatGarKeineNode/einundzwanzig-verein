@@ -121,11 +121,11 @@ class extends Component
             <div class="px-4 sm:px-6 lg:px-8 py-8 w-full max-w-9xl mx-auto">
                 <div
                     class="flex flex-col md:flex-row items-center mb-6 space-y-4 md:space-y-0 md:space-x-4">
-                    <div class="flex items-center justify-between w-full">
-                        <h1 class="text-2xl md:text-3xl text-zinc-800 dark:text-zinc-100 font-bold">
+                    <div class="flex items-center justify-between gap-4 w-full">
+                        <h1 class="min-w-0 break-words text-2xl md:text-3xl text-zinc-800 dark:text-zinc-100 font-bold">
                             Projektförderungs-Antrag anlegen
                         </h1>
-                        <flux:button :href="route('association.projectSupport')" variant="ghost" icon="arrow-left">
+                        <flux:button :href="route('association.projectSupport')" variant="ghost" icon="arrow-left" class="shrink-0">
                             Zurück
                         </flux:button>
                     </div>

@@ -6,6 +6,8 @@
     /** Das gerenderte HTML der Vorschau — vom Aufrufer erzeugt, s. u. */
     'preview' => null,
     'rows' => 12,
+    /** Set on the edit form, so the upload is authorised against that proposal. */
+    'proposalId' => null,
 ])
 
 @php
@@ -38,7 +40,23 @@
         <flux:description>{{ $description }}</flux:description>
     @endif
 
-    <markdown-toolbar for="{{ $fieldId }}" class="flex flex-wrap items-center gap-1 mb-2">
+    {{-- The upload answers with the Markdown for the image; it is inserted at
+         the cursor and announced as input, so wire:model and the preview
+         pick it up like typed text. --}}
+    <div
+        class="flex flex-wrap items-center gap-1 mb-2"
+        x-data
+        x-on:markdown-image-uploaded.window="
+            if ($event.detail.target !== @js($fieldId)) return;
+            const field = document.getElementById(@js($fieldId));
+            const head = field.value.slice(0, field.selectionStart);
+            const before = head === '' || head.endsWith('\n\n') ? '' : (head.endsWith('\n') ? '\n' : '\n\n');
+            field.setRangeText(before + $event.detail.markdown + '\n\n', field.selectionStart, field.selectionEnd, 'end');
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            field.focus();
+        "
+    >
+    <markdown-toolbar for="{{ $fieldId }}" class="flex flex-wrap items-center gap-1">
         <flux:button as="button" type="button" size="sm" variant="ghost" icon="h1" data-md-button md-header title="Überschrift" aria-label="Überschrift" />
         <flux:button as="button" type="button" size="sm" variant="ghost" icon="bold" data-md-button md-bold title="Fett" aria-label="Fett" />
         <flux:button as="button" type="button" size="sm" variant="ghost" icon="italic" data-md-button md-italic title="Kursiv" aria-label="Kursiv" />
@@ -53,9 +71,12 @@
         <flux:separator vertical class="mx-1 h-5" />
 
         <flux:button as="button" type="button" size="sm" variant="ghost" icon="link" data-md-button md-link title="Link" aria-label="Link" />
-        <flux:button as="button" type="button" size="sm" variant="ghost" icon="photo" data-md-button md-image title="Bild (https-URL)" aria-label="Bild" />
+        <flux:button as="button" type="button" size="sm" variant="ghost" icon="photo" data-md-button md-image title="Bild per URL einfügen" aria-label="Bild per URL einfügen" />
         <flux:button as="button" type="button" size="sm" variant="ghost" icon="code-bracket" data-md-button md-code title="Code" aria-label="Code" />
     </markdown-toolbar>
+
+    <livewire:markdown-image-upload :target="$fieldId" :proposal-id="$proposalId" :wire:key="$fieldId.'-upload'" />
+    </div>
 
     {{--
         `.live.debounce` und nicht `.blur`: Die Vorschau soll beim Schreiben

@@ -1131,6 +1131,9 @@ class MembershipService
         return DB::transaction(function () use ($pleb): array {
             Profile::query()->where('pubkey', $pleb->pubkey)->delete();
 
+            // Images the member embedded in project descriptions are theirs.
+            $pleb->clearMediaCollection(EinundzwanzigPleb::DESCRIPTION_IMAGES);
+
             $pleb->pubkey = self::tombstone(64);
             $pleb->npub = self::tombstone(62);
             $pleb->email = null;

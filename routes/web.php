@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\BtcPayWebhookController;
 use App\Http\Controllers\Nostr\GetProfiles;
+use App\Models\EinundzwanzigPleb;
 use App\Support\NostrAuth;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -20,6 +21,31 @@ Route::get('dl/{media}', function (Media $media, Request $request) {
     ->whereNumber('media')
     ->name('dl')
     ->middleware('signed');
+
+/*
+ * Images embedded in project descriptions. Public and without a signature,
+ * because the URL is written into the Markdown and has to outlive any expiry.
+ * The collection only ever holds WebP files re-encoded on upload.
+ */
+Route::get('description-images/{uuid}', function (string $uuid) {
+    $media = Media::query()
+        ->where('uuid', $uuid)
+        ->where('collection_name', EinundzwanzigPleb::DESCRIPTION_IMAGES)
+        ->where('mime_type', 'image/webp')
+        ->firstOrFail();
+
+    return Storage::disk($media->disk)->response(
+        $media->getPathRelativeToRoot(),
+        null,
+        [
+            'Content-Type' => 'image/webp',
+            'Cache-Control' => 'public, max-age=31536000, immutable',
+            'X-Content-Type-Options' => 'nosniff',
+        ]
+    );
+})
+    ->whereUuid('uuid')
+    ->name('description-image');
 
 Route::get('media/{media}', function (Media $media, Request $request) {
     $conversion = $request->query('conversion');

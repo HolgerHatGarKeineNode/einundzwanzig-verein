@@ -12,11 +12,21 @@ use ParagonIE\CipherSweet\BlindIndex;
 use ParagonIE\CipherSweet\EncryptedRow;
 use Spatie\LaravelCipherSweet\Concerns\UsesCipherSweet;
 use Spatie\LaravelCipherSweet\Contracts\CipherSweetEncrypted;
+use Spatie\MediaLibrary\HasMedia;
+use Spatie\MediaLibrary\InteractsWithMedia;
 
-class EinundzwanzigPleb extends Authenticatable implements CipherSweetEncrypted
+class EinundzwanzigPleb extends Authenticatable implements CipherSweetEncrypted, HasMedia
 {
     use HasFactory;
+    use InteractsWithMedia;
     use UsesCipherSweet;
+
+    /**
+     * Images embedded in project descriptions belong to their author, not to
+     * a proposal: the create form has no proposal to attach them to yet, and
+     * an image uploaded while drafting has to work in the preview at once.
+     */
+    public const DESCRIPTION_IMAGES = 'description-images';
 
     /**
      * What an erased record's `pubkey` and `npub` start with.
@@ -205,5 +215,17 @@ class EinundzwanzigPleb extends Authenticatable implements CipherSweetEncrypted
                 ->where('year', $year ?? (int) now()->year)
                 ->where('paid', true)
                 ->exists();
+    }
+
+    /**
+     * Only re-encoded WebP files are stored here — the upload component
+     * converts before it saves, so no original (and no EXIF/GPS) is kept.
+     */
+    public function registerMediaCollections(): void
+    {
+        $this
+            ->addMediaCollection(self::DESCRIPTION_IMAGES)
+            ->acceptsMimeTypes(['image/webp'])
+            ->useDisk('private');
     }
 }
