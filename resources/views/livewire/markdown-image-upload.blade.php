@@ -45,7 +45,11 @@ new class extends Component
      */
     private const MAX_PIXELS = 16_000_000;
 
-    /** Images one author may keep; there is no gallery to clean them up. */
+    /**
+     * Images one author may keep. Unreferenced ones are deleted by
+     * `description-images:prune` after its grace period; the cap bounds what
+     * an author can pile up before that, since there is no gallery for them.
+     */
     private const MAX_IMAGES_PER_AUTHOR = 200;
 
     /**

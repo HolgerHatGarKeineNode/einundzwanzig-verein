@@ -179,6 +179,20 @@ class ProjectProposalPolicy
     }
 
     /**
+     * Determine whether the user can take down an uploaded image of the description.
+     *
+     * Only board members. They can already edit any proposal (see update()); the
+     * new power is deleting the file itself, which takes the image down on every
+     * page that shows it — the board's duty for what the association hosts.
+     */
+    public function removeDescriptionImage(NostrUser $user, ProjectProposal $projectProposal): bool
+    {
+        $pleb = $user->getPleb();
+
+        return $pleb !== null && $pleb->isBoardMember();
+    }
+
+    /**
      * Determine whether the user can accept/reject the project proposal.
      * Only board members can change the accepted flag and sats_paid.
      */

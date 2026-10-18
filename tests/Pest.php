@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use Mdanter\Ecc\Crypto\Signature\SchnorrSignature;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use swentel\nostr\Event\Event;
 use swentel\nostr\Key\Key;
 use swentel\nostr\Sign\Sign;
@@ -549,6 +550,20 @@ function apiV1SignedRequest(
         'pubkey' => $signed['pubkey'],
         'privkey' => $signed['privkey'],
     ];
+}
+
+/**
+ * Store a small WebP in the pleb's description-images collection, the way the
+ * upload component leaves it, without going through the component. Callers
+ * fake the `private` disk first.
+ */
+function storeDescriptionImage(EinundzwanzigPleb $pleb): Media
+{
+    $path = tempnam(sys_get_temp_dir(), 'descimg').'.webp';
+    $image = imagecreatetruecolor(4, 4);
+    imagewebp($image, $path);
+
+    return $pleb->addMedia($path)->toMediaCollection(EinundzwanzigPleb::DESCRIPTION_IMAGES);
 }
 
 function something()
