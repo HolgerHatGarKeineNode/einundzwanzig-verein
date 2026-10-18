@@ -15,9 +15,24 @@
  * daran gescheitert. Dieses Skript ist dort schlicht ein No-op.
  *
  * Laeuft automatisch nach composer install/update.
+ *
+ * OPT-IN since 2026-10-18: only with GROUP_PACKAGE_LOCAL=1. The neighbour
+ * checkout moves ahead with unreleased work for its own child projects; linking
+ * it by default made this repo's test suite red against a version that
+ * composer.lock never pinned. Without the variable, vendor/ follows the lock.
  */
-$target = realpath(__DIR__.'/../../einundzwanzig-group/packages/einundzwanzig-group');
 $link = dirname(__DIR__).'/vendor/einundzwanzig/group';
+
+if (getenv('GROUP_PACKAGE_LOCAL') !== '1') {
+    if (is_link($link)) {
+        unlink($link);
+        fwrite(STDOUT, "\033[33m→ einundzwanzig/group: local link removed — run `composer install` once more to restore the pinned version\033[0m\n");
+    }
+
+    exit(0);
+}
+
+$target = realpath(__DIR__.'/../../einundzwanzig-group/packages/einundzwanzig-group');
 
 if ($target === false || ! is_file($target.'/composer.json')) {
     // Kein Nachbar-Repo: Es bleibt bei der in composer.lock gepinnten Version.

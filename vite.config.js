@@ -5,8 +5,9 @@ import {existsSync} from 'node:fs';
 import {resolve} from 'node:path';
 
 /**
- * Liegt das Package-Repo als Nachbarverzeichnis daneben, arbeiten wir direkt
- * dagegen — sonst gegen die in package.json gepinnte GitHub-Version.
+ * Mit GROUP_PACKAGE_LOCAL=1 und dem Package-Repo als Nachbarverzeichnis
+ * arbeiten wir direkt dagegen — sonst gegen die in package.json gepinnte
+ * GitHub-Version.
  *
  * Damit braucht eine Aenderung am Package lokal KEINEN Zyklus aus commit, push
  * und npm update: Vite folgt dem Pfad und laedt das Roh-TS live (inkl. HMR).
@@ -18,7 +19,10 @@ import {resolve} from 'node:path';
  * realen Pfad aus auf und findet sie in den node_modules des Nachbar-Repos.
  */
 const localPackage = resolve(import.meta.dirname, '../einundzwanzig-group/packages/einundzwanzig-group');
-const useLocalPackage = process.env.GROUP_PACKAGE_LOCAL !== '0'
+// Opt-in (GROUP_PACKAGE_LOCAL=1), like scripts/link-group-package.php: by
+// default the build follows the pin, so the neighbour repo's unreleased work
+// never leaks into this app's build or tests.
+const useLocalPackage = process.env.GROUP_PACKAGE_LOCAL === '1'
     && existsSync(resolve(localPackage, 'package.json'));
 
 if (useLocalPackage) {
