@@ -3,6 +3,8 @@
 use App\Models\EinundzwanzigPleb;
 use App\Models\ProjectProposal;
 use App\Support\NostrAuth;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
@@ -45,6 +47,15 @@ new class extends Component
 
     /** Images one author may keep; there is no gallery to clean them up. */
     private const MAX_IMAGES_PER_AUTHOR = 200;
+
+    /**
+     * One re-encode at a time, site-wide. The hourly rate limit does not
+     * bound concurrency: 30 parallel uploads at ~160 MB each would need
+     * ~4.8 GB on a host with 3.8 GB RAM shared by five FPM pools (measured
+     * on prod 2026-10-18: 211 MB peak RSS, 1.4 s for a 16 MP progressive
+     * JPEG). A waiting upload gives up after this many seconds.
+     */
+    private const ENCODE_WAIT_SECONDS = 10;
 
     public function updatedImage(): void
     {
@@ -97,16 +108,20 @@ new class extends Component
         $webp = $scratch.'.webp';
 
         try {
-            Image::useImageDriver(config('media-library.image_driver'))
-                ->loadFile($this->image->getRealPath())
-                ->fit(Fit::Max, 1600, 1600)
-                ->format('webp')
-                ->save($webp);
+            $media = Cache::lock('description-image-encode', 60)->block(self::ENCODE_WAIT_SECONDS, function () use ($author, $webp) {
+                Image::useImageDriver(config('media-library.image_driver'))
+                    ->loadFile($this->image->getRealPath())
+                    ->fit(Fit::Max, 1600, 1600)
+                    ->format('webp')
+                    ->save($webp);
 
-            $media = $author
-                ->addMedia($webp)
-                ->usingFileName(Str::uuid().'.webp')
-                ->toMediaCollection(EinundzwanzigPleb::DESCRIPTION_IMAGES);
+                return $author
+                    ->addMedia($webp)
+                    ->usingFileName(Str::uuid().'.webp')
+                    ->toMediaCollection(EinundzwanzigPleb::DESCRIPTION_IMAGES);
+            });
+        } catch (LockTimeoutException) {
+            $media = null;
         } finally {
             @unlink($webp);
             @unlink($scratch);
@@ -114,6 +129,12 @@ new class extends Component
         }
 
         $this->reset('image');
+
+        if ($media === null) {
+            $this->addError('image', 'Gerade werden andere Bilder verarbeitet. Bitte gleich erneut versuchen.');
+
+            return;
+        }
 
         $this->dispatch(
             'markdown-image-uploaded',

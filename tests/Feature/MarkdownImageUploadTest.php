@@ -6,7 +6,9 @@ use App\Models\ProjectProposal;
 use App\Services\MembershipService;
 use App\Support\NostrAuth;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use Livewire\Livewire;
 
@@ -129,6 +131,24 @@ it('rejects more than 16 megapixels even within the side limits', function () {
     NostrAuth::login($this->member->pubkey);
 
     uploadDescriptionImage([], UploadedFile::fake()->image('wide.png', 7000, 4000))->assertHasErrors('image');
+});
+
+it('re-encodes one image at a time and gives up while another is being processed', function () {
+    Sleep::fake(syncWithCarbon: true);
+    NostrAuth::login($this->member->pubkey);
+    $other = Cache::lock('description-image-encode', 60);
+    $other->get();
+
+    $before = now();
+    uploadDescriptionImage([], UploadedFile::fake()->image('photo.jpg'))->assertHasErrors('image');
+
+    expect($this->member->fresh()->getMedia(EinundzwanzigPleb::DESCRIPTION_IMAGES))->toHaveCount(0)
+        ->and($before->diffInSeconds(now()))->toBeGreaterThanOrEqual(9.0)->toBeLessThanOrEqual(10.0);
+
+    $other->release();
+    uploadDescriptionImage([], UploadedFile::fake()->image('photo.jpg'))->assertHasNoErrors();
+
+    expect(Cache::lock('description-image-encode', 60)->get())->toBeTrue('the lock must be released after an upload');
 });
 
 it('stores no metadata from the upload', function () {
