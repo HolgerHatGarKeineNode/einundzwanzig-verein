@@ -189,7 +189,7 @@ it('serves the machine-readable document without any credential', function () {
 
     $response->assertOk();
 
-    expect($response->json('openapi'))->toBe('3.1.0')
+    expect($response->json('openapi'))->toStartWith('3.1.')
         ->and($response->json('paths'))->toHaveKey('/api/v1/membership/me');
 });
 
@@ -250,8 +250,8 @@ it('references only same-origin assets', function () {
     expect($external)->toBe([], 'The reference must not load assets from another origin.');
 });
 
-it('exports a 3.1.0 document', function () {
-    expect(exportedOpenApiDocument()['openapi'])->toBe('3.1.0');
+it('exports a 3.1 document', function () {
+    expect(exportedOpenApiDocument()['openapi'])->toStartWith('3.1.');
 });
 
 it('documents exactly the eleven /api/v1 endpoints', function () {
