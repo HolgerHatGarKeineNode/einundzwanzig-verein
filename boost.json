@@ -14,11 +14,11 @@
     "skills": [
         "infer-conventions",
         "laravel-best-practices",
+        "testing-best-practices",
         "configure-nightwatch",
         "fluxui-development",
         "livewire-development",
         "volt-development",
-        "pest-testing",
         "tailwindcss-development"
     ]
 }
