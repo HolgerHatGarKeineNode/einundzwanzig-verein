@@ -77,5 +77,10 @@ class GroupPackageServiceProvider extends ServiceProvider
 
         // <x-group::nostr-avatar>, <x-group::profile-card>, …
         Blade::anonymousComponentPath($views.'/components', 'group');
+
+        // Package-owned Flux icons (<flux:icon.pin>) used by the chat components. Without
+        // this path `view:cache` fails with "Unable to locate a class or view for component
+        // [flux::icon.pin]" — the deploy of 2026-10-22 broke on exactly that line.
+        Blade::anonymousComponentPath($views.'/flux', 'flux');
     }
 }
