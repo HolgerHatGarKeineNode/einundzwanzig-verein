@@ -16,8 +16,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Testing\TestResponse;
-use Mockery;
-use RuntimeException;
 
 /*
  * P5: the webhook stops being a bookkeeping endpoint and becomes the joining

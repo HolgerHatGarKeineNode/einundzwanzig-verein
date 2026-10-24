@@ -167,10 +167,6 @@ pest()->beforeEach(function (): void {
 |
 */
 
-expect()->extend('toBeOne', function () {
-    return $this->toBe(1);
-});
-
 /*
 | toBeNostrHexKey(): a NIP-01 pubkey/id/sig must be exactly 64 lowercase hex
 | characters. toBeHexadecimal() alone accepts uppercase A-F (it wraps
@@ -564,9 +560,4 @@ function storeDescriptionImage(EinundzwanzigPleb $pleb): Media
     imagewebp($image, $path);
 
     return $pleb->addMedia($path)->toMediaCollection(EinundzwanzigPleb::DESCRIPTION_IMAGES);
-}
-
-function something()
-{
-    // ..
 }
