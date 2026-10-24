@@ -51,7 +51,7 @@ function spyOnProfileFetch(): object
 }
 
 it('legt fuer einen unbekannten Pubkey keinen EinundzwanzigPleb an', function () {
-    Http::fake();
+    Http::fake([]);
 
     $pubkey = profilePubkey('unbekannt');
 
@@ -62,7 +62,7 @@ it('legt fuer einen unbekannten Pubkey keinen EinundzwanzigPleb an', function ()
 });
 
 it('legt auch dann keinen EinundzwanzigPleb an, wenn das Profil existiert', function () {
-    Http::fake();
+    Http::fake([]);
 
     $pubkey = profilePubkey('bekannt');
     Profile::factory()->create(['pubkey' => $pubkey, 'name' => 'satoshi']);
@@ -75,7 +75,7 @@ it('legt auch dann keinen EinundzwanzigPleb an, wenn das Profil existiert', func
 });
 
 it('laesst bestehende Mitgliedersaetze unveraendert', function () {
-    Http::fake();
+    Http::fake([]);
 
     $pleb = EinundzwanzigPleb::factory()->create();
     $before = $pleb->fresh()->toArray();
@@ -87,7 +87,7 @@ it('laesst bestehende Mitgliedersaetze unveraendert', function () {
 });
 
 it('weist alles ab, was kein 64-stelliger Kleinbuchstaben-Hex ist', function (string $key) {
-    Http::fake();
+    Http::fake([]);
 
     $this->getJson('/api/nostr/profile/'.$key)->assertNotFound();
 
@@ -105,7 +105,7 @@ it('weist alles ab, was kein 64-stelliger Kleinbuchstaben-Hex ist', function (st
 ]);
 
 it('erreicht den Controller bei ungueltigem Key gar nicht erst', function () {
-    Http::fake();
+    Http::fake([]);
     $spy = spyOnProfileFetch();
 
     $this->getJson('/api/nostr/profile/testkey')->assertNotFound();
@@ -115,7 +115,7 @@ it('erreicht den Controller bei ungueltigem Key gar nicht erst', function () {
 });
 
 it('holt fuer einen gueltigen, unbekannten Pubkey genau einen Relay-Abruf', function () {
-    Http::fake();
+    Http::fake([]);
     $spy = spyOnProfileFetch();
 
     $pubkey = profilePubkey('gueltig-unbekannt');
@@ -128,7 +128,7 @@ it('holt fuer einen gueltigen, unbekannten Pubkey genau einen Relay-Abruf', func
 });
 
 it('fragt die Relays nicht noch einmal, wenn das Profil bereits gespiegelt ist', function () {
-    Http::fake();
+    Http::fake([]);
     $spy = spyOnProfileFetch();
 
     $pubkey = profilePubkey('gespiegelt');
@@ -140,7 +140,7 @@ it('fragt die Relays nicht noch einmal, wenn das Profil bereits gespiegelt ist',
 });
 
 it('antwortet mit 404 statt mit 200, wenn kein Profil existiert', function () {
-    Http::fake();
+    Http::fake([]);
 
     $this->getJson('/api/nostr/profile/'.profilePubkey('kein-profil'))
         ->assertNotFound()

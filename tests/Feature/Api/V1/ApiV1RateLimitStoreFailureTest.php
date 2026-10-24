@@ -35,7 +35,7 @@ beforeEach(function () {
 });
 
 it('never lets a request through when the rate limit store fails', function () {
-    Http::fake();
+    Http::fake([]);
 
     $broken = Mockery::mock(Repository::class);
     $broken->shouldIgnoreMissing();

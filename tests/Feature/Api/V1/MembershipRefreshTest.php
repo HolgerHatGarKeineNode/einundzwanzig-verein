@@ -71,7 +71,7 @@ function refreshCall(?string $privkey = null, ?int $year = null): array
 }
 
 it('requires a NIP-98 signature', function () {
-    Http::fake();
+    Http::fake([]);
 
     $this->withHeaders([
         'X-Api-Key' => REF_CLIENT_KEY,
@@ -226,7 +226,7 @@ it('never drops a settled fee because BTCPay calls the invoice invalid', functio
 });
 
 it('refuses a year that has no invoice to ask about', function () {
-    Http::fake();
+    Http::fake([]);
 
     $subject = refSubject();
 
@@ -246,7 +246,7 @@ it('refuses a year that has no invoice to ask about', function () {
 });
 
 it('refuses a pubkey without a member record', function () {
-    Http::fake();
+    Http::fake([]);
 
     refreshCall()['response']
         ->assertNotFound()
