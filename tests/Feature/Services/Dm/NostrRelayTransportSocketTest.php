@@ -151,6 +151,39 @@ it('gives up at the deadline when the relay sends nothing', function () {
         ->and(is_resource($silentRelay))->toBeTrue();
 });
 
+it('holds the deadline against a relay that drips the handshake line one byte at a time', function () {
+    [$stream, $relay] = boundedPair(1.0, 1024);
+
+    // A child process owns the other end and writes one byte every 0.4 s: every
+    // single recv() gets its byte well inside any per-read timeout.
+    $dripper = proc_open(
+        [PHP_BINARY, '-r', 'foreach (str_split("HTTP/1.1 101 Switching Protocols\r\n") as $byte) { fwrite(STDOUT, $byte); fflush(STDOUT); usleep(400000); }'],
+        [0 => ['pipe', 'r'], 1 => $relay, 2 => ['pipe', 'w']],
+        $pipes,
+    );
+    fclose($relay);
+    $started = hrtime(true);
+
+    try {
+        expect(fn () => $stream->readLine(1024))->toThrow(RelayConnectionTimedOut::class)
+            ->and($stream->failure())->toBe(BoundedSocketStream::FAILURE_TIMEOUT)
+            ->and((hrtime(true) - $started) / 1e9)->toBeGreaterThan(0.9)->toBeLessThan(1.5);
+    } finally {
+        proc_terminate($dripper, 9);
+        proc_close($dripper);
+    }
+});
+
+it('reads a header line that arrives at once, up to and including the line break', function () {
+    [$stream, $relay] = boundedPair(5.0, 1024);
+
+    fwrite($relay, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n");
+    fclose($relay);
+
+    expect([$stream->readLine(1024), $stream->readLine(8), $stream->readLine(1024), $stream->readLine(1024)])
+        ->toBe(["HTTP/1.1 101 Switching Protocols\r\n", 'Upgrade', ": websocket\r\n", null]);
+});
+
 it('refuses to write once the deadline has passed', function () {
     [$stream] = boundedPair(-1.0, 1024);
 
