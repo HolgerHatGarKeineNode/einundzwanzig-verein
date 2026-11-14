@@ -143,6 +143,17 @@ class ElectionRound extends Model
     }
 
     /**
+     * The signed votes of this round. Counted through `TallyRound`, which
+     * refuses until the round is sealed.
+     *
+     * @return HasMany<ElectionVote, $this>
+     */
+    public function votes(): HasMany
+    {
+        return $this->hasMany(ElectionVote::class);
+    }
+
+    /**
      * What this round is at `$now`.
      *
      * Derived on every read instead of stored, so that no job has to close a
