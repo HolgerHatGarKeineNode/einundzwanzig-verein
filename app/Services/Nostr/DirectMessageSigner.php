@@ -59,7 +59,7 @@ final class DirectMessageSigner
      * @throws DirectMessageNotBuildable for this recipient or this text
      * @throws NotificationKeyUnavailable when the installation has no usable key
      */
-    public function wrapFor(EinundzwanzigPleb $recipient, string $plaintext, ?int $rumorCreatedAt = null): GiftWrappedMessage
+    public function wrapFor(EinundzwanzigPleb $recipient, #[\SensitiveParameter] string $plaintext, ?int $rumorCreatedAt = null): GiftWrappedMessage
     {
         $recipientPubkey = $this->recipientPubkey($recipient);
         $now = CarbonImmutable::now()->getTimestamp();
