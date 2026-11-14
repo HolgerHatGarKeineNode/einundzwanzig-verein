@@ -20,7 +20,8 @@ use Illuminate\Foundation\Queue\Queueable;
  *    index on (run, member): an existing row — whatever its state — is never
  *    touched, so `sent` never goes back to `pending` and nobody gets a second
  *    row.
- *  - Only `pending` and `failed` deliveries are queued again. A `failed` one
+ *  - Only `pending`, `failed` and expired `claimed` deliveries are queued
+ *    again (an expired claim is a worker that died). A `failed` one
  *    republishes its stored wrap to the relays that have not taken it (see
  *    SendDirectMessage), so resuming adds no second message.
  */
@@ -67,7 +68,11 @@ class DispatchBulkDirectMessages implements ShouldQueue
 
         DmDelivery::query()
             ->where('dm_run_id', $run->id)
-            ->whereIn('status', [DmDeliveryStatus::Pending->value, DmDeliveryStatus::Failed->value])
+            ->where(fn ($query) => $query
+                ->whereIn('status', [DmDeliveryStatus::Pending->value, DmDeliveryStatus::Failed->value])
+                ->orWhere(fn ($query) => $query
+                    ->where('status', DmDeliveryStatus::Claimed->value)
+                    ->where('claimed_at', '<', $now->copy()->subSeconds(SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS))))
             ->orderBy('id')
             ->pluck('id')
             ->each(fn (int $deliveryId) => SendDirectMessage::dispatch($deliveryId));

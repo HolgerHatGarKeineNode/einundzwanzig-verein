@@ -155,3 +155,25 @@ it('addresses exactly the frozen list, once each, and stamps the run once', func
         ->and($stamped)->not->toBeNull()
         ->and($run->fanned_out_at->equalTo($stamped))->toBeTrue();
 });
+
+it('queues a delivery again whose claim has expired and leaves a live claim alone', function () {
+    $relay = FakeRelayTransport::bind();
+    [$abandoned] = dmRecipient(['wss://one.example/']);
+    [$working] = dmRecipient(['wss://two.example/']);
+    $runId = DmMessage::factory()->create()->freezeRun([$abandoned, $working])->id;
+
+    foreach ([[$abandoned, SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS + 1], [$working, 30]] as [$member, $age]) {
+        DmDelivery::query()->create([
+            'dm_run_id' => $runId,
+            'einundzwanzig_pleb_id' => $member->id,
+            'status' => DmDeliveryStatus::Claimed,
+            'claimed_at' => now()->subSeconds($age),
+        ]);
+    }
+
+    DispatchBulkDirectMessages::dispatchSync($runId);
+
+    expect(array_column($relay->published(), 'relay'))->toBe(['wss://one.example/'])
+        ->and(DmDelivery::query()->where('einundzwanzig_pleb_id', $abandoned->id)->sole()->status)->toBe(DmDeliveryStatus::Sent)
+        ->and(DmDelivery::query()->where('einundzwanzig_pleb_id', $working->id)->sole()->status)->toBe(DmDeliveryStatus::Claimed);
+});

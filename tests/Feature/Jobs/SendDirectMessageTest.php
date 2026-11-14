@@ -2,6 +2,7 @@
 
 use App\Enums\DmDeliveryStatus;
 use App\Jobs\Dm\SendDirectMessage;
+use App\Models\DmDelivery;
 use App\Models\DmDeliveryRelay;
 use App\Models\DmMessage;
 use App\Models\PlebDmRelay;
@@ -9,6 +10,8 @@ use App\Services\MembershipService;
 use App\Services\Nostr\NostrRelayTransport;
 use App\Services\Nostr\NotificationKeyUnavailable;
 use App\Services\Nostr\RelayPublishStatus;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\FakeRelayTransport;
 
 require_once __DIR__.'/DirectMessageHelpers.php';
@@ -280,7 +283,7 @@ it('has a hard time limit that fits three relay deadlines and ends before a clai
     expect($job->timeout)->toBeGreaterThanOrEqual((int) ceil(SendDirectMessage::MAX_INBOX_RELAYS * NostrRelayTransport::DEADLINE_SECONDS))
         ->and($job->failOnTimeout)->toBeTrue()
         ->and($job->timeout)->toBeLessThan(SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS)
-        ->and($job->timeout)->toBeLessThan((int) config('queue.connections.database.retry_after'));
+        ->and(SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS)->toBeLessThan((int) config('queue.connections.database.retry_after'));
 });
 
 it('releases its claim as failed when the worker gives up on the job', function () {
@@ -293,4 +296,82 @@ it('releases its claim as failed when the worker gives up on the job', function 
     expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::Failed)
         ->and($delivery->fresh()->claimed_at)->toBeNull()
         ->and($delivery->fresh()->error)->toBe('job timed out');
+});
+
+/*
+ * The real database queue, not the sync one: a job that returns is deleted as
+ * done there, and failed() runs only after the last attempt. A delivery must
+ * still never stay `claimed`. Mutations "catch-all removed" and "expiry back
+ * to 120" → red.
+ */
+function workDatabaseQueueOnce(): void
+{
+    Artisan::call('queue:work', ['connection' => 'database', '--once' => true, '--sleep' => 0, '--quiet' => true]);
+}
+
+it('turns the claim into failed when the wrap write throws and sends on the queue retry', function () {
+    $relay = FakeRelayTransport::bind();
+    config()->set('queue.default', 'database');
+    [$member] = dmRecipient();
+    $delivery = dmDelivery($member);
+
+    $diskFull = true;
+    DmDelivery::saving(function (DmDelivery $saved) use (&$diskFull): void {
+        if ($diskFull && $saved->isDirty('wrap')) {
+            throw new RuntimeException('disk full');
+        }
+    });
+
+    SendDirectMessage::dispatch($delivery->id);
+    workDatabaseQueueOnce();
+
+    $relay->assertNothingPublished();
+    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::Failed)
+        ->and($delivery->fresh()->claimed_at)->toBeNull()
+        ->and($delivery->fresh()->error)->toBe(RuntimeException::class)
+        ->and(DB::table('jobs')->count())->toBe(1);
+
+    $diskFull = false;
+    $this->travel(SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS + 1)->seconds();
+    workDatabaseQueueOnce();
+
+    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::Sent)
+        ->and($relay->published())->toHaveCount(1)
+        ->and(DB::table('jobs')->count())->toBe(0);
+});
+
+it('sends a delivery whose worker died holding the claim once the queue hands the job out again', function () {
+    $relay = FakeRelayTransport::bind();
+    config()->set('queue.default', 'database');
+    [$member] = dmRecipient();
+    $delivery = dmDelivery($member);
+
+    SendDirectMessage::dispatch($delivery->id);
+
+    // A worker reserved the job, claimed the delivery and was killed.
+    DB::table('jobs')->update(['reserved_at' => now()->getTimestamp(), 'attempts' => 1]);
+    $delivery->forceFill(['status' => DmDeliveryStatus::Claimed, 'claimed_at' => now(), 'attempts' => 1])->save();
+
+    $this->travel((int) config('queue.connections.database.retry_after') + 1)->seconds();
+    workDatabaseQueueOnce();
+
+    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::Sent)
+        ->and($delivery->fresh()->claimed_at)->toBeNull()
+        ->and($relay->published())->toHaveCount(1)
+        ->and(DB::table('jobs')->count())->toBe(0);
+});
+
+it('puts a job back on the database queue while another worker holds a live claim', function () {
+    $relay = FakeRelayTransport::bind();
+    config()->set('queue.default', 'database');
+    [$member] = dmRecipient();
+    $delivery = dmDelivery($member);
+    $delivery->forceFill(['status' => DmDeliveryStatus::Claimed, 'claimed_at' => now()])->save();
+
+    SendDirectMessage::dispatch($delivery->id);
+    workDatabaseQueueOnce();
+
+    $relay->assertNothingPublished();
+    expect(DB::table('jobs')->count())->toBe(1)
+        ->and(DB::table('jobs')->value('available_at'))->toBe(now()->getTimestamp() + SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS);
 });

@@ -27,7 +27,8 @@ use Throwable;
  *  1. Claim the delivery with one conditional UPDATE. Only `pending`, `failed`
  *     and a claim left behind by a dead worker can be claimed; a second job
  *     for the same delivery, or a job for a delivery that is already `sent`,
- *     changes nothing and publishes nothing.
+ *     changes nothing and publishes nothing; the former comes back once the
+ *     other claim has expired.
  *  2. No kind 10050 list → `no_inbox`, before anything is built or dialled
  *     (NIP-17: no list means "not ready to receive messages").
  *  3. Build the wrap once and store it before the first publish. Every later
@@ -38,8 +39,10 @@ use Throwable;
  * Relays are foreign servers. Whatever one does — reject, stall, break the
  * connection, make the vendor library throw a TypeError — ends as a result on
  * that relay's row and, if no relay took the wrap, as a `failed` delivery.
- * Only NotificationKeyUnavailable escapes: then no message of this
- * installation can be signed, and that has to be seen, not counted.
+ * Only NotificationKeyUnavailable escapes on purpose: then no message of this
+ * installation can be signed, and that has to be seen, not counted. Anything
+ * else that escapes (a database error, say) first turns the claim into
+ * `failed`, so a resume or the queue's retry picks the delivery up again.
  */
 class SendDirectMessage implements ShouldQueue
 {
@@ -66,9 +69,11 @@ class SendDirectMessage implements ShouldQueue
 
     /**
      * A claim older than this is taken to be from a worker that died
-     * mid-run. Longer than $timeout, so a living worker never loses its claim.
+     * mid-run. Longer than $timeout, so a living worker never loses its claim;
+     * shorter than the queue's `retry_after` (90 s), so the job the queue
+     * hands out again after a dead worker finds the claim expired.
      */
-    public const int CLAIM_EXPIRES_AFTER_SECONDS = 120;
+    public const int CLAIM_EXPIRES_AFTER_SECONDS = 75;
 
     private const int MAX_STORED_MESSAGE_LENGTH = 500;
 
@@ -77,9 +82,30 @@ class SendDirectMessage implements ShouldQueue
     public function handle(RelayTransport $transport, DirectMessageSigner $signer, DirectMessageText $text): void
     {
         if (! $this->claim()) {
+            // Another worker holds a live claim. Returning would let the queue
+            // delete this job as done; if that worker then dies, nothing would
+            // ever pick the delivery up again. Come back after the claim expired.
+            if ($this->isClaimed()) {
+                $this->release(self::CLAIM_EXPIRES_AFTER_SECONDS);
+            }
+
             return;
         }
 
+        try {
+            $this->send($transport, $signer, $text);
+        } catch (Throwable $exception) {
+            // Whatever escapes after the claim must not leave it behind: the
+            // queue retries this job only if attempts remain, and failed() runs
+            // only after the last one. The class alone, a message may quote data.
+            $this->failClaim($exception::class);
+
+            throw $exception;
+        }
+    }
+
+    private function send(RelayTransport $transport, DirectMessageSigner $signer, DirectMessageText $text): void
+    {
         $delivery = DmDelivery::query()
             ->with(['recipient.dmRelays', 'run.message', 'relays'])
             ->findOrFail($this->deliveryId);
@@ -166,14 +192,31 @@ class SendDirectMessage implements ShouldQueue
      */
     public function failed(?Throwable $exception): void
     {
+        $this->failClaim($exception?->getMessage() ?? 'The job failed.');
+    }
+
+    /**
+     * A delivery still `claimed` becomes `failed`; one that already ended in
+     * any other state keeps it.
+     */
+    private function failClaim(string $error): void
+    {
         DmDelivery::query()
             ->whereKey($this->deliveryId)
             ->where('status', DmDeliveryStatus::Claimed->value)
             ->update([
                 'status' => DmDeliveryStatus::Failed->value,
                 'claimed_at' => null,
-                'error' => mb_substr($exception?->getMessage() ?? 'The job failed.', 0, self::MAX_STORED_MESSAGE_LENGTH),
+                'error' => mb_substr($error, 0, self::MAX_STORED_MESSAGE_LENGTH),
             ]);
+    }
+
+    private function isClaimed(): bool
+    {
+        return DmDelivery::query()
+            ->whereKey($this->deliveryId)
+            ->where('status', DmDeliveryStatus::Claimed->value)
+            ->exists();
     }
 
     /**
