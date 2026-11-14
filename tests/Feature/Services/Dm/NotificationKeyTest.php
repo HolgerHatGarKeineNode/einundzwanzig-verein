@@ -5,6 +5,8 @@ use App\Services\Nostr\NotificationKey;
 use App\Services\Nostr\NotificationKeyUnavailable;
 use Mdanter\Ecc\Crypto\Signature\SchnorrSignature;
 use swentel\nostr\Key\Key;
+use Symfony\Component\VarDumper\Cloner\VarCloner;
+use Symfony\Component\VarDumper\Dumper\CliDumper;
 
 it('throws a typed exception when no notification key is configured', function () {
     config()->set('services.nostr_notification_key', '');
@@ -80,3 +82,53 @@ it('keeps the secret out of a dump', function () {
     expect(print_r(new NotificationKey($secret), true))->not->toContain($secret)
         ->and(print_r(new NotificationKey($secret), true))->toContain('yes');
 });
+
+function varDumperOutput(mixed $value): string
+{
+    $memory = fopen('php://memory', 'r+');
+    (new CliDumper($memory))->dump((new VarCloner)->cloneVar($value));
+    rewind($memory);
+
+    return (string) stream_get_contents($memory);
+}
+
+it('keeps the configured and the derived secret out of dump(), var_export() and an array cast', function (bool $nsec, bool $used) {
+    $hex = testPrivateKey();
+    $nsecForm = (new Key)->convertPrivateKeyToBech32($hex);
+    $key = new NotificationKey($nsec ? $nsecForm : $hex);
+
+    if ($used) {
+        $key->publicKey();
+    }
+
+    $outputs = [
+        'dump' => varDumperOutput($key),
+        'var_export' => var_export($key, true),
+        '(array)' => print_r((array) $key, true),
+    ];
+
+    // The channels themselves do show a secret that sits in a plain property.
+    $plain = (object) ['secret' => $hex];
+    expect(varDumperOutput($plain))->toContain($hex)
+        ->and(var_export($plain, true))->toContain($hex)
+        ->and(print_r((array) $plain, true))->toContain($hex);
+
+    foreach ($outputs as $channel => $output) {
+        expect(str_contains($output, $hex))->toBeFalse("hex secret visible through {$channel}")
+            ->and(str_contains($output, $nsecForm))->toBeFalse("nsec visible through {$channel}");
+    }
+})->with([
+    'hex, before first use' => [false, false],
+    'hex, after first use' => [false, true],
+    'nsec, after first use' => [true, true],
+]);
+
+it('refuses to be serialized, before and after first use', function (bool $used) {
+    $key = new NotificationKey(testPrivateKey());
+
+    if ($used) {
+        $key->publicKey();
+    }
+
+    expect(fn () => serialize($key))->toThrow(LogicException::class, 'cannot be serialized');
+})->with(['before first use' => false, 'after first use' => true]);
