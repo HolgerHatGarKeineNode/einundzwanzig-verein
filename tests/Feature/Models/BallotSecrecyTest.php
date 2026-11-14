@@ -4,10 +4,12 @@ use App\Enums\ElectionCountingRule;
 use App\Models\ElectionBallotChoice;
 use App\Models\ElectionMark;
 use App\Models\ElectionReceipt;
+use App\Services\Election\OpenRound;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Concerns\HasVersion4Uuids;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -138,4 +140,36 @@ it('stores a cast as rows that name the member in the mark only', function () {
         'election_round_id' => $round->id,
         'hash' => ElectionReceipt::hashFor($round->id, $code),
     ]);
+});
+
+it('keeps the ballot out of the message of a failed insert', function () {
+    $voter = electionVoter();
+    $round = draftElectionRound(candidates: 1);
+
+    // A candidate id that cannot occur by accident anywhere in the message.
+    $candidateId = 7340021;
+    DB::table('election_candidates')->where('election_round_id', $round->id)->update(['id' => $candidateId]);
+
+    $round = app(OpenRound::class)->handle($round->fresh());
+
+    DB::statement("CREATE TRIGGER refuse_ballot_rows BEFORE INSERT ON election_ballot_choices BEGIN SELECT RAISE(ABORT, 'ballot row refused'); END");
+
+    $thrown = null;
+
+    try {
+        castElectionBallot($round, $voter, [$candidateId => 'for']);
+    } catch (Throwable $exception) {
+        $thrown = $exception;
+    }
+
+    expect($thrown)->toBeInstanceOf(QueryException::class)
+        ->and($thrown->getMessage())->toContain('ballot row refused');
+
+    for ($exception = $thrown; $exception !== null; $exception = $exception->getPrevious()) {
+        expect($exception->getMessage())
+            ->not->toContain((string) $candidateId)
+            ->not->toMatch('/\bfor\b/');
+    }
+
+    expect(electionRowCounts($round))->toBe(['marks' => 0, 'choices' => 0, 'receipts' => 0]);
 });

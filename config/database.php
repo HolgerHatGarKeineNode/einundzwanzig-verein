@@ -41,6 +41,8 @@ return [
             'busy_timeout' => null,
             'journal_mode' => null,
             'synchronous' => null,
+            // Ballot rows must not reach a log through a failed insert.
+            'mask_bindings_in_exception_messages' => true,
         ],
 
         'mysql' => [
@@ -96,6 +98,8 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => 'prefer',
+            // Ballot rows must not reach a log through a failed insert.
+            'mask_bindings_in_exception_messages' => true,
         ],
 
         'einundzwanzig' => env('DB_CONNECTION', 'sqlite') === 'sqlite' ? [
