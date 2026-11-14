@@ -1,0 +1,266 @@
+<?php
+
+namespace App\Jobs\Dm;
+
+use App\Enums\DmDeliveryStatus;
+use App\Models\DmDelivery;
+use App\Models\DmDeliveryRelay;
+use App\Models\EinundzwanzigPleb;
+use App\Services\Dm\DirectMessageText;
+use App\Services\Dm\DirectMessageTextInvalid;
+use App\Services\Nostr\DirectMessageNotBuildable;
+use App\Services\Nostr\DirectMessageSigner;
+use App\Services\Nostr\NotificationKeyUnavailable;
+use App\Services\Nostr\RelayPublishResult;
+use App\Services\Nostr\RelayPublishStatus;
+use App\Services\Nostr\RelayTransport;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\DB;
+use Throwable;
+
+/**
+ * Hands one delivery's gift wrap to the recipient's inbox relays.
+ *
+ * The order of the steps is what makes a retry harmless:
+ *
+ *  1. Claim the delivery with one conditional UPDATE. Only `pending`, `failed`
+ *     and a claim left behind by a dead worker can be claimed; a second job
+ *     for the same delivery, or a job for a delivery that is already `sent`,
+ *     changes nothing and publishes nothing.
+ *  2. No kind 10050 list → `no_inbox`, before anything is built or dialled
+ *     (NIP-17: no list means "not ready to receive messages").
+ *  3. Build the wrap once and store it before the first publish. Every later
+ *     attempt republishes the stored wrap, so relays and clients see one event
+ *     id, never a second copy of the message.
+ *  4. Publish to each inbox relay that has not answered `OK true` yet.
+ *
+ * Relays are foreign servers. Whatever one does — reject, stall, break the
+ * connection, make the vendor library throw a TypeError — ends as a result on
+ * that relay's row and, if no relay took the wrap, as a `failed` delivery.
+ * Only NotificationKeyUnavailable escapes: then no message of this
+ * installation can be signed, and that has to be seen, not counted.
+ */
+class SendDirectMessage implements ShouldQueue
+{
+    use Queueable;
+
+    /**
+     * Hard ceiling for one run, enforced by the queue worker. The transport
+     * gives each relay a 10 s deadline (NostrRelayTransport::DEADLINE_SECONDS),
+     * so three relays fit; a relay that trickles its handshake past that
+     * deadline is stopped here. Must stay below the queue's `retry_after`, or
+     * a second worker picks the job up while the first still runs.
+     */
+    public int $timeout = 60;
+
+    public bool $failOnTimeout = true;
+
+    public int $tries = 3;
+
+    /** @var list<int> */
+    public array $backoff = [60, 300];
+
+    /** pleb_dm_relays holds at most three; this holds even if that ever changes. */
+    public const int MAX_INBOX_RELAYS = 3;
+
+    /**
+     * A claim older than this is taken to be from a worker that died
+     * mid-run. Longer than $timeout, so a living worker never loses its claim.
+     */
+    public const int CLAIM_EXPIRES_AFTER_SECONDS = 120;
+
+    private const int MAX_STORED_MESSAGE_LENGTH = 500;
+
+    public function __construct(public int $deliveryId) {}
+
+    public function handle(RelayTransport $transport, DirectMessageSigner $signer, DirectMessageText $text): void
+    {
+        if (! $this->claim()) {
+            return;
+        }
+
+        $delivery = DmDelivery::query()
+            ->with(['recipient.dmRelays', 'run.message', 'relays'])
+            ->findOrFail($this->deliveryId);
+
+        $recipient = $delivery->recipient;
+
+        if ($recipient->isErased()) {
+            $this->finish($delivery, DmDeliveryStatus::Failed, 'The recipient has been erased.');
+
+            return;
+        }
+
+        $relayUrls = $this->inboxRelays($recipient);
+
+        if ($relayUrls === []) {
+            $this->finish($delivery, DmDeliveryStatus::NoInbox);
+
+            return;
+        }
+
+        try {
+            $wrap = $this->storedOrNewWrap($delivery, $recipient, $signer, $text);
+        } catch (NotificationKeyUnavailable $exception) {
+            $this->finish($delivery, DmDeliveryStatus::Failed, $exception->getMessage());
+
+            throw $exception;
+        } catch (DirectMessageNotBuildable|DirectMessageTextInvalid $exception) {
+            $this->finish($delivery, DmDeliveryStatus::Failed, $exception->getMessage());
+
+            return;
+        }
+
+        $accepted = 0;
+        $retryable = false;
+
+        foreach ($relayUrls as $relayUrl) {
+            if ($delivery->relays->firstWhere('relay_url', $relayUrl)?->status === RelayPublishStatus::Accepted) {
+                $accepted++;
+
+                continue;
+            }
+
+            try {
+                $result = $transport->publish($relayUrl, $wrap);
+            } catch (NotificationKeyUnavailable $exception) {
+                $this->recordRelay($delivery, $relayUrl, RelayPublishResult::failed($exception->getMessage()));
+                $this->finish($delivery, DmDeliveryStatus::Failed, $exception->getMessage());
+
+                throw $exception;
+            } catch (Throwable $exception) {
+                // The transport promises results, not exceptions; the vendor
+                // library underneath does not keep that promise (an array
+                // where a RelayResponse is declared surfaces as a TypeError).
+                $result = RelayPublishResult::failed($exception::class.': '.$exception->getMessage());
+            }
+
+            $this->recordRelay($delivery, $relayUrl, $result);
+
+            if ($result->accepted) {
+                $accepted++;
+            } elseif ($result->status === RelayPublishStatus::Failed) {
+                $retryable = true;
+            }
+        }
+
+        if ($accepted > 0) {
+            $this->finish($delivery, DmDeliveryStatus::Sent);
+
+            return;
+        }
+
+        $this->finish($delivery, DmDeliveryStatus::Failed, 'No inbox relay accepted the message (0 of '.count($relayUrls).').');
+
+        // Rejected and Refused will answer the same again; only Failed
+        // (unreachable, timed out) is worth another attempt of the queue.
+        if ($retryable) {
+            $this->release($this->backoff[min($this->attempts(), count($this->backoff)) - 1]);
+        }
+    }
+
+    /**
+     * The worker gave up on this job (timeout, last attempt threw): a claim it
+     * still holds must not stay `claimed` until the expiry.
+     */
+    public function failed(?Throwable $exception): void
+    {
+        DmDelivery::query()
+            ->whereKey($this->deliveryId)
+            ->where('status', DmDeliveryStatus::Claimed->value)
+            ->update([
+                'status' => DmDeliveryStatus::Failed->value,
+                'claimed_at' => null,
+                'error' => mb_substr($exception?->getMessage() ?? 'The job failed.', 0, self::MAX_STORED_MESSAGE_LENGTH),
+            ]);
+    }
+
+    /**
+     * One conditional UPDATE; whoever changes the row owns the delivery.
+     */
+    private function claim(): bool
+    {
+        $now = now();
+
+        return DmDelivery::query()
+            ->whereKey($this->deliveryId)
+            ->where(function ($query) use ($now): void {
+                $query->whereIn('status', [DmDeliveryStatus::Pending->value, DmDeliveryStatus::Failed->value])
+                    ->orWhere(fn ($query) => $query
+                        ->where('status', DmDeliveryStatus::Claimed->value)
+                        ->where('claimed_at', '<', $now->copy()->subSeconds(self::CLAIM_EXPIRES_AFTER_SECONDS)));
+            })
+            ->update([
+                'status' => DmDeliveryStatus::Claimed->value,
+                'claimed_at' => $now,
+                'attempts' => DB::raw('attempts + 1'),
+            ]) === 1;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function inboxRelays(EinundzwanzigPleb $recipient): array
+    {
+        $relays = $recipient->dmRelays?->relays;
+
+        if (! is_array($relays)) {
+            return [];
+        }
+
+        $relays = array_values(array_unique(array_filter($relays, fn ($relay): bool => is_string($relay) && $relay !== '')));
+
+        return array_slice($relays, 0, self::MAX_INBOX_RELAYS);
+    }
+
+    /**
+     * @return array{id: string, pubkey: string, created_at: int, kind: int, tags: array<int, array<int, string>>, content: string, sig: string}
+     */
+    private function storedOrNewWrap(
+        DmDelivery $delivery,
+        EinundzwanzigPleb $recipient,
+        DirectMessageSigner $signer,
+        DirectMessageText $text,
+    ): array {
+        if (is_array($delivery->wrap)) {
+            return $delivery->wrap;
+        }
+
+        $plaintext = $text->render($delivery->run->message, $recipient);
+        $message = $signer->wrapFor($recipient, $plaintext);
+
+        $delivery->forceFill([
+            'plaintext' => $plaintext,
+            'rumor_id' => $message->rumorId,
+            'rumor_created_at' => $message->rumorCreatedAt,
+            'wrap' => $message->wrap,
+        ])->save();
+
+        return $message->wrap;
+    }
+
+    private function recordRelay(DmDelivery $delivery, string $relayUrl, RelayPublishResult $result): void
+    {
+        $row = DmDeliveryRelay::query()->firstOrNew([
+            'dm_delivery_id' => $delivery->id,
+            'relay_url' => $relayUrl,
+        ]);
+
+        $row->forceFill([
+            'status' => $result->status,
+            'message' => mb_substr($result->message, 0, self::MAX_STORED_MESSAGE_LENGTH),
+            'attempts' => $row->attempts + 1,
+        ])->save();
+    }
+
+    private function finish(DmDelivery $delivery, DmDeliveryStatus $status, ?string $error = null): void
+    {
+        $delivery->forceFill([
+            'status' => $status,
+            'claimed_at' => null,
+            'sent_at' => $status === DmDeliveryStatus::Sent ? now() : $delivery->sent_at,
+            'error' => $error === null ? null : mb_substr($error, 0, self::MAX_STORED_MESSAGE_LENGTH),
+        ])->save();
+    }
+}
