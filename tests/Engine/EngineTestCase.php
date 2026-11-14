@@ -3,6 +3,7 @@
 namespace Tests\Engine;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Tests\TestCase;
 
 /**
@@ -20,6 +21,10 @@ use Tests\TestCase;
  * container the script just started. Started any other way — by hand, with a
  * developer's database variables in the environment — the suite fails without
  * having sent a single statement.
+ *
+ * A test in the group "commits" runs without the wrapping transaction, so
+ * that what it writes is committed and other processes see it. The database
+ * is migrated afresh for the test after it.
  */
 abstract class EngineTestCase extends TestCase
 {
@@ -37,6 +42,28 @@ abstract class EngineTestCase extends TestCase
         }
 
         return parent::setUpTraits();
+    }
+
+    /**
+     * @return array<int, string|null>
+     */
+    protected function connectionsToTransact(): array
+    {
+        return $this->commits() ? [] : [config('database.default')];
+    }
+
+    protected function tearDown(): void
+    {
+        if ($this->commits()) {
+            RefreshDatabaseState::$migrated = false;
+        }
+
+        parent::tearDown();
+    }
+
+    private function commits(): bool
+    {
+        return in_array('commits', $this->groups(), true);
     }
 
     /**

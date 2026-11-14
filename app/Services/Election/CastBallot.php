@@ -5,11 +5,13 @@ namespace App\Services\Election;
 use App\Enums\ElectionBallotRefusal;
 use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionBallotRefusedException;
+use App\Exceptions\ElectionBallotWriteException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\ElectionBallotChoice;
 use App\Models\ElectionMark;
 use App\Models\ElectionReceipt;
 use App\Models\ElectionRound;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use SensitiveParameterValue;
@@ -41,7 +43,11 @@ class CastBallot
      * transaction closure gets them wrapped the same way, because a closure
      * carries the variables it uses, and a trace holds the closure.
      *
+     * A database error other than the refusals a voter is told about leaves
+     * as an `ElectionBallotWriteException` that names only the SQLSTATE.
+     *
      * @throws ElectionBallotRefusedException
+     * @throws ElectionBallotWriteException
      */
     public function handle(
         ElectionRound $round,
@@ -51,6 +57,20 @@ class CastBallot
     ): void {
         $ballot = new SensitiveParameterValue(['selection' => $selection, 'receiptCode' => $receiptCode]);
 
+        try {
+            $this->write($round, $voter, $ballot);
+        } catch (QueryException $exception) {
+            throw new ElectionBallotWriteException('The database refused to take in the ballot (SQLSTATE '.$exception->getCode().').');
+        }
+    }
+
+    /**
+     * @param  SensitiveParameterValue  $ballot  holds `selection` and `receiptCode`
+     *
+     * @throws ElectionBallotRefusedException
+     */
+    protected function write(ElectionRound $round, EinundzwanzigPleb $voter, SensitiveParameterValue $ballot): void
+    {
         DB::transaction(function () use ($round, $voter, $ballot): void {
             ['selection' => $selection, 'receiptCode' => $receiptCode] = $ballot->getValue();
 
