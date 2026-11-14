@@ -22,10 +22,11 @@ use Tests\Support\StrayRelayConnection;
  * a socket that got through, or a refusal nobody heard of. None of them
  * asserts that a hook is registered or a function defined.
  *
- * Nothing here can leave the machine even when a case fails. The sockets that
- * may really open go to a listener this file starts on 127.0.0.1, and the one
- * case that calls vendor code with hard-wired public relays refuses to start
- * unless the socket guard is loaded.
+ * No case reaches a third party even when it fails. The sockets that may
+ * really open go to a listener this file starts on 127.0.0.1, the one address
+ * beyond loopback is from a range that is never routed, and the case that
+ * calls vendor code with hard-wired public relays refuses to start unless the
+ * socket guard is loaded.
  *
  * Mutations (patches under docs/plans/…/mutations/, not in the repository):
  * - M0b  drop the require of phrity-net-socket-shadow.php from tests/Pest.php
