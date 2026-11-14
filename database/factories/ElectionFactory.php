@@ -32,6 +32,16 @@ class ElectionFactory extends Factory
         ]);
     }
 
+    public function test(): static
+    {
+        return $this->state(fn () => ['is_test' => true]);
+    }
+
+    public function announced(): static
+    {
+        return $this->state(fn () => ['announced_at' => now()]);
+    }
+
     public function honoraryWithoutFee(): static
     {
         return $this->state(fn () => ['honorary_without_fee' => true]);

@@ -149,6 +149,28 @@ class ElectoralRoll
     }
 
     /**
+     * Put `$pleb` on the roll of `$round` by hand. Returns false if they are
+     * on it already — their entry stays exactly as it is.
+     *
+     * Asks nothing about the fee: this is the Wahlleitung's way for what the
+     * payment flow cannot see (a fee settled outside BTCPay, a payment lost
+     * between opening and settlement). `EnrolByHand` checks the rights and
+     * writes the reason into the audit log.
+     */
+    public function enrolByHand(ElectionRound $round, EinundzwanzigPleb $pleb, CarbonInterface $at): bool
+    {
+        $before = $round->rollEntries()->where('einundzwanzig_pleb_id', $pleb->getKey())->exists();
+
+        $this->insert($round, [[
+            'einundzwanzig_pleb_id' => (int) $pleb->getKey(),
+            'reason' => ElectionRollReason::ConfirmedByBoard->value,
+            'source' => ElectionRollSource::ByHand->value,
+        ]], $at);
+
+        return ! $before;
+    }
+
+    /**
      * Every member entitled to vote in `$election` at `$at`, each carrying a
      * `fee_paid` flag that says whether the fee rule is met.
      *

@@ -7,8 +7,10 @@ use App\Models\Election;
 use App\Models\ElectionRound;
 use App\Services\Election\CastBallot;
 use App\Services\Election\OpenRound;
+use App\Support\Board;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
+use swentel\nostr\Key\Key;
 
 /*
  * Shared by the election tests. Required explicitly by each file that uses
@@ -107,4 +109,29 @@ function electionRowCounts(ElectionRound $round): array
         'choices' => $count('election_ballot_choices'),
         'receipts' => $count('election_receipts'),
     ];
+}
+
+/**
+ * `$count` ACTIVE members with a paid fee who make up the whole board — the
+ * configured board list is replaced by their npubs.
+ *
+ * @return list<EinundzwanzigPleb>
+ */
+function electionBoard(int $count = 2): array
+{
+    $key = new Key;
+    $members = [];
+
+    for ($i = 0; $i < $count; $i++) {
+        $pubkey = bin2hex(random_bytes(32));
+        $members[] = EinundzwanzigPleb::factory()->active()->withPaidYear((int) now()->year)->create([
+            'pubkey' => $pubkey,
+            'npub' => $key->convertPublicKeyToBech32($pubkey),
+        ]);
+    }
+
+    config(['einundzwanzig.config.current_board' => array_map(fn (EinundzwanzigPleb $member): string => $member->npub, $members)]);
+    Board::flush();
+
+    return $members;
 }

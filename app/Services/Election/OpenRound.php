@@ -2,6 +2,7 @@
 
 namespace App\Services\Election;
 
+use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionRoundMode;
 use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionRoundStateException;
@@ -84,8 +85,8 @@ class OpenRound
             throw new ElectionRoundStateException('A round needs at least one seat.');
         }
 
-        if (! $round->candidates()->exists()) {
-            throw new ElectionRoundStateException('A round without candidates cannot be opened.');
+        if (! $round->candidates()->where('status', ElectionCandidateStatus::Approved)->exists()) {
+            throw new ElectionRoundStateException('A round without approved candidates cannot be opened.');
         }
 
         if ($round->parent_round_id !== null) {

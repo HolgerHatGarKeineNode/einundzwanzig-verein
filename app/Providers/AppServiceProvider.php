@@ -2,9 +2,13 @@
 
 namespace App\Providers;
 
+use App\Models\Election;
+use App\Models\ElectionCandidate;
+use App\Models\ElectionRound;
 use App\Models\MemberProposal;
 use App\Models\ProjectProposal;
 use App\Models\Vote;
+use App\Policies\ElectionPolicy;
 use App\Policies\MemberProposalPolicy;
 use App\Policies\ProjectProposalPolicy;
 use App\Policies\VotePolicy;
@@ -58,6 +62,9 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(ProjectProposal::class, ProjectProposalPolicy::class);
         Gate::policy(Vote::class, VotePolicy::class);
         Gate::policy(MemberProposal::class, MemberProposalPolicy::class);
+        Gate::policy(Election::class, ElectionPolicy::class);
+        Gate::policy(ElectionRound::class, ElectionPolicy::class);
+        Gate::policy(ElectionCandidate::class, ElectionPolicy::class);
 
         RateLimiter::for('api', function (Request $request) {
             return Limit::perMinute(60)->by($request->ip());

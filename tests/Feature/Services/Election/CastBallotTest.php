@@ -296,12 +296,14 @@ it('dispatches no event of its own when a ballot is cast', function () {
      * would be something `CastBallot` dispatched — and no Eloquent event may
      * concern a mark, a ballot row, a receipt or the member. A class being
      * booted is not a row event: it fires once per process and carries the
-     * class name only.
+     * class name only. The cache events are the per-member throttle's
+     * (`CastBallot::throttle()`), raised inside the telemetry blackout.
      */
     $dispatched = array_keys((new ReflectionProperty(Event::getFacadeRoot(), 'events'))->getValue(Event::getFacadeRoot()));
 
     $own = array_values(array_filter($dispatched, fn (string $event): bool => ! str_starts_with($event, 'eloquent.')
-        && ! str_starts_with($event, 'Illuminate\\Database\\Events\\')));
+        && ! str_starts_with($event, 'Illuminate\\Database\\Events\\')
+        && ! str_starts_with($event, 'Illuminate\\Cache\\Events\\')));
 
     $aboutSecretRows = array_values(array_filter($dispatched, fn (string $event): bool => str_starts_with($event, 'eloquent.')
         && preg_match('/^eloquent\.boot(ing|ed): /', $event) !== 1

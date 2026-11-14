@@ -38,6 +38,7 @@ class Election extends Model
         'fee_rule',
         'fee_year',
         'honorary_without_fee',
+        'is_test',
     ];
 
     /**
@@ -49,12 +50,23 @@ class Election extends Model
             'fee_rule' => ElectionFeeRule::class,
             'fee_year' => 'integer',
             'honorary_without_fee' => 'boolean',
+            'is_test' => 'boolean',
+            'announced_at' => 'datetime',
         ];
     }
 
     protected static function booted(): void
     {
         static::updating(function (self $election): void {
+            /*
+             * Fixed at creation: `election:purge-test` deletes every row of a
+             * test election, so a real election must never become one — and
+             * a trial must not turn into the real thing either.
+             */
+            if ($election->isDirty('is_test')) {
+                throw new ElectionRoundStateException('Whether an election is a test is fixed when it is created.');
+            }
+
             if ($election->isDirty(self::ROLL_RULE_ATTRIBUTES) && $election->rounds()->whereNotNull('opened_at')->exists()) {
                 throw new ElectionRoundStateException('The fee rule of an election is frozen once one of its rounds has been opened.');
             }
