@@ -6,7 +6,7 @@
 #   scripts/test-engine.sh [engine] [pest arguments…]
 #
 #   engine          pgsql (default), mysql or mariadb
-#   ENGINE_IMAGE    container image; default postgres:17-alpine, mysql:8.4,
+#   ENGINE_IMAGE    container image; default postgres:18-alpine (production runs PostgreSQL 18), mysql:8.4,
 #                   mariadb:11.4 — set it to the version production runs
 #   CONTAINER_RUNTIME  docker (default) or podman
 #
@@ -39,7 +39,7 @@ runtime="${CONTAINER_RUNTIME:-docker}"
 
 case "$engine" in
     pgsql)
-        image="${ENGINE_IMAGE:-postgres:17-alpine}"
+        image="${ENGINE_IMAGE:-postgres:18-alpine}"
         container_port=5432
         php_extension=pdo_pgsql
         ;;
