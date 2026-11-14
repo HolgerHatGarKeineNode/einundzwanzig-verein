@@ -235,4 +235,12 @@ return [
             'wss://relay.primal.net',
         ])))
     ))),
+
+    /*
+     * Where members should write instead of replying to a direct message
+     * (E21: the notification key's inbox is read by nobody). Appended to
+     * every DM by App\Services\Dm\DirectMessageText. Empty falls back to
+     * APP_URL; with neither set, no DM can be composed or sent.
+     */
+    'dm_reply_contact' => (string) env('DM_REPLY_CONTACT', ''),
 ];

@@ -7,6 +7,8 @@ use App\Enums\MembershipStatus;
 use App\Enums\PaymentReviewReason;
 use App\Exceptions\MembershipUnavailableException;
 use App\Jobs\PublishPaymentEventToNostr;
+use App\Models\DmDelivery;
+use App\Models\DmDeliveryRelay;
 use App\Models\EinundzwanzigPleb;
 use App\Models\MemberProposalVote;
 use App\Models\MembershipGrant;
@@ -1172,6 +1174,27 @@ class MembershipService
             // Inbox relays name where this person reads; the row would outlive
             // the anonymised member, whose record is updated, never deleted.
             $pleb->dmRelays()->delete();
+
+            /*
+             * DIRECT MESSAGES TO THIS MEMBER. The delivery row stays so a
+             * run's counts still add up; everything on it that points at the
+             * person goes. The stored wrap names the pubkey in its `p` tag,
+             * the filled-in text carries the name, the rumor id is a hash
+             * over that pubkey, and the relay rows say where the member
+             * reads. A delivery still waiting is refused by SendDirectMessage
+             * for an erased recipient, so nothing is rebuilt afterwards.
+             */
+            $deliveries = DmDelivery::query()->where('einundzwanzig_pleb_id', $pleb->id);
+
+            DmDeliveryRelay::query()->whereIn('dm_delivery_id', (clone $deliveries)->select('id'))->delete();
+
+            $deliveries->update([
+                'plaintext' => null,
+                'rumor_id' => null,
+                'rumor_created_at' => null,
+                'wrap' => null,
+                'error' => null,
+            ]);
 
             // Images the member embedded in project descriptions are theirs.
             $pleb->clearMediaCollection(EinundzwanzigPleb::DESCRIPTION_IMAGES);
