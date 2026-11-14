@@ -163,7 +163,7 @@ class ElectoralRoll
 
         $this->insert($round, [[
             'einundzwanzig_pleb_id' => (int) $pleb->getKey(),
-            'reason' => ElectionRollReason::ConfirmedByLead->value,
+            'reason' => ElectionRollReason::ConfirmedByBoard->value,
             'source' => ElectionRollSource::ByHand->value,
         ]], $at);
 

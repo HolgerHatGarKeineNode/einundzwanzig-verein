@@ -16,27 +16,19 @@ use App\Models\ElectionRound;
  * `ElectionRound` and `ElectionCandidate`; each ability names the model it
  * is asked about.
  *
- * Two roles, decided per election:
+ * The board is the Wahlleitung: every current board member
+ * (`EinundzwanzigPleb::isBoardMember()`) may take every step of running an
+ * election, also in a round they stand in as a candidate. Everybody else may
+ * stand as a candidate and see the elections that are not tests, nothing
+ * more.
  *
- *  - the board (`EinundzwanzigPleb::isBoardMember()`), and
- *  - the Wahlleitung (`Election::isLedBy()`), named per election by board
- *    resolution and possibly outside the board.
- *
- * Nobody acts in a round they are a candidate in — a candidacy in any state
- * counts, a rejected or withdrawn one included. The exceptions to the frozen
- * course of an election (reject, withdraw, close early, annul, enrol by hand) are the Wahlleitung's alone. Approving, opening and sealing a
- * round whose window has run out are open to the Wahlleitung and to every
- * board member who does not stand in that round, so an election in which the
- * whole board stands can still be run by a Wahlleitung from outside it.
- *
- * Every gap falls shut: no member record, an erased member, an election
- * without a Wahlleitung — each answers "no".
+ * Every gap falls shut: no member record or an erased member answers "no".
  */
 class ElectionPolicy
 {
     /**
-     * A test election is seen by the board and its Wahlleitung only. Any
-     * other election by every member record, erased ones excepted.
+     * A test election is seen by the board only. Any other election by every
+     * member record, erased ones excepted.
      */
     public function view(NostrUser $user, Election $election): bool
     {
@@ -46,33 +38,17 @@ class ElectionPolicy
             return false;
         }
 
-        return ! $election->is_test || $pleb->isBoardMember() || $election->isLedBy($pleb);
+        return ! $election->is_test || $pleb->isBoardMember();
     }
 
-    /**
-     * Naming the Wahlleitung is a board resolution, carried out by a board
-     * member before anything is frozen.
-     */
-    public function appointLead(NostrUser $user, Election $election): bool
-    {
-        return $this->isBoard($user) && ! $this->hasOpenedRound($election);
-    }
-
-    /**
-     * From the announcement on, membership categories change only through
-     * the Wahlleitung — so an election without one cannot be announced.
-     */
     public function announce(NostrUser $user, Election $election): bool
     {
-        return $election->announced_at === null
-            && $election->election_lead_pleb_id !== null
-            && ($this->isBoard($user) || $election->isLedBy($this->pleb($user)));
+        return $election->announced_at === null && $this->isBoard($user);
     }
 
     public function delete(NostrUser $user, Election $election): bool
     {
-        return ! $this->hasOpenedRound($election)
-            && ($this->isBoard($user) || $election->isLedBy($this->pleb($user)));
+        return ! $this->hasOpenedRound($election) && $this->isBoard($user);
     }
 
     /**
@@ -92,25 +68,23 @@ class ElectionPolicy
 
     public function approveCandidacy(NostrUser $user, ElectionCandidate $candidate): bool
     {
-        return $this->decidable($candidate, [ElectionCandidateStatus::Pending])
-            && $this->isUninvolvedSteward($user, $candidate->round);
+        return $this->decidable($candidate, [ElectionCandidateStatus::Pending]) && $this->isBoard($user);
     }
 
     public function rejectCandidacy(NostrUser $user, ElectionCandidate $candidate): bool
     {
-        return $this->decidable($candidate, [ElectionCandidateStatus::Pending])
-            && $this->isUninvolvedLead($user, $candidate->round);
+        return $this->decidable($candidate, [ElectionCandidateStatus::Pending]) && $this->isBoard($user);
     }
 
     public function withdrawCandidacy(NostrUser $user, ElectionCandidate $candidate): bool
     {
         return $this->decidable($candidate, [ElectionCandidateStatus::Pending, ElectionCandidateStatus::Approved])
-            && $this->isUninvolvedLead($user, $candidate->round);
+            && $this->isBoard($user);
     }
 
     public function open(NostrUser $user, ElectionRound $round): bool
     {
-        return $this->isUninvolvedSteward($user, $round);
+        return $this->isBoard($user);
     }
 
     /**
@@ -119,54 +93,22 @@ class ElectionPolicy
      */
     public function close(NostrUser $user, ElectionRound $round): bool
     {
-        return $this->isUninvolvedSteward($user, $round);
+        return $this->isBoard($user);
     }
 
     public function closeEarly(NostrUser $user, ElectionRound $round): bool
     {
-        return $this->isUninvolvedLead($user, $round);
+        return $this->isBoard($user);
     }
 
     public function annul(NostrUser $user, ElectionRound $round): bool
     {
-        return $this->isUninvolvedLead($user, $round);
+        return $this->isBoard($user);
     }
 
     public function enrolByHand(NostrUser $user, ElectionRound $round): bool
     {
-        return $this->isUninvolvedLead($user, $round);
-    }
-
-    /**
-     * The Wahlleitung of the round's election, not standing in the round.
-     *
-     * Mutation that must turn `ElectionPolicyTest` red: drop the
-     * `standsIn()` check here — a Wahlleitung who stands in the round can
-     * then close it early.
-     */
-    protected function isUninvolvedLead(NostrUser $user, ?ElectionRound $round): bool
-    {
-        $pleb = $this->pleb($user);
-
-        return $pleb !== null
-            && $round !== null
-            && $round->election?->isLedBy($pleb) === true
-            && ! $this->standsIn($pleb, $round);
-    }
-
-    /**
-     * The Wahlleitung or a board member, not standing in the round.
-     */
-    protected function isUninvolvedSteward(NostrUser $user, ?ElectionRound $round): bool
-    {
-        $pleb = $this->pleb($user);
-
-        if ($pleb === null || $round === null || $round->election === null) {
-            return false;
-        }
-
-        return ($pleb->isBoardMember() || $round->election->isLedBy($pleb))
-            && ! $this->standsIn($pleb, $round);
+        return $this->isBoard($user);
     }
 
     /**

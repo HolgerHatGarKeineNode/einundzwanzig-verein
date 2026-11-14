@@ -7,7 +7,6 @@ use App\Exceptions\ElectionRoundStateException;
 use Database\Factories\ElectionFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
@@ -96,28 +95,6 @@ class Election extends Model
                 $leaves->each(fn (ElectionRound $round): ?bool => $round->delete());
             }
         });
-    }
-
-    /**
-     * The Wahlleitung of this election.
-     *
-     * @return BelongsTo<EinundzwanzigPleb, $this>
-     */
-    public function lead(): BelongsTo
-    {
-        return $this->belongsTo(EinundzwanzigPleb::class, 'election_lead_pleb_id');
-    }
-
-    /**
-     * Is `$pleb` the Wahlleitung of this election? An election without one,
-     * or a member who has been erased, is led by nobody.
-     */
-    public function isLedBy(?EinundzwanzigPleb $pleb): bool
-    {
-        return $pleb !== null
-            && $this->election_lead_pleb_id !== null
-            && (int) $this->election_lead_pleb_id === (int) $pleb->getKey()
-            && ! $pleb->isErased();
     }
 
     /**

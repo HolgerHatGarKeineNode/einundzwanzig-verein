@@ -57,17 +57,17 @@ it('refuses a second candidacy of the same member and one by a member without a 
 });
 
 it('approves a candidacy once the candidate is entitled, with an audit line naming the decider', function () {
-    $lead = electionVoter();
-    $round = draftElectionRound(election: ledElection($lead));
+    $boardMember = electionBoard(1)[0];
+    $round = draftElectionRound();
     $candidate = app(Candidacies::class)->submit($round, electionVoter());
 
-    app(Candidacies::class)->approve($candidate, $lead);
+    app(Candidacies::class)->approve($candidate, $boardMember);
 
     $line = ElectionAuditEntry::query()->where('election_event_id', $round->election_event_id)->sole();
 
     expect($candidate->fresh()->status)->toBe(ElectionCandidateStatus::Approved)
         ->and($line->action)->toBe(ElectionAuditAction::CandidacyApproved)
-        ->and($line->actor_pleb_id)->toBe($lead->id)
+        ->and($line->actor_pleb_id)->toBe($boardMember->id)
         ->and($line->subject_pleb_id)->toBe($candidate->einundzwanzig_pleb_id)
         ->and($line->details)->toBe(['candidate_id' => $candidate->id]);
 });
@@ -77,23 +77,23 @@ it('approves a candidacy once the candidate is entitled, with an audit line nami
  * `Candidacies::decide()` — an unpaid candidate is then approved.
  */
 it('holds the approval back until the candidate has paid', function () {
-    $lead = electionVoter();
-    $round = draftElectionRound(election: ledElection($lead));
+    $boardMember = electionBoard(1)[0];
+    $round = draftElectionRound();
     $candidate = app(Candidacies::class)->submit($round, EinundzwanzigPleb::factory()->active()->create());
 
-    expect(fn () => app(Candidacies::class)->approve($candidate, $lead))->toThrow(ElectionActionRefusedException::class)
+    expect(fn () => app(Candidacies::class)->approve($candidate, $boardMember))->toThrow(ElectionActionRefusedException::class)
         ->and($candidate->fresh()->status)->toBe(ElectionCandidateStatus::Pending)
         ->and(ElectionAuditEntry::query()->count())->toBe(0);
 });
 
 it('rejects and withdraws with the reason in the audit line', function () {
-    $lead = electionVoter();
-    $round = draftElectionRound(election: ledElection($lead));
+    $boardMember = electionBoard(1)[0];
+    $round = draftElectionRound();
     $rejected = app(Candidacies::class)->submit($round, electionVoter());
     $withdrawn = ElectionCandidate::factory()->create(['election_round_id' => $round->id]);
 
-    app(Candidacies::class)->reject($rejected, $lead, 'Nicht wählbar nach Art. 7');
-    app(Candidacies::class)->withdraw($withdrawn, $lead, 'Rückzug per Mail vom 3. März');
+    app(Candidacies::class)->reject($rejected, $boardMember, 'Nicht wählbar nach Art. 7');
+    app(Candidacies::class)->withdraw($withdrawn, $boardMember, 'Rückzug per Mail vom 3. März');
 
     expect($rejected->fresh()->status)->toBe(ElectionCandidateStatus::Rejected)
         ->and($withdrawn->fresh()->status)->toBe(ElectionCandidateStatus::Withdrawn)
@@ -103,26 +103,26 @@ it('rejects and withdraws with the reason in the audit line', function () {
         ->and(app(ElectionAuditLog::class)->verify($round->election))->toBeTrue();
 });
 
-it('refuses a reject or a withdrawal by a board member and changes nothing', function (string $method) {
-    $board = electionBoard(1);
-    $round = draftElectionRound(election: ledElection());
+it('refuses a decision by a member outside the board and changes nothing', function (string $method) {
+    electionBoard(1);
+    $round = draftElectionRound();
     $candidate = app(Candidacies::class)->submit($round, electionVoter());
 
-    expect(fn () => app(Candidacies::class)->{$method}($candidate, $board[0], 'Grund'))->toThrow(AuthorizationException::class)
+    expect(fn () => app(Candidacies::class)->{$method}($candidate, electionVoter(), 'Grund'))->toThrow(AuthorizationException::class)
         ->and($candidate->fresh()->status)->toBe(ElectionCandidateStatus::Pending)
         ->and(ElectionAuditEntry::query()->count())->toBe(0);
-})->with(['reject', 'withdraw']);
+})->with(['approve', 'reject', 'withdraw']);
 
 it('changes no candidacy once the round is opened', function () {
-    $lead = electionVoter();
-    $round = draftElectionRound(election: ledElection($lead));
+    $boardMember = electionBoard(1)[0];
+    $round = draftElectionRound();
     $approved = $round->candidates()->first();
     $pending = app(Candidacies::class)->submit($round, electionVoter());
 
     app(OpenRound::class)->handle($round);
 
-    expect(fn () => app(Candidacies::class)->withdraw($approved, $lead, 'zu spät'))->toThrow(AuthorizationException::class)
-        ->and(fn () => app(Candidacies::class)->approve($pending, $lead))->toThrow(AuthorizationException::class)
+    expect(fn () => app(Candidacies::class)->withdraw($approved, $boardMember, 'zu spät'))->toThrow(AuthorizationException::class)
+        ->and(fn () => app(Candidacies::class)->approve($pending, $boardMember))->toThrow(AuthorizationException::class)
         ->and(fn () => app(Candidacies::class)->submit($round, electionVoter()))->toThrow(AuthorizationException::class)
         ->and(fn () => $approved->fresh()->forceFill(['status' => ElectionCandidateStatus::Withdrawn])->save())->toThrow(ElectionRoundStateException::class)
         ->and($approved->fresh()->status)->toBe(ElectionCandidateStatus::Approved)

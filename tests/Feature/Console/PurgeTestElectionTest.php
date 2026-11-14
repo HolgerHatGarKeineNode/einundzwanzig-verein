@@ -45,14 +45,13 @@ function electionRowsPerTable(Election $election, array $roundIds): array
 function usedTestElection(): array
 {
     $board = electionBoard(1);
-    $lead = electionVoter();
     $voter = electionVoter();
     $late = EinundzwanzigPleb::factory()->active()->create();
-    $election = Election::factory()->test()->ledBy($lead)->create();
+    $election = Election::factory()->test()->create();
 
     $round = app(ElectionStewardship::class)->open(draftElectionRound(election: $election), $board[0]);
     castElectionBallot($round, $voter, [$round->candidates()->value('id') => 'for']);
-    app(EnrolByHand::class)->handle($round, $late, $lead, 'Probe');
+    app(EnrolByHand::class)->handle($round, $late, $board[0], 'Probe');
     $round = app(CloseRound::class)->handle($round);
 
     $runOff = ElectionRound::factory()->withCandidates()->create(['election_event_id' => $election->id, 'parent_round_id' => $round->id, 'position' => 2]);
@@ -82,9 +81,8 @@ it('deletes every row of a test election in every election table, and only those
  * `PurgeTestElection::purge()` — a real election is then wiped.
  */
 it('refuses a real election and an unknown id, and deletes nothing', function () {
-    $lead = electionVoter();
     $voter = electionVoter();
-    $real = Election::factory()->ledBy($lead)->create();
+    $real = Election::factory()->create();
     $round = openElectionRound(election: $real);
     castElectionBallot($round, $voter);
     $before = electionRowsPerTable($real, [$round->id]);

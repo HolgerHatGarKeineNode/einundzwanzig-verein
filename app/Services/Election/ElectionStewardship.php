@@ -14,8 +14,10 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * The privileged acts on an election and its rounds, each with the rights
- * check of `ElectionPolicy` and an audit line, both inside the transaction
- * that does the act.
+ * check of `ElectionPolicy` and an audit line naming the board member who
+ * acts, both inside the transaction that does the act. The check runs at the
+ * moment of the act, so a member who left the board since the page loaded is
+ * refused.
  *
  * `OpenRound` and `CloseRound` stay what they are — the mechanics, with no
  * notion of who acts. This class is the door a person goes through.
@@ -29,30 +31,6 @@ class ElectionStewardship
         protected CloseRound $closeRound,
         protected ElectionAuditLog $audit,
     ) {}
-
-    /**
-     * Name the Wahlleitung (board resolution), before any round is opened.
-     *
-     * @throws AuthorizationException
-     */
-    public function appointLead(Election $election, EinundzwanzigPleb $lead, EinundzwanzigPleb $actor): Election
-    {
-        return DB::transaction(function () use ($election, $lead, $actor): Election {
-            $election = Election::query()->lockForUpdate()->findOrFail($election->getKey());
-
-            $this->authorizeActor($actor, 'appointLead', $election);
-
-            if ($lead->isErased()) {
-                throw new ElectionRoundStateException('An erased member cannot lead an election.');
-            }
-
-            $election->forceFill(['election_lead_pleb_id' => $lead->getKey()])->save();
-
-            $this->audit->append($election, ElectionAuditAction::LeadAppointed, $actor, subject: $lead);
-
-            return $election;
-        });
-    }
 
     /**
      * Announce the election to the members.
@@ -115,7 +93,7 @@ class ElectionStewardship
     /**
      * Seal a round that no longer takes ballots. A round that still does —
      * a live round in the assembly, a window that has not run out — is ended
-     * with `closeEarly()`, by the Wahlleitung.
+     * with `closeEarly()`.
      *
      * @throws AuthorizationException
      * @throws ElectionRoundStateException
@@ -128,7 +106,7 @@ class ElectionStewardship
             $this->authorizeActor($actor, 'close', $round);
 
             if (in_array($round->stateAt(now()), [ElectionRoundState::Scheduled, ElectionRoundState::Open], true)) {
-                throw new ElectionRoundStateException('A round that still takes ballots is ended early, by the Wahlleitung.');
+                throw new ElectionRoundStateException('A round that still takes ballots is ended early.');
             }
 
             return $this->seal($round, $actor, ElectionAuditAction::RoundClosed, null);

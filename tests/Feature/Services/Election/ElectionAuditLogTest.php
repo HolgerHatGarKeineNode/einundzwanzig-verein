@@ -25,8 +25,8 @@ function electionWithAuditLines(): Election
     $subject = EinundzwanzigPleb::factory()->active()->create();
     $log = app(ElectionAuditLog::class);
 
-    $log->append($election, ElectionAuditAction::LeadAppointed, $actor, subject: $subject);
     $log->append($election, ElectionAuditAction::ElectionAnnounced, $actor);
+    $log->append($election, ElectionAuditAction::CandidacyApproved, $actor, subject: $subject);
     $log->append($election, ElectionAuditAction::VoterEnrolledByHand, $actor, subject: $subject, details: ['reason' => 'Zahlung per Überweisung belegt']);
 
     return $election;

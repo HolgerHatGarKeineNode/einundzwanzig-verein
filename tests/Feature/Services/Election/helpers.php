@@ -126,11 +126,3 @@ function electionBoard(int $count = 2): array
 
     return $members;
 }
-
-/**
- * An election led by a member who is NOT on the board.
- */
-function ledElection(?EinundzwanzigPleb $lead = null): Election
-{
-    return Election::factory()->ledBy($lead ?? electionVoter())->create();
-}
