@@ -1,0 +1,232 @@
+<?php
+
+use App\Enums\ElectionCountingRule;
+use App\Enums\ElectionOutcome;
+use App\Exceptions\ElectionRoundStateException;
+use App\Models\Election;
+use App\Models\ElectionCandidate;
+use App\Models\ElectionRound;
+use App\Services\Election\CloseRound;
+use App\Services\Election\OpenRound;
+use App\Services\Election\TallyRound;
+use Illuminate\Support\Carbon;
+
+require_once __DIR__.'/helpers.php';
+
+/*
+ * The count of a round as the application produces it: through the actions,
+ * read through `sealedChoices()`.
+ *
+ * Mutations that must turn this file red (patches in the plan folder):
+ *  - M6b  the tally reads the ballot rows of every round, not of this one
+ *  - M6d  `sealedChoices()` no longer refuses an unsealed round
+ *  - M6e  the result carries a list of ballot rows next to the numbers
+ *  - B1-E1 `OpenRound` no longer checks earlier rounds for elected candidates
+ *  - B1-E2 an undecided tie of the parent round blocks its own run-off
+ */
+
+/**
+ * Cast `$ballots` ballots, each from a fresh voter put on the roll before the
+ * round opens.
+ *
+ * @param  list<array<array-key, mixed>>  $ballots
+ */
+function sealedRoundWith(array $ballots, array $attributes = [], int $candidates = 3, ?Election $election = null): ElectionRound
+{
+    $voters = collect($ballots)->map(fn () => electionVoter());
+    $round = app(OpenRound::class)->handle(draftElectionRound($attributes, $candidates, $election));
+    $ids = $round->candidates()->orderBy('id')->pluck('id')->all();
+
+    foreach ($ballots as $index => $ballot) {
+        // Ballots name candidates by their position in the round: 0, 1, 2 …
+        $selection = [];
+
+        foreach ($ballot as $position => $choice) {
+            $selection[$ids[$position]] = $choice;
+        }
+
+        castElectionBallot($round, $voters[$index], $selection);
+    }
+
+    return app(CloseRound::class)->handle($round);
+}
+
+it('counts a sealed round with every number written out', function () {
+    $round = sealedRoundWith([
+        [0 => 'for'], [0 => 'for'], [0 => 'for'],
+        [1 => 'for'], [1 => 'for'],
+        [], [],
+    ]);
+
+    // Ballots in another round of another election must not leak in.
+    sealedRoundWith([[0 => 'for'], [1 => 'for'], [1 => 'for']]);
+
+    [$a, $b, $c] = $round->candidates()->orderBy('id')->pluck('id')->all();
+
+    expect(app(TallyRound::class)->handle($round)->toArray())->toBe([
+        'rule' => 'single_majority',
+        'seats' => 1,
+        'outcome' => 'complete',
+        'counts' => [
+            $a => ['for' => 3, 'yes' => 0, 'no' => 0],
+            $b => ['for' => 2, 'yes' => 0, 'no' => 0],
+            $c => ['for' => 0, 'yes' => 0, 'no' => 0],
+        ],
+        'blank' => 2,
+        'elected' => [$a],
+        'tied' => [],
+        'tied_seats' => 0,
+    ])->and(electionRowCounts($round))->toBe(['marks' => 7, 'choices' => 7, 'receipts' => 7]);
+});
+
+it('counts nothing while a round is open or merely over by the clock', function () {
+    $this->travelTo(Carbon::parse('2027-03-20 10:00:00'));
+
+    $voter = electionVoter();
+    $round = app(OpenRound::class)->handle(windowElectionRound(now(), now()->addHour()));
+    castElectionBallot($round, $voter, [$round->candidates()->value('id') => 'for']);
+
+    expect(fn () => app(TallyRound::class)->handle($round))->toThrow(ElectionRoundStateException::class);
+
+    $this->travelTo(Carbon::parse('2027-03-20 11:00:00'));
+
+    expect(fn () => app(TallyRound::class)->handle($round->fresh()))->toThrow(ElectionRoundStateException::class);
+
+    app(CloseRound::class)->handle($round);
+
+    expect(app(TallyRound::class)->handle($round->fresh())->elected)->toHaveCount(1);
+});
+
+it('counts no annulled round', function () {
+    $round = sealedRoundWith([[0 => 'for']]);
+    $round->annulled_at = now();
+    $round->save();
+
+    expect(fn () => app(TallyRound::class)->handle($round))->toThrow(ElectionRoundStateException::class);
+});
+
+it('reports a tie in a sealed round and elects nobody among the level candidates', function () {
+    $round = sealedRoundWith(
+        [[0 => 'for', 1 => 'for'], [0 => 'for', 2 => 'for'], [1 => 'for', 2 => 'for']],
+        ['counting_rule' => ElectionCountingRule::MostVotes, 'seats' => 2],
+    );
+
+    $result = app(TallyRound::class)->handle($round);
+
+    expect($result->outcome)->toBe(ElectionOutcome::Tie)
+        ->and($result->elected)->toBe([])
+        ->and($result->tied)->toBe($round->candidates()->orderBy('id')->pluck('id')->all())
+        ->and($result->tiedSeats)->toBe(2);
+});
+
+it('ends a round with fewer elected than seats as understaffed', function () {
+    $round = sealedRoundWith(
+        [[0 => 'yes', 1 => 'no'], [0 => 'yes', 1 => 'no'], [0 => 'no', 1 => 'yes']],
+        ['counting_rule' => ElectionCountingRule::YesNoPerCandidate, 'seats' => 2],
+        candidates: 2,
+    );
+
+    $result = app(TallyRound::class)->handle($round);
+
+    expect($result->outcome)->toBe(ElectionOutcome::Understaffed)
+        ->and($result->elected)->toBe([$round->candidates()->orderBy('id')->value('id')]);
+});
+
+/**
+ * Let `$round` list the same members as candidates as the given candidates.
+ */
+function standAgain(ElectionRound $round, ElectionCandidate ...$candidates): void
+{
+    foreach ($candidates as $candidate) {
+        ElectionCandidate::factory()->create([
+            'election_round_id' => $round->getKey(),
+            'einundzwanzig_pleb_id' => $candidate->einundzwanzig_pleb_id,
+        ]);
+    }
+}
+
+it('does not put a candidate elected in an earlier round on the ballot of a later one', function () {
+    $election = Election::factory()->create();
+    $presidency = sealedRoundWith([[0 => 'for'], [0 => 'for'], [1 => 'for']], ['position' => 1], candidates: 2, election: $election);
+    [$elected, $defeated] = $presidency->candidates()->orderBy('id')->get()->all();
+
+    $board = draftElectionRound(['position' => 2, 'counting_rule' => ElectionCountingRule::MostVotes, 'seats' => 2], candidates: 1, election: $election);
+    standAgain($board, $elected, $defeated);
+
+    expect(fn () => app(OpenRound::class)->handle($board))
+        ->toThrow(ElectionRoundStateException::class, 'A candidate of this round has been elected in an earlier round of the election.')
+        ->and($board->fresh()->opened_at)->toBeNull();
+
+    // The defeated candidate may stand again; only the elected one is out.
+    $board->candidates()->where('einundzwanzig_pleb_id', $elected->einundzwanzig_pleb_id)->delete();
+
+    expect(app(OpenRound::class)->handle($board)->opened_at)->not->toBeNull();
+});
+
+it('refuses to open a later round while an earlier round with the same candidate has no result yet', function (string $state) {
+    $election = Election::factory()->create();
+    $earlier = draftElectionRound(['position' => 1], election: $election);
+
+    if ($state !== 'draft') {
+        $earlier = app(OpenRound::class)->handle($earlier);
+    }
+
+    $later = draftElectionRound(['position' => 2], candidates: 1, election: $election);
+    standAgain($later, $earlier->candidates()->first());
+
+    expect(fn () => app(OpenRound::class)->handle($later))
+        ->toThrow(ElectionRoundStateException::class, 'A candidate of this round also stands in an earlier round of the election that is not sealed yet.');
+})->with(['draft', 'open']);
+
+it('ignores later rounds, annulled rounds, other elections and earlier rounds without a shared candidate', function () {
+    $election = Election::factory()->create();
+    $later = draftElectionRound(['position' => 5], election: $election);
+    $annulled = sealedRoundWith([[0 => 'for']], ['position' => 1], candidates: 1, election: $election);
+    $annulled->annulled_at = now();
+    $annulled->save();
+    $unrelated = draftElectionRound(['position' => 2], election: $election);
+    $elsewhere = sealedRoundWith([[0 => 'for']], candidates: 1);
+
+    $round = draftElectionRound(['position' => 3], candidates: 1, election: $election);
+    standAgain($round, $later->candidates()->first(), $annulled->candidates()->first(), $elsewhere->candidates()->first());
+
+    expect(app(OpenRound::class)->handle($round)->opened_at)->not->toBeNull()
+        ->and($unrelated->fresh()->opened_at)->toBeNull();
+});
+
+it('lets the level candidates of a tie stand in its run-off, and nowhere else', function () {
+    $election = Election::factory()->create();
+    $parent = sealedRoundWith(
+        [[0 => 'for'], [0 => 'for'], [1 => 'for'], [1 => 'for'], [2 => 'for']],
+        ['position' => 1, 'counting_rule' => ElectionCountingRule::MostVotes],
+        election: $election,
+    );
+    [$first, $second] = $parent->candidates()->orderBy('id')->get()->all();
+
+    expect(app(TallyRound::class)->handle($parent)->tied)->toBe([$first->id, $second->id]);
+
+    $elsewhere = draftElectionRound(['position' => 2], candidates: 1, election: $election);
+    standAgain($elsewhere, $first);
+
+    expect(fn () => app(OpenRound::class)->handle($elsewhere))
+        ->toThrow(ElectionRoundStateException::class, 'A candidate of this round is level in an undecided tie of an earlier round of the election.');
+
+    // A draft that shares a candidate would block the run-off as an earlier round without a result.
+    $elsewhere->delete();
+
+    $runOff = draftElectionRound(['position' => 3, 'parent_round_id' => $parent->id], candidates: 0, election: $election);
+    standAgain($runOff, $first, $second);
+
+    expect(app(OpenRound::class)->handle($runOff)->opened_at)->not->toBeNull();
+});
+
+it('treats the round of a run-off as earlier whatever its position', function () {
+    $election = Election::factory()->create();
+    $parent = sealedRoundWith([[0 => 'for'], [0 => 'for'], [1 => 'for']], ['position' => 9], candidates: 2, election: $election);
+
+    $runOff = draftElectionRound(['position' => 1, 'parent_round_id' => $parent->id], candidates: 1, election: $election);
+    standAgain($runOff, $parent->candidates()->orderBy('id')->first());
+
+    expect(fn () => app(OpenRound::class)->handle($runOff))
+        ->toThrow(ElectionRoundStateException::class, 'A candidate of this round has been elected in an earlier round of the election.');
+});

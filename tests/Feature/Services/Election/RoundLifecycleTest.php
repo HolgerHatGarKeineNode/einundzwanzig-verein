@@ -24,11 +24,6 @@ require_once __DIR__.'/helpers.php';
  * order they were cast in.
  */
 
-function windowElectionRound(Carbon $opensAt, Carbon $closesAt): ElectionRound
-{
-    return ElectionRound::factory()->withCandidates()->window($opensAt, $closesAt)->create();
-}
-
 it('derives the state of a window round from the clock alone', function () {
     $this->travelTo(Carbon::parse('2027-03-01 09:00:00'));
 
@@ -143,7 +138,8 @@ it('freezes the window and the rule once the round is opened', function (string 
     'counting_rule' => ['counting_rule', ElectionCountingRule::MostVotes],
     'seats' => ['seats', 5],
     'mode' => ['mode', ElectionRoundMode::Window],
-    'position' => ['position', 99],
+    // Far above the factory's running position counter, so the value always changes.
+    'position' => ['position', 999999],
 ]);
 
 it('freezes the window of a window round that has been opened ahead of time', function () {
@@ -393,6 +389,7 @@ it('pins every public method of the classes that hold or hand out ballot rows', 
             'handle(App\Models\ElectionRound $round, App\Models\EinundzwanzigPleb $voter, array $selection, string $receiptCode): void',
         ],
         CloseRound::class => [
+            '__construct(App\Services\Election\RoundManifest $manifest)',
             'handle(App\Models\ElectionRound $round): App\Models\ElectionRound',
         ],
     ];

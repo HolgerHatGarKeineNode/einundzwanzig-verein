@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\ElectionCountingRule;
+use App\Exceptions\ElectionBallotWriteException;
 use App\Models\ElectionBallotChoice;
 use App\Models\ElectionMark;
 use App\Models\ElectionReceipt;
@@ -9,7 +10,6 @@ use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Concerns\HasVersion4Uuids;
 use Illuminate\Database\Eloquent\Relations\Relation;
-use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -162,8 +162,11 @@ it('keeps the ballot out of the message of a failed insert', function () {
         $thrown = $exception;
     }
 
-    expect($thrown)->toBeInstanceOf(QueryException::class)
-        ->and($thrown->getMessage())->toContain('ballot row refused');
+    // The database's own text stays behind; PostgreSQL puts the refused row into it (tests/Engine/CastErrorMessageTest.php).
+    expect($thrown)->toBeInstanceOf(ElectionBallotWriteException::class)
+        ->and($thrown->getMessage())->toStartWith('The database refused to take in the ballot (SQLSTATE ')
+        ->and($thrown->getMessage())->not->toContain('ballot row refused')
+        ->and($thrown->getPrevious())->toBeNull();
 
     for ($exception = $thrown; $exception !== null; $exception = $exception->getPrevious()) {
         expect($exception->getMessage())

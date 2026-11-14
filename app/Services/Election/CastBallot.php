@@ -5,13 +5,16 @@ namespace App\Services\Election;
 use App\Enums\ElectionBallotRefusal;
 use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionBallotRefusedException;
+use App\Exceptions\ElectionBallotWriteException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\ElectionBallotChoice;
 use App\Models\ElectionMark;
 use App\Models\ElectionReceipt;
 use App\Models\ElectionRound;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use SensitiveParameterValue;
 
 /**
  * Take in one ballot.
@@ -35,11 +38,42 @@ class CastBallot
      * @param  array<array-key, mixed>  $selection  candidate id => choice value, see `ElectionCountingRule::ballotRows()`; empty for a blank ballot
      * @param  string  $receiptCode  made up by the voter's browser; only its hash is stored
      *
+     * Both are `#[\SensitiveParameter]`: a stack trace — in a log, an error
+     * report or a debug page — shows them as `SensitiveParameterValue`. The
+     * transaction closure gets them wrapped the same way, because a closure
+     * carries the variables it uses, and a trace holds the closure.
+     *
+     * A database error other than the refusals a voter is told about leaves
+     * as an `ElectionBallotWriteException` that names only the SQLSTATE.
+     *
+     * @throws ElectionBallotRefusedException
+     * @throws ElectionBallotWriteException
+     */
+    public function handle(
+        ElectionRound $round,
+        EinundzwanzigPleb $voter,
+        #[\SensitiveParameter] array $selection,
+        #[\SensitiveParameter] string $receiptCode,
+    ): void {
+        $ballot = new SensitiveParameterValue(['selection' => $selection, 'receiptCode' => $receiptCode]);
+
+        try {
+            $this->write($round, $voter, $ballot);
+        } catch (QueryException $exception) {
+            throw new ElectionBallotWriteException('The database refused to take in the ballot (SQLSTATE '.$exception->getCode().').');
+        }
+    }
+
+    /**
+     * @param  SensitiveParameterValue  $ballot  holds `selection` and `receiptCode`
+     *
      * @throws ElectionBallotRefusedException
      */
-    public function handle(ElectionRound $round, EinundzwanzigPleb $voter, array $selection, string $receiptCode): void
+    protected function write(ElectionRound $round, EinundzwanzigPleb $voter, SensitiveParameterValue $ballot): void
     {
-        DB::transaction(function () use ($round, $voter, $selection, $receiptCode): void {
+        DB::transaction(function () use ($round, $voter, $ballot): void {
+            ['selection' => $selection, 'receiptCode' => $receiptCode] = $ballot->getValue();
+
             /*
              * Whether the round is open is decided HERE: on the row as it is
              * now, locked, against the clock of this transaction. Not on the

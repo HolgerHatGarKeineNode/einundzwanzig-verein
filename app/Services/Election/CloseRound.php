@@ -22,11 +22,13 @@ use Random\Randomizer;
  * is a different act that needs a second person and is not offered here.
  *
  * A round whose window is over already refuses ballots by the clock alone.
- * What sealing adds is the rewrite, and results may only be read after it.
- * Calling this on a sealed round changes nothing.
+ * What sealing adds is the rewrite and the manifest, and results may only be
+ * read after it. Calling this on a sealed round changes nothing.
  */
 class CloseRound
 {
+    public function __construct(protected RoundManifest $manifest) {}
+
     /**
      * @throws ElectionRoundStateException
      */
@@ -59,6 +61,14 @@ class CloseRound
             $round->save();
 
             $this->rewrite($round);
+
+            /*
+             * In the same transaction as the rewrite: a round is never
+             * sealed without its manifest. The audit-log head stays null
+             * until the audit log of package P2-B2 is merged; it is wired in
+             * here (`ElectionAuditLog::headHash()`).
+             */
+            $this->manifest->record($round, auditHeadHash: null);
 
             return $round;
         });

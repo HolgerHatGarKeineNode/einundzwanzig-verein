@@ -7,6 +7,7 @@ use App\Models\Election;
 use App\Models\ElectionRound;
 use App\Services\Election\CastBallot;
 use App\Services\Election\OpenRound;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 
 /*
@@ -38,6 +39,14 @@ function draftElectionRound(array $attributes = [], int $candidates = 2, ?Electi
             'election_event_id' => $election?->getKey() ?? Election::factory(),
             ...$attributes,
         ]);
+}
+
+/**
+ * A draft window round with two candidates.
+ */
+function windowElectionRound(CarbonInterface $opensAt, CarbonInterface $closesAt): ElectionRound
+{
+    return ElectionRound::factory()->withCandidates()->window($opensAt, $closesAt)->create();
 }
 
 /**
