@@ -48,6 +48,16 @@ it('refuses a placeholder the type does not know', function () {
     app(ComposeDirectMessage::class)->handle(DmMessageType::Individual, null, [], 'Hallo {npub}');
 })->throws(DirectMessageTextInvalid::class, 'unknown placeholder {npub}');
 
+it('refuses every brace token that is not a declared placeholder, whatever its shape', function (string $token) {
+    app(ComposeDirectMessage::class)->handle(DmMessageType::Individual, null, [], "Hallo {$token}");
+})->throws(DirectMessageTextInvalid::class, 'unknown placeholder')->with([
+    'capitalised' => '{Name}',
+    'with a digit' => '{link2}',
+    'with a hyphen' => '{assembly-date}',
+    'padded' => '{ name }',
+    'empty' => '{}',
+]);
+
 it('refuses a message whose placeholder has no value', function () {
     app(ComposeDirectMessage::class)->handle(DmMessageType::FeeReminder, null, ['year' => '2027']);
 })->throws(DirectMessageTextInvalid::class, 'no value for {link}');

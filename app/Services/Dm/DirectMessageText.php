@@ -15,7 +15,11 @@ use App\Models\EinundzwanzigPleb;
  */
 final class DirectMessageText
 {
-    private const string PLACEHOLDER = '/\{([a-z_]+)\}/';
+    /**
+     * Any brace pair, not only well-formed names: `{Name}` or `{link2}` would
+     * otherwise go out literally instead of being refused.
+     */
+    private const string PLACEHOLDER = '/\{([^{}]*)\}/u';
 
     /** A name from a kind 0 profile is foreign input; it gets one line and a bound. */
     private const int MAX_NAME_LENGTH = 64;
