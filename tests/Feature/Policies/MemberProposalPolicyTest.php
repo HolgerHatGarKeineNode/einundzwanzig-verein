@@ -54,25 +54,44 @@ it('denies a guest', function (string $ability) {
 
 it('denies a logged-in non-member even with a settled payment', function (string $ability) {
     $nonMember = EinundzwanzigPleb::factory()->withPaidCurrentYear()->create();
+    $nonMember->paymentEvents()->create(['year' => now()->year - 1, 'amount' => 21000, 'paid' => true]);
     $proposal = MemberProposal::factory()->create();
 
     expect(proposalGate($nonMember)->allows($ability, participationArguments($ability, $proposal)))->toBeFalse();
 })->with('participation abilities');
 
-it('denies a member whose fee for the current year is not paid', function (string $ability) {
+it('lets an honorary member take part without any fee', function (string $ability) {
+    $member = EinundzwanzigPleb::factory()->create(['association_status' => AssociationStatus::HONORARY]);
+    $proposal = MemberProposal::factory()->create();
+
+    expect($member->paymentEvents()->exists())->toBeFalse()
+        ->and(proposalGate($member)->allows($ability, participationArguments($ability, $proposal)))->toBeTrue();
+})->with('participation abilities');
+
+it('lets a member whose fee was paid for the previous year take part', function (string $ability) {
     $member = EinundzwanzigPleb::factory()->active()->create();
     $member->paymentEvents()->create(['year' => now()->year - 1, 'amount' => 21000, 'paid' => true]);
     $member->paymentEvents()->create(['year' => now()->year, 'amount' => 21000, 'paid' => false]);
+    $proposal = MemberProposal::factory()->create();
+
+    expect(proposalGate($member)->allows($ability, participationArguments($ability, $proposal)))->toBeTrue();
+})->with('participation abilities');
+
+it('denies a member whose last paid fee is two years back', function (string $ability) {
+    $member = EinundzwanzigPleb::factory()->active()->create();
+    $member->paymentEvents()->create(['year' => now()->year - 2, 'amount' => 21000, 'paid' => true]);
+    $member->paymentEvents()->create(['year' => now()->year - 1, 'amount' => 21000, 'paid' => false]);
     $proposal = MemberProposal::factory()->create();
 
     expect(proposalGate($member)->allows($ability, participationArguments($ability, $proposal)))->toBeFalse();
 })->with('participation abilities');
 
 it('does not exempt a board member from the fee for taking part', function (string $ability) {
-    $board = EinundzwanzigPleb::factory()->boardMember()->create();
+    $board = EinundzwanzigPleb::factory()->boardMember()->active()->create();
     $proposal = MemberProposal::factory()->create();
 
-    expect(proposalGate($board)->allows($ability, participationArguments($ability, $proposal)))->toBeFalse();
+    expect(proposalGate($board)->allows('moderate', MemberProposal::class))->toBeTrue()
+        ->and(proposalGate($board)->allows($ability, participationArguments($ability, $proposal)))->toBeFalse();
 })->with('participation abilities');
 
 it('closes votes and comments on archived proposals', function (MemberProposalState $state) {

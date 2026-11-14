@@ -172,7 +172,9 @@ it('offers submitting to paying members and the meeting view to the board only',
         ->assertSeeHtml(route('association.proposals.create'))
         ->assertDontSeeHtml(route('association.proposals.board'));
 
-    NostrAuth::login(boardMember()->pubkey);
+    // An active board member without a fee: the board role alone opens the
+    // meeting view, not submitting.
+    NostrAuth::login(EinundzwanzigPleb::factory()->boardMember()->active()->create()->pubkey);
 
     Livewire::test('association.proposals.index')
         ->assertSeeHtml(route('association.proposals.board'))

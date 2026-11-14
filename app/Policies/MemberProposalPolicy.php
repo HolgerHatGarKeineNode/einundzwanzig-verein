@@ -3,6 +3,7 @@
 namespace App\Policies;
 
 use App\Auth\NostrUser;
+use App\Enums\AssociationStatus;
 use App\Enums\MemberProposalState;
 use App\Models\EinundzwanzigPleb;
 use App\Models\MemberProposal;
@@ -12,10 +13,10 @@ use App\Models\MemberProposalComment;
  * Who may do what with the members' proposals.
  *
  * Two circles and nothing in between. Taking part — reading, submitting,
- * commenting, voting — is for members whose fee for the current year is
- * settled; passive members are included on purpose, because this is an
- * opinion poll and not a resolution under the statutes. Deciding — state,
- * note, hiding — is for the board alone.
+ * commenting, voting — is for every member (see isParticipant()); passive
+ * members are included on purpose, because this is an opinion poll and not a
+ * resolution under the statutes. Deciding — state, note, hiding — is for the
+ * board alone.
  *
  * Every method that takes a user is typed non-nullable unless a guest must
  * get an answer other than "no": the gate denies a missing user by itself.
@@ -104,13 +105,32 @@ class MemberProposalPolicy
         return $this->isBoard($user);
     }
 
+    /**
+     * A member of the association: honorary members without a fee, passive
+     * and active members with the fee paid for this year or the last one. The
+     * previous year counts so that nobody is shut out from 1 January until
+     * the new fee is settled.
+     */
     private function isParticipant(NostrUser $user): bool
     {
         $pleb = $user->getPleb();
 
-        return $pleb instanceof EinundzwanzigPleb
-            && ! $pleb->isErased()
-            && $pleb->hasPaidMembership();
+        if (! $pleb instanceof EinundzwanzigPleb || $pleb->isErased()) {
+            return false;
+        }
+
+        if ($pleb->association_status === AssociationStatus::HONORARY) {
+            return true;
+        }
+
+        if (! in_array($pleb->association_status, [AssociationStatus::PASSIVE, AssociationStatus::ACTIVE], true)) {
+            return false;
+        }
+
+        $currentYear = (int) now()->year;
+
+        return $pleb->hasPaidMembership($currentYear)
+            || $pleb->hasPaidMembership($currentYear - 1);
     }
 
     private function isBoard(NostrUser $user): bool
