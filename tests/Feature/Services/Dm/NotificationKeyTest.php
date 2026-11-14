@@ -83,6 +83,33 @@ it('keeps the secret out of a dump', function () {
         ->and(print_r(new NotificationKey($secret), true))->toContain('yes');
 });
 
+it('offers the two signing shapes its docblock promises and no method that takes a kind', function () {
+    $class = new ReflectionClass(NotificationKey::class);
+    $surface = [];
+
+    foreach ($class->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
+        $surface[$method->getName()] = array_map(
+            fn (ReflectionParameter $parameter): string => $parameter->getType().' $'.$parameter->getName(),
+            $method->getParameters(),
+        );
+    }
+
+    ksort($surface);
+
+    // Exact, not "contains": a new public method has to change this list.
+    expect($class->isFinal())->toBeTrue()
+        ->and($surface)->toBe([
+            '__construct' => ['?string $configured'],
+            '__debugInfo' => [],
+            '__serialize' => [],
+            'conversationKeyWith' => ['string $recipientPubkey'],
+            'fromConfig' => [],
+            'publicKey' => [],
+            'signRelayAuth' => ['string $relayUrl', 'string $challenge', 'int $createdAt'],
+            'signSeal' => ['string $encryptedRumor', 'int $createdAt'],
+        ]);
+});
+
 function varDumperOutput(mixed $value): string
 {
     $memory = fopen('php://memory', 'r+');
