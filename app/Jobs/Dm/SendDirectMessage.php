@@ -77,6 +77,8 @@ class SendDirectMessage implements ShouldQueue
 
     private const int MAX_STORED_MESSAGE_LENGTH = 500;
 
+    private const string ERASED = 'The recipient has been erased.';
+
     public function __construct(public int $deliveryId) {}
 
     public function handle(RelayTransport $transport, DirectMessageSigner $signer, DirectMessageText $text): void
@@ -113,7 +115,7 @@ class SendDirectMessage implements ShouldQueue
         $recipient = $delivery->recipient;
 
         if ($recipient->isErased()) {
-            $this->finish($delivery, DmDeliveryStatus::Failed, 'The recipient has been erased.');
+            $this->finish($delivery, DmDeliveryStatus::Failed, self::ERASED);
 
             return;
         }
@@ -134,6 +136,12 @@ class SendDirectMessage implements ShouldQueue
             throw $exception;
         } catch (DirectMessageNotBuildable|DirectMessageTextInvalid $exception) {
             $this->finish($delivery, DmDeliveryStatus::Failed, $exception->getMessage());
+
+            return;
+        }
+
+        if ($wrap === null) {
+            $this->finish($delivery, DmDeliveryStatus::Failed, self::ERASED);
 
             return;
         }
@@ -162,7 +170,11 @@ class SendDirectMessage implements ShouldQueue
                 $result = RelayPublishResult::failed($exception::class.': '.$exception->getMessage());
             }
 
-            $this->recordRelay($delivery, $relayUrl, $result);
+            if (! $this->recordRelay($delivery, $relayUrl, $result)) {
+                $this->finish($delivery, DmDeliveryStatus::Failed, self::ERASED);
+
+                return;
+            }
 
             if ($result->accepted) {
                 $accepted++;
@@ -258,20 +270,27 @@ class SendDirectMessage implements ShouldQueue
     }
 
     /**
-     * @return array{id: string, pubkey: string, created_at: int, kind: int, tags: array<int, array<int, string>>, content: string, sig: string}
+     * Null when the recipient was erased while the wrap was being built; then
+     * nothing is written.
+     *
+     * @return array{id: string, pubkey: string, created_at: int, kind: int, tags: array<int, array<int, string>>, content: string, sig: string}|null
      */
     private function storedOrNewWrap(
         DmDelivery $delivery,
         EinundzwanzigPleb $recipient,
         DirectMessageSigner $signer,
         DirectMessageText $text,
-    ): array {
+    ): ?array {
         if (is_array($delivery->wrap)) {
             return $delivery->wrap;
         }
 
         $plaintext = $text->render($delivery->run->message, $recipient);
         $message = $signer->wrapFor($recipient, $plaintext);
+
+        if ($this->isErasedNow($recipient)) {
+            return null;
+        }
 
         $delivery->forceFill([
             'plaintext' => $plaintext,
@@ -283,8 +302,16 @@ class SendDirectMessage implements ShouldQueue
         return $message->wrap;
     }
 
-    private function recordRelay(DmDelivery $delivery, string $relayUrl, RelayPublishResult $result): void
+    /**
+     * False, and nothing written, when the recipient has been erased since
+     * the run began: the erasure has already cleared this delivery's rows.
+     */
+    private function recordRelay(DmDelivery $delivery, string $relayUrl, RelayPublishResult $result): bool
     {
+        if ($this->isErasedNow($delivery->recipient)) {
+            return false;
+        }
+
         $row = DmDeliveryRelay::query()->firstOrNew([
             'dm_delivery_id' => $delivery->id,
             'relay_url' => $relayUrl,
@@ -295,6 +322,17 @@ class SendDirectMessage implements ShouldQueue
             'message' => mb_substr($result->message, 0, self::MAX_STORED_MESSAGE_LENGTH),
             'attempts' => $row->attempts + 1,
         ])->save();
+
+        return true;
+    }
+
+    /**
+     * Read from the database, not from the model loaded at the start: an
+     * erasure can land while this job runs. A row that is gone counts as erased.
+     */
+    private function isErasedNow(EinundzwanzigPleb $recipient): bool
+    {
+        return $recipient->fresh()?->isErased() ?? true;
     }
 
     private function finish(DmDelivery $delivery, DmDeliveryStatus $status, ?string $error = null): void

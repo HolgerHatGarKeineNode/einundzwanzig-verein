@@ -5,11 +5,16 @@ use App\Jobs\Dm\SendDirectMessage;
 use App\Models\DmDelivery;
 use App\Models\DmDeliveryRelay;
 use App\Models\DmMessage;
+use App\Models\EinundzwanzigPleb;
 use App\Models\PlebDmRelay;
+use App\Models\Profile;
 use App\Services\MembershipService;
 use App\Services\Nostr\NostrRelayTransport;
 use App\Services\Nostr\NotificationKeyUnavailable;
+use App\Services\Nostr\RelayFetchResult;
+use App\Services\Nostr\RelayPublishResult;
 use App\Services\Nostr\RelayPublishStatus;
+use App\Services\Nostr\RelayTransport;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\FakeRelayTransport;
@@ -254,6 +259,77 @@ it('sends nothing to an erased member', function () {
     $relay->assertNothingPublished();
     expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::Failed)
         ->and($delivery->fresh()->error)->toBe('The recipient has been erased.');
+});
+
+/*
+ * An erasure that lands while the job runs: nothing the job writes afterwards
+ * may bring the member's text, rumor, wrap or relay answers back.
+ */
+function expectNothingStoredFor(DmDelivery $delivery): void
+{
+    $delivery->refresh();
+
+    expect(DmDeliveryRelay::query()->count())->toBe(0)
+        ->and($delivery->wrap)->toBeNull()
+        ->and($delivery->plaintext)->toBeNull()
+        ->and($delivery->rumor_id)->toBeNull()
+        ->and($delivery->status)->toBe(DmDeliveryStatus::Failed)
+        ->and($delivery->error)->toBe('The recipient has been erased.');
+}
+
+it('writes no relay answer when the member is erased during the first publish', function () {
+    [$member] = dmRecipient(['wss://one.example/', 'wss://two.example/']);
+    $delivery = dmDelivery($member);
+
+    $relay = new class($member) implements RelayTransport
+    {
+        public int $publishes = 0;
+
+        public function __construct(private EinundzwanzigPleb $member) {}
+
+        public function publish(string $relayUrl, array $event): RelayPublishResult
+        {
+            if (++$this->publishes === 1) {
+                app(MembershipService::class)->erasePersonalData($this->member);
+            }
+
+            return RelayPublishResult::accepted();
+        }
+
+        public function fetch(string $relayUrl, array $filter): RelayFetchResult
+        {
+            return RelayFetchResult::complete([]);
+        }
+    };
+    app()->instance(RelayTransport::class, $relay);
+
+    SendDirectMessage::dispatchSync($delivery->id);
+
+    expect($relay->publishes)->toBe(1);
+    expectNothingStoredFor($delivery);
+});
+
+it('writes no wrap when the member is erased while the wrap is being built', function () {
+    $relay = FakeRelayTransport::bind();
+    [$member] = dmRecipient();
+    Profile::factory()->create(['pubkey' => $member->pubkey, 'display_name' => 'Satoshi']);
+    $delivery = dmDelivery($member);
+
+    // Rendering the text reads the profile; the erasure lands right then,
+    // after the job's first check and before the wrap is written.
+    $erased = false;
+    Profile::retrieved(function () use (&$erased, $member): void {
+        if (! $erased) {
+            $erased = true;
+            app(MembershipService::class)->erasePersonalData($member);
+        }
+    });
+
+    SendDirectMessage::dispatchSync($delivery->id);
+
+    expect($erased)->toBeTrue();
+    $relay->assertNothingPublished();
+    expectNothingStoredFor($delivery);
 });
 
 it('fails a delivery whose text can no longer be filled in, without dialling', function () {
