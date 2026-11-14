@@ -1,0 +1,71 @@
+<?php
+
+namespace App\Models;
+
+use App\Enums\ElectionFeeRule;
+use App\Exceptions\ElectionRoundStateException;
+use Database\Factories\ElectionFactory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+/**
+ * An election of the association and the fee rule of its electoral roll.
+ */
+class Election extends Model
+{
+    /** @use HasFactory<ElectionFactory> */
+    use HasFactory;
+
+    /**
+     * What decides who is on the roll. Frozen once a round of this election
+     * has been opened — a rule changed afterwards would make two rounds of
+     * the same election answer "who may vote" differently.
+     *
+     * @var list<string>
+     */
+    public const ROLL_RULE_ATTRIBUTES = ['fee_rule', 'fee_year', 'honorary_without_fee'];
+
+    /**
+     * Not `elections`: the migration that dropped the old table recreates it
+     * under that name on rollback.
+     */
+    protected $table = 'election_events';
+
+    /** @var list<string> */
+    protected $fillable = [
+        'name',
+        'fee_rule',
+        'fee_year',
+        'honorary_without_fee',
+    ];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'fee_rule' => ElectionFeeRule::class,
+            'fee_year' => 'integer',
+            'honorary_without_fee' => 'boolean',
+        ];
+    }
+
+    protected static function booted(): void
+    {
+        static::updating(function (self $election): void {
+            if ($election->isDirty(self::ROLL_RULE_ATTRIBUTES) && $election->rounds()->whereNotNull('opened_at')->exists()) {
+                throw new ElectionRoundStateException('The fee rule of an election is frozen once one of its rounds has been opened.');
+            }
+        });
+    }
+
+    /**
+     * @return HasMany<ElectionRound, $this>
+     */
+    public function rounds(): HasMany
+    {
+        return $this->hasMany(ElectionRound::class, 'election_event_id')->orderBy('position');
+    }
+}
