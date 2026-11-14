@@ -2,6 +2,7 @@
 
 namespace Tests\Support;
 
+use App\Services\Nostr\RelayFetchResult;
 use App\Services\Nostr\RelayPublishResult;
 use App\Services\Nostr\RelayTransport;
 
@@ -18,7 +19,7 @@ final class RefusingRelayTransport implements RelayTransport
         throw StrayRelayConnection::throughTransport('publish', $relayUrl);
     }
 
-    public function fetch(string $relayUrl, array $filter): array
+    public function fetch(string $relayUrl, array $filter): RelayFetchResult
     {
         RelayTripwire::record('transport', 'fetch', $relayUrl);
 

@@ -1,5 +1,6 @@
 <?php
 
+use App\Services\Nostr\RelayPublishStatus;
 use App\Services\Nostr\RelayTransport;
 use PHPUnit\Framework\AssertionFailedError;
 use Tests\Support\FakeRelayTransport;
@@ -52,12 +53,39 @@ it('returns the events stored for the asked relay only and records the filter', 
     $relay = FakeRelayTransport::bind()
         ->withStoredEvents('wss://one.example/', [['kind' => 10050, 'id' => 'inbox']]);
 
-    expect($relay->fetch('wss://one.example/', ['kinds' => [10050]]))->toBe([['kind' => 10050, 'id' => 'inbox']])
-        ->and($relay->fetch('wss://two.example/', ['kinds' => [10050]]))->toBe([])
+    $one = $relay->fetch('wss://one.example/', ['kinds' => [10050]]);
+    $two = $relay->fetch('wss://two.example/', ['kinds' => [10050]]);
+
+    expect([$one->events, $one->complete])->toBe([[['kind' => 10050, 'id' => 'inbox']], true])
+        ->and([$two->events, $two->complete])->toBe([[], true])
         ->and($relay->fetched())->toBe([
             ['relay' => 'wss://one.example/', 'filter' => ['kinds' => [10050]]],
             ['relay' => 'wss://two.example/', 'filter' => ['kinds' => [10050]]],
         ]);
+});
+
+it('reports an unanswering relay as incomplete, keeping what it had sent', function () {
+    $relay = FakeRelayTransport::bind()
+        ->withStoredEvents('wss://slow.example/', [['kind' => 10050, 'id' => 'partial']])
+        ->withUnansweringRelay('wss://slow.example/', 'timeout: no EOSE within 10 s');
+
+    $result = $relay->fetch('wss://slow.example/', ['kinds' => [10050]]);
+
+    expect([$result->events, $result->complete, $result->message])
+        ->toBe([[['kind' => 10050, 'id' => 'partial']], false, 'timeout: no EOSE within 10 s']);
+});
+
+it('plays failed and refused outcomes as results with their own status', function () {
+    $relay = FakeRelayTransport::bind()
+        ->thenFail('timeout: no OK within 10 s')
+        ->thenRefuse('refused: private address');
+
+    $failed = $relay->publish('wss://one.example/', ['kind' => 1059, 'id' => 'a']);
+    $refused = $relay->publish('wss://one.example/', ['kind' => 1059, 'id' => 'a']);
+
+    expect([$failed->status, $failed->accepted, $failed->message])
+        ->toBe([RelayPublishStatus::Failed, false, 'timeout: no OK within 10 s'])
+        ->and([$refused->status, $refused->accepted])->toBe([RelayPublishStatus::Refused, false]);
 });
 
 it('fails its own assertions when the count is off', function () {

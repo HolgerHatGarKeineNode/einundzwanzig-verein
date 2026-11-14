@@ -43,6 +43,7 @@ it('has no signing key and no relay to publish to', function (string $key) {
     expect(config($key))->toBeEmpty();
 })->with([
     'signing key' => 'services.nostr',
+    'notification key' => 'services.nostr_notification_key',
     'publishing relay' => 'services.relay',
     'profile relays' => 'einundzwanzig.config.profile_relays',
     'chat space relay' => 'group.space_url',

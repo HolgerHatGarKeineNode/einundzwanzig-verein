@@ -22,6 +22,12 @@ use Symfony\Component\Finder\Finder;
  *
  * Mutation M0d: add `new \swentel\nostr\Relay\Relay(...)` to any other class
  * under app/ → red.
+ *
+ * Direct messages have exactly one way to a relay: RelayTransport, bound
+ * outside tests to App\Services\Nostr\NostrRelayTransport, which dials
+ * through RelayConnector. The second test pins that path: one file builds a
+ * WebSocket client, and only the transport and the container know the
+ * connector and its socket layer.
  */
 
 it('lets no file but the listed ones open a relay connection of its own', function () {
@@ -71,9 +77,48 @@ it('lets no file but the listed ones open a relay connection of its own', functi
         ->and($found)->toBe([
             'app/Console/Commands/Nostr/FetchEvents.php',
             'app/Jobs/PublishPaymentEventToNostr.php',
+            // The production RelayTransport's socket layer; pinned by the test below.
+            'app/Services/Nostr/Relay/WebSocket/BoundedSocketClient.php',
+            'app/Services/Nostr/Relay/WebSocket/BoundedSocketStream.php',
+            'app/Services/Nostr/Relay/WebSocket/BoundedStreamFactory.php',
+            'app/Services/Nostr/Relay/WebSocket/WebSocketRelayConnection.php',
+            'app/Services/Nostr/Relay/WebSocket/WebSocketRelayConnector.php',
             'app/Traits/NostrFetcherTrait.php',
             'resources/views/livewire/association/profile.blade.php',
             'vendor/einundzwanzig/group/src/Nostr/ProfileCache.php',
             'vendor/einundzwanzig/group/src/Nostr/SpaceCache.php',
+        ]);
+});
+
+it('keeps the direct-message relay path to the transport, its connector and one client constructor', function () {
+    $files = Finder::create()
+        ->files()
+        ->name('*.php')
+        ->in(array_map(base_path(...), ['app', 'bootstrap', 'config', 'database', 'resources/views', 'routes']))
+        ->notPath('cache');
+
+    $constructsClient = [];
+    $knowsConnector = [];
+
+    foreach ($files as $file) {
+        $source = $file->getContents();
+        $path = str_replace(base_path().'/', '', $file->getPathname());
+
+        if (preg_match('/\bnew\s+(\\\\?WebSocket\\\\)?Client\s*\(/', $source) === 1) {
+            $constructsClient[] = $path;
+        }
+
+        if (! str_starts_with($path, 'app/Services/Nostr/Relay/')
+            && preg_match('/\b(RelayConnector|Relay\\\\WebSocket\\\\)/', $source) === 1) {
+            $knowsConnector[] = $path;
+        }
+    }
+
+    sort($knowsConnector);
+
+    expect($constructsClient)->toBe(['app/Services/Nostr/Relay/WebSocket/WebSocketRelayConnector.php'])
+        ->and($knowsConnector)->toBe([
+            'app/Providers/AppServiceProvider.php',
+            'app/Services/Nostr/NostrRelayTransport.php',
         ]);
 });
