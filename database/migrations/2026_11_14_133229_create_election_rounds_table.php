@@ -19,12 +19,16 @@ return new class extends Migration
      * by `opened_at`. `closed_at` is the moment the round was sealed — closed for
      * good and its ballot rows rewritten — and is the only thing a tally may key
      * on.
+     *
+     * The election restricts deletion rather than cascading to its rounds: an
+     * opened round holds a roll and ballots and must never go with it.
+     * `Election` deletes its draft rounds itself before it goes.
      */
     public function up(): void
     {
         Schema::create('election_rounds', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('election_event_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('election_event_id')->constrained()->restrictOnDelete();
             $table->foreignId('parent_round_id')->nullable()->constrained('election_rounds')->restrictOnDelete();
             $table->unsignedInteger('position');
             $table->string('title');

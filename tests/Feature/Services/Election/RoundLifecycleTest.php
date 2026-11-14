@@ -11,6 +11,7 @@ use App\Models\ElectionRound;
 use App\Services\Election\CastBallot;
 use App\Services\Election\CloseRound;
 use App\Services\Election\OpenRound;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Finder\Finder;
@@ -419,4 +420,33 @@ it('reads ballot rows in the application only where the secrecy is guarded', fun
         'app/Services/Election/CastBallot.php',
         'app/Services/Election/CloseRound.php',
     ]);
+});
+
+it('deletes an election whose rounds are all drafts, run-offs included', function () {
+    $election = Election::factory()->create();
+    $first = draftElectionRound(election: $election);
+    $runOff = draftElectionRound(['parent_round_id' => $first->id], election: $election);
+
+    $election->delete();
+
+    expect(Election::query()->whereKey($election->id)->exists())->toBeFalse()
+        ->and(ElectionRound::query()->whereKey([$first->id, $runOff->id])->exists())->toBeFalse()
+        ->and(ElectionCandidate::query()->whereIn('election_round_id', [$first->id, $runOff->id])->exists())->toBeFalse();
+});
+
+it('refuses to delete an election once one of its rounds has been opened', function () {
+    $voter = electionVoter();
+    $election = Election::factory()->create();
+    draftElectionRound(election: $election);
+    $round = openElectionRound(election: $election);
+    castElectionBallot($round, $voter);
+
+    expect(fn () => $election->delete())->toThrow(ElectionRoundStateException::class)
+        ->and(Election::query()->whereKey($election->id)->exists())->toBeTrue()
+        ->and($election->rounds()->count())->toBe(2)
+        ->and(electionRowCounts($round))->toBe(['marks' => 1, 'choices' => 1, 'receipts' => 1]);
+
+    // Nor does the database let the election go past the model.
+    expect(fn () => DB::table('election_events')->where('id', $election->id)->delete())->toThrow(QueryException::class)
+        ->and(ElectionRound::query()->whereKey($round->id)->exists())->toBeTrue();
 });

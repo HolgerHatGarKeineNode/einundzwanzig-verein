@@ -59,6 +59,30 @@ class Election extends Model
                 throw new ElectionRoundStateException('The fee rule of an election is frozen once one of its rounds has been opened.');
             }
         });
+
+        /*
+         * An election goes only as long as all of its rounds are drafts. The
+         * rounds are deleted one by one through the model, run-offs before
+         * the round they belong to, so each passes its own draft-only guard;
+         * `election_rounds.election_event_id` restricts deletion in the
+         * database, so no cascade can take an opened round along with it.
+         */
+        static::deleting(function (self $election): void {
+            if ($election->rounds()->whereNotNull('opened_at')->exists()) {
+                throw new ElectionRoundStateException('An election can only be deleted while all of its rounds are drafts.');
+            }
+
+            while (($rounds = $election->rounds()->get())->isNotEmpty()) {
+                $parents = $rounds->pluck('parent_round_id')->filter()->map(fn (mixed $id): int => (int) $id)->all();
+                $leaves = $rounds->reject(fn (ElectionRound $round): bool => in_array((int) $round->getKey(), $parents, true));
+
+                if ($leaves->isEmpty()) {
+                    throw new ElectionRoundStateException('The rounds of this election refer to each other in a circle.');
+                }
+
+                $leaves->each(fn (ElectionRound $round): ?bool => $round->delete());
+            }
+        });
     }
 
     /**
