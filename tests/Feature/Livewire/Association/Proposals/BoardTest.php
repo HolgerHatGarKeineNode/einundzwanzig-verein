@@ -171,8 +171,11 @@ it('answers 403 to a member removed from the board after the page was loaded', f
         config()->set('einundzwanzig.config.current_board', $board);
 
         // Loaded as a board member: the page is allowed and offers the actions.
+        // A note is typed first: with an empty field saveBoardNote() would
+        // write null over null, and a missing check would leave no trace.
         $page = Livewire::test($component, ['memberProposal' => $proposal])
-            ->assertSeeHtml('setProposalState('.$proposal->id);
+            ->assertSeeHtml('setProposalState('.$proposal->id)
+            ->set('boardNotes.'.$proposal->id, 'Typed before the board changed');
 
         config()->set('einundzwanzig.config.current_board', array_slice($board, 1));
 
