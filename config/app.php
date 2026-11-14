@@ -78,7 +78,8 @@ return [
     |
     */
 
-    'locale' => env('APP_LOCALE', 'de'),
+    // The association's site is German only; the locale is pinned, not read from the env.
+    'locale' => 'de',
 
     'fallback_locale' => env('APP_FALLBACK_LOCALE', 'en'),
 
