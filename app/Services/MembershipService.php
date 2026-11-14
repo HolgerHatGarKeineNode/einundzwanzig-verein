@@ -544,8 +544,11 @@ class MembershipService
          * ever goes looking for and nothing ever repairs.
          */
         DB::transaction(function () use ($paymentEvent, $settlement): void {
+            // `paid_at` is the moment of settlement and is written on the
+            // flip only: a redelivery on a paid row must not move it, or a
+            // fee settled before a round opened would look like a late payment.
             if (! $paymentEvent->paid) {
-                $paymentEvent->update(['paid' => true]);
+                $paymentEvent->forceFill(['paid' => true, 'paid_at' => now()])->save();
             }
 
             $this->grantMembershipOnPayment($paymentEvent, $settlement);

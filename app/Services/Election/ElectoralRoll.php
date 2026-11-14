@@ -96,6 +96,15 @@ class ElectoralRoll
      * been opened and has not ended, provided the payment makes them
      * entitled under that election's rule.
      *
+     * Late means late: the qualifying payment must have been settled
+     * (`paid_at`) at or after the round's opening and before its end. A
+     * member whose fee was already settled at the opening and who was not
+     * entitled then — a PASSIVE member promoted to ACTIVE afterwards, say —
+     * is not enrolled by a later status change or by a redelivery of that
+     * old settlement; the snapshot at the opening decided about them. A
+     * run-off is a round of its own here: whoever pays while it is open is
+     * enrolled in it.
+     *
      * Only ever adds. Called again for the same payment it changes nothing.
      */
     public function enrolLatePayer(EinundzwanzigPleb $pleb, CarbonInterface $at): void
@@ -109,11 +118,23 @@ class ElectoralRoll
             ->get();
 
         foreach ($rounds as $round) {
-            $reason = $this->reasonFor($round->election, $pleb, $at);
+            $feePaid = $this->feePaid($round->election, $at);
 
-            if ($reason === null) {
+            $entitled = $this->entitled($round->election, $at)
+                ->whereKey($pleb->getKey())
+                ->whereHas('paymentEvents', function (Builder $payments) use ($feePaid, $round): void {
+                    $feePaid($payments);
+
+                    $payments->where('paid_at', '>=', $round->opened_at)
+                        ->where('paid_at', '<', $round->closes_at);
+                })
+                ->first();
+
+            if ($entitled === null) {
                 continue;
             }
+
+            $reason = $this->reasonOf($entitled);
 
             $this->insert($round, [[
                 'einundzwanzig_pleb_id' => $pleb->getKey(),
@@ -155,9 +176,10 @@ class ElectoralRoll
      * A year rule without a year matches nothing: an unreadable rule entitles
      * nobody rather than everybody.
      *
-     * `LastTwelveMonths` reads `updated_at` of the paid row, because
-     * `payment_events` has no column for the moment of settlement and
-     * `MembershipService::markPaid()` is what last writes a paid row.
+     * `LastTwelveMonths` reads `paid_at`, the moment of settlement written
+     * once by `MembershipService::markPaid()`. A paid row without it (written
+     * by hand, never through `markPaid()`) does not count: an unknown moment
+     * of payment entitles nobody.
      *
      * @return Closure(Builder<PaymentEvent>): void
      */
@@ -178,7 +200,7 @@ class ElectoralRoll
             match ($rule) {
                 ElectionFeeRule::Year => $payments->where('year', $year),
                 ElectionFeeRule::YearOrPrevious => $payments->whereIn('year', [$year, $year - 1]),
-                ElectionFeeRule::LastTwelveMonths => $payments->where('updated_at', '>=', $at->copy()->subMonths(12)),
+                ElectionFeeRule::LastTwelveMonths => $payments->where('paid_at', '>=', $at->copy()->subMonths(12)),
             };
         };
     }

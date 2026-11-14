@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\AssociationStatus;
+use App\Enums\ElectionBallotRefusal;
 use App\Enums\ElectionFeeRule;
 use App\Enums\ElectionRollReason;
 use App\Models\EinundzwanzigPleb;
@@ -8,6 +9,7 @@ use App\Models\Election;
 use App\Models\ElectionRollEntry;
 use App\Models\ElectionRound;
 use App\Models\PaymentEvent;
+use App\Services\BtcPayClient;
 use App\Services\Election\CloseRound;
 use App\Services\Election\ElectoralRoll;
 use App\Services\Election\OpenRound;
@@ -134,7 +136,7 @@ it('applies the fee rule the election names', function (ElectionFeeRule $rule, a
     foreach (['paid 2027' => 2, 'paid 2026' => 11, 'paid 2025' => 13] as $name => $monthsAgo) {
         DB::table('payment_events')
             ->where('einundzwanzig_pleb_id', $members[$name]->id)
-            ->update(['updated_at' => now()->subMonths($monthsAgo)]);
+            ->update(['paid_at' => now()->subMonths($monthsAgo)]);
     }
 
     $election = Election::factory()->feeRule($rule, $rule->needsFeeYear() ? 2027 : null)->create();
@@ -228,6 +230,105 @@ it('leaves an entry as it is when its member pays again', function () {
     settleElectionFee($voter, (int) now()->year);
 
     expect(electionRollOf($round))->toBe([$voter->id => ['active_fee_paid', 'opening']]);
+});
+
+it('does not enrol a member promoted after the opening whose fee was settled before it', function () {
+    $this->travelTo(Carbon::parse('2027-03-20 14:00:00'));
+
+    $member = memberWithStatus(AssociationStatus::PASSIVE);
+    $paymentEvent = settleElectionFee($member, 2027);
+    $paidAt = $paymentEvent->fresh()->paid_at;
+
+    $this->travelTo(now()->addHour());
+    $round = openElectionRound();
+
+    expect(electionRollOf($round))->toBe([]);
+
+    $this->travelTo(now()->addMinutes(10));
+    $member->forceFill(['association_status' => AssociationStatus::ACTIVE])->save();
+
+    // The profile page polls the invoice; BTCPay still says Settled.
+    $this->mock(BtcPayClient::class)
+        ->shouldReceive('getInvoice')
+        ->once()
+        ->andReturn([
+            'id' => $paymentEvent->btc_pay_invoice,
+            'status' => 'Settled',
+            'amount' => '21000',
+            'currency' => 'SATS',
+        ]);
+
+    app(MembershipService::class)->refreshPaymentStatus($paymentEvent->fresh());
+
+    expect(electionRollOf($round))->toBe([])
+        ->and($paymentEvent->fresh()->paid_at->equalTo($paidAt))->toBeTrue()
+        ->and(electionRefusal(fn () => castElectionBallot($round, $member->fresh())))->toBe(ElectionBallotRefusal::NotOnRoll);
+});
+
+it('enrols a payer whose fee is settled inside the window, next to one settled before it', function () {
+    $this->travelTo(Carbon::parse('2027-03-20 14:00:00'));
+
+    $early = memberWithStatus(AssociationStatus::PASSIVE);
+    settleElectionFee($early, 2027);
+    $late = memberWithStatus(AssociationStatus::ACTIVE);
+
+    $this->travelTo(now()->addHour());
+    $round = openElectionRound();
+    $early->forceFill(['association_status' => AssociationStatus::ACTIVE])->save();
+
+    $this->travelTo(now()->addMinutes(10));
+    settleElectionFee($late, 2027);
+
+    expect(electionRollOf($round))->toBe([$late->id => ['active_fee_paid', 'late_payment']]);
+});
+
+it('enrols a late payer in an open run-off', function () {
+    $voter = electionVoter();
+    $election = Election::factory()->create();
+    $parent = app(CloseRound::class)->handle(openElectionRound(election: $election));
+    $runOff = openElectionRound(['parent_round_id' => $parent->id], election: $election);
+
+    $this->travelTo(now()->addMinutes(5));
+    $late = memberWithStatus(AssociationStatus::ACTIVE);
+    settleElectionFee($late, (int) now()->year);
+
+    expect(electionRollOf($runOff))->toBe([
+        $voter->id => ['active_fee_paid', 'inherited'],
+        $late->id => ['active_fee_paid', 'late_payment'],
+    ])->and(electionRollOf($parent))->toBe([$voter->id => ['active_fee_paid', 'opening']]);
+});
+
+it('writes the moment of settlement once and keeps it on a redelivery', function () {
+    $this->travelTo(Carbon::parse('2027-03-20 14:00:00'));
+
+    $paymentEvent = settleElectionFee(memberWithStatus(AssociationStatus::ACTIVE), 2027);
+
+    expect($paymentEvent->fresh()->paid_at->toDateTimeString())->toBe('2027-03-20 14:00:00');
+
+    $this->travelTo(now()->addDay());
+    $result = app(MembershipService::class)->markPaid($paymentEvent->fresh(), [
+        'id' => $paymentEvent->btc_pay_invoice,
+        'status' => 'Settled',
+        'amount' => '21000',
+        'currency' => 'SATS',
+    ]);
+
+    expect($result['settled'])->toBeTrue()
+        ->and($paymentEvent->fresh()->paid_at->toDateTimeString())->toBe('2027-03-20 14:00:00');
+});
+
+it('reads the twelve-month rule from the moment of settlement, not from the last write', function () {
+    $this->travelTo(Carbon::parse('2027-03-20 14:00:00'));
+
+    $member = memberWithStatus(AssociationStatus::ACTIVE, 2026);
+    DB::table('payment_events')->where('einundzwanzig_pleb_id', $member->id)->update([
+        'paid_at' => now()->subMonths(13),
+        'updated_at' => now()->subDay(),
+    ]);
+
+    $election = Election::factory()->feeRule(ElectionFeeRule::LastTwelveMonths, null)->create();
+
+    expect(electionRollOf(openElectionRound(election: $election)))->toBe([]);
 });
 
 it('books the payment even when the enrolment fails, and reports the failure', function () {
