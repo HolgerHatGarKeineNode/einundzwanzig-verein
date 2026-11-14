@@ -310,7 +310,7 @@ new class extends Component
                     @if ($proposal->isArchived())
                         {{ __('Dieser Vorschlag liegt im Archiv. Stimmen und Kommentare sind geschlossen.') }}
                     @elseif (! $this->canVote)
-                        {{ __('Abstimmen und kommentieren können Mitglieder mit bezahltem Beitrag für das laufende Jahr.') }}
+                        {{ __('Abstimmen und kommentieren können Ehrenmitglieder sowie Mitglieder, die den Beitrag für dieses oder das vergangene Jahr bezahlt haben.') }}
                     @endif
                     {{ __('Angezeigt werden nur die beiden Zahlen, nie Namen. Wer wie gestimmt hat, ist in der Datenbank des Vereins gespeichert, weil du deine Stimme sonst nicht ändern oder zurücknehmen könntest. Das ist anders als bei einer Wahl.') }}
                 </p>
