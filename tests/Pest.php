@@ -14,6 +14,7 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use swentel\nostr\Event\Event;
 use swentel\nostr\Key\Key;
 use swentel\nostr\Sign\Sign;
+use Tests\Engine\EngineTestCase;
 use Tests\Support\RelayTripwire;
 use Tests\TestCase;
 
@@ -29,6 +30,14 @@ use Tests\TestCase;
 */
 
 pest()->extend(TestCase::class)->use(RefreshDatabase::class)->in('Feature');
+
+/*
+| tests/Engine is in no testsuite of phpunit.xml and therefore not part of
+| `php artisan test`: it needs a real database engine, which
+| scripts/test-engine.sh provides. Its base class refuses to touch any other
+| database (see Tests\Engine\EngineTestCase).
+*/
+pest()->extend(EngineTestCase::class)->in('Engine');
 
 /*
 |--------------------------------------------------------------------------
@@ -187,7 +196,7 @@ require_once __DIR__.'/Support/phrity-net-socket-shadow.php';
 pest()
     ->beforeEach(fn () => RelayTripwire::arm(app()))
     ->afterEach(fn () => RelayTripwire::assertNothingAttempted())
-    ->in('Feature');
+    ->in('Feature', 'Engine');
 
 pest()
     ->beforeEach(fn () => RelayTripwire::reset())
