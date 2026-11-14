@@ -56,6 +56,9 @@ it('wraps the message so that the recipient opens it and no other member does', 
     SendDirectMessage::dispatchSync($delivery->id);
 
     $wrap = $relay->published()[0]['event'];
+
+    expect(fn () => openWrapWith($wrap, $secret))->not->toThrow(Exception::class);
+
     $rumor = openWrapWith($wrap, $secret);
 
     expect($rumor['id'])->toBe($delivery->fresh()->rumor_id)
