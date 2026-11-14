@@ -13,6 +13,10 @@ use App\Models\ElectionReceipt;
 use App\Models\ElectionRound;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\RateLimiter;
+use Laravel\Nightwatch\Facades\Nightwatch;
+use Sentry\SentrySdk;
+use Sentry\State\Scope;
 
 /**
  * Take in one ballot.
@@ -27,9 +31,19 @@ use Illuminate\Support\Facades\DB;
  * that names the member or the choice. The rows are written through the
  * query builder for that reason too — no model events, no model instances
  * holding a ballot.
+ *
+ * Nor may the telemetry see it (E23). The cast runs in a Sentry scope of its
+ * own, without a current span and discarded afterwards — no SQL breadcrumb,
+ * no query span of the writes reaches an event — and with Nightwatch paused.
+ * Attempts are throttled per member.
  */
 class CastBallot
 {
+    /** Attempts per member within `DECAY_SECONDS`, refused or not. */
+    public const MAX_ATTEMPTS = 5;
+
+    public const DECAY_SECONDS = 60;
+
     public function __construct(protected ElectoralRoll $roll) {}
 
     /**
@@ -39,6 +53,41 @@ class CastBallot
      * @throws ElectionBallotRefusedException
      */
     public function handle(ElectionRound $round, EinundzwanzigPleb $voter, array $selection, string $receiptCode): void
+    {
+        SentrySdk::getCurrentHub()->withScope(function (Scope $scope) use ($round, $voter, $selection, $receiptCode): void {
+            $scope->setSpan(null);
+
+            Nightwatch::ignore(function () use ($round, $voter, $selection, $receiptCode): void {
+                $this->throttle($voter);
+                $this->write($round, $voter, $selection, $receiptCode);
+            });
+        });
+    }
+
+    /**
+     * Inside the blackout too: the limiter's cache events carry a key that
+     * names the member. The key holds a count and an expiry, never a round,
+     * a choice or a code.
+     *
+     * @throws ElectionBallotRefusedException
+     */
+    protected function throttle(EinundzwanzigPleb $voter): void
+    {
+        $key = 'election-cast:'.$voter->getKey();
+
+        if (RateLimiter::tooManyAttempts($key, self::MAX_ATTEMPTS)) {
+            throw new ElectionBallotRefusedException(ElectionBallotRefusal::TooManyAttempts);
+        }
+
+        RateLimiter::hit($key, self::DECAY_SECONDS);
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $selection
+     *
+     * @throws ElectionBallotRefusedException
+     */
+    protected function write(ElectionRound $round, EinundzwanzigPleb $voter, array $selection, string $receiptCode): void
     {
         DB::transaction(function () use ($round, $voter, $selection, $receiptCode): void {
             /*

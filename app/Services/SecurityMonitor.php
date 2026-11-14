@@ -19,6 +19,20 @@ class SecurityMonitor
     private const SEVERITY_LOW = 'low';
 
     /**
+     * A Livewire component of an election: a name with the segment
+     * `election` (`association.election.ballot`, `association.board.election`).
+     */
+    private const ELECTION_COMPONENT_PATTERN = '/(^|\.)election(\.|$)/';
+
+    /**
+     * What stands in `exception_message` for an election component. The
+     * payload, the property path and the message of a tampered request to
+     * a ballot carry the member and the attempted choice (E23); the class,
+     * the component name, the route and the client stay.
+     */
+    public const ELECTION_MESSAGE = 'Withheld: election component.';
+
+    /**
      * Livewire security exceptions that indicate tampering attempts.
      *
      * @var array<string>
@@ -65,8 +79,9 @@ class SecurityMonitor
             }
 
             $componentName = $this->extractComponentName($request);
-            $targetProperty = $this->extractTargetProperty($exception);
-            $payload = $this->sanitizePayload($request);
+            $election = $this->involvesElectionComponent($request);
+            $targetProperty = $election ? null : $this->extractTargetProperty($exception);
+            $payload = $election ? null : $this->sanitizePayload($request);
             $severity = $this->determineSeverity($exception, $payload);
 
             SecurityAttempt::query()->create([
@@ -76,7 +91,9 @@ class SecurityMonitor
                 'url' => $this->truncate($request->fullUrl(), 2000),
                 'route_name' => $request->route()?->getName(),
                 'exception_class' => get_class($exception),
-                'exception_message' => $this->truncate($exception->getMessage(), 1000),
+                'exception_message' => $election
+                    ? self::ELECTION_MESSAGE
+                    : $this->truncate($exception->getMessage(), 1000),
                 'component_name' => $componentName,
                 'target_property' => $targetProperty,
                 'payload' => $payload,
@@ -117,6 +134,32 @@ class SecurityMonitor
             return $snapshot['memo']['name'] ?? null;
         } catch (Throwable) {
             return null;
+        }
+    }
+
+    /**
+     * Whether any component in the request belongs to an election — a
+     * Livewire request may bundle several. A snapshot that cannot be read
+     * counts as one: the payload is then withheld, not stored.
+     */
+    private function involvesElectionComponent(Request $request): bool
+    {
+        try {
+            foreach ((array) $request->input('components', []) as $component) {
+                $snapshot = json_decode((string) ($component['snapshot'] ?? ''), true);
+
+                if (! is_array($snapshot)) {
+                    return true;
+                }
+
+                if (preg_match(self::ELECTION_COMPONENT_PATTERN, (string) ($snapshot['memo']['name'] ?? '')) === 1) {
+                    return true;
+                }
+            }
+
+            return false;
+        } catch (Throwable) {
+            return true;
         }
     }
 

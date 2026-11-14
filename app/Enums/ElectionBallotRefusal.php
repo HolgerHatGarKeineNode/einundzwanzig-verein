@@ -20,6 +20,8 @@ enum ElectionBallotRefusal: string
 
     case InvalidReceipt = 'invalid_receipt';
 
+    case TooManyAttempts = 'too_many_attempts';
+
     public function label(): string
     {
         return match ($this) {
@@ -28,6 +30,7 @@ enum ElectionBallotRefusal: string
             self::AlreadyVoted => __('Du hast in diesem Wahlgang bereits gewählt.'),
             self::InvalidChoices => __('Dieser Stimmzettel ist nicht gültig ausgefüllt.'),
             self::InvalidReceipt => __('Der Quittungscode ist ungültig. Bitte lade die Seite neu und versuche es noch einmal.'),
+            self::TooManyAttempts => __('Zu viele Versuche. Bitte warte eine Minute und versuche es dann noch einmal.'),
         };
     }
 }
