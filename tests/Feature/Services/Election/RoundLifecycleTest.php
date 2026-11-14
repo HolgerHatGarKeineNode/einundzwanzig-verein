@@ -371,6 +371,8 @@ it('pins every public method of the classes that hold or hand out ballot rows', 
      */
     $surface = [
         Election::class => [
+            'isLedBy(?App\Models\EinundzwanzigPleb $pleb): bool',
+            'lead(): Illuminate\Database\Eloquent\Relations\BelongsTo',
             'rounds(): Illuminate\Database\Eloquent\Relations\HasMany',
             'static factory($count, $state)',
         ],

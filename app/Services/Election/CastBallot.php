@@ -3,6 +3,7 @@
 namespace App\Services\Election;
 
 use App\Enums\ElectionBallotRefusal;
+use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionBallotRefusedException;
 use App\Models\EinundzwanzigPleb;
@@ -55,9 +56,11 @@ class CastBallot
                 throw new ElectionBallotRefusedException(ElectionBallotRefusal::NotOnRoll);
             }
 
+            // Approved candidacies only: a pending, rejected or withdrawn one
+            // is not on the ballot, whatever id the request names.
             $rows = $round->counting_rule->ballotRows(
                 $selection,
-                $round->candidates()->pluck('id')->all(),
+                $round->candidates()->where('status', ElectionCandidateStatus::Approved)->pluck('id')->all(),
                 $round->seats,
             );
 

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\ElectionCandidateStatus;
 use App\Exceptions\ElectionRoundStateException;
 use Database\Factories\ElectionCandidateFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -9,7 +10,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * A member standing in a round.
+ * A member's candidacy in a round. On the ballot only once approved; see
+ * `App\Services\Election\Candidacies` for the way through the states.
  */
 class ElectionCandidate extends Model
 {
@@ -20,7 +22,19 @@ class ElectionCandidate extends Model
     protected $fillable = [
         'election_round_id',
         'einundzwanzig_pleb_id',
+        'status',
+        'statement',
     ];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'status' => ElectionCandidateStatus::class,
+        ];
+    }
 
     /**
      * The list of candidates is part of what a round freezes when it opens:

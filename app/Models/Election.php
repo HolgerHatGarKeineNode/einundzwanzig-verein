@@ -7,6 +7,7 @@ use App\Exceptions\ElectionRoundStateException;
 use Database\Factories\ElectionFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
@@ -38,6 +39,7 @@ class Election extends Model
         'fee_rule',
         'fee_year',
         'honorary_without_fee',
+        'is_test',
     ];
 
     /**
@@ -49,12 +51,23 @@ class Election extends Model
             'fee_rule' => ElectionFeeRule::class,
             'fee_year' => 'integer',
             'honorary_without_fee' => 'boolean',
+            'is_test' => 'boolean',
+            'announced_at' => 'datetime',
         ];
     }
 
     protected static function booted(): void
     {
         static::updating(function (self $election): void {
+            /*
+             * Fixed at creation: `election:purge-test` deletes every row of a
+             * test election, so a real election must never become one — and
+             * a trial must not turn into the real thing either.
+             */
+            if ($election->isDirty('is_test')) {
+                throw new ElectionRoundStateException('Whether an election is a test is fixed when it is created.');
+            }
+
             if ($election->isDirty(self::ROLL_RULE_ATTRIBUTES) && $election->rounds()->whereNotNull('opened_at')->exists()) {
                 throw new ElectionRoundStateException('The fee rule of an election is frozen once one of its rounds has been opened.');
             }
@@ -83,6 +96,28 @@ class Election extends Model
                 $leaves->each(fn (ElectionRound $round): ?bool => $round->delete());
             }
         });
+    }
+
+    /**
+     * The Wahlleitung of this election.
+     *
+     * @return BelongsTo<EinundzwanzigPleb, $this>
+     */
+    public function lead(): BelongsTo
+    {
+        return $this->belongsTo(EinundzwanzigPleb::class, 'election_lead_pleb_id');
+    }
+
+    /**
+     * Is `$pleb` the Wahlleitung of this election? An election without one,
+     * or a member who has been erased, is led by nobody.
+     */
+    public function isLedBy(?EinundzwanzigPleb $pleb): bool
+    {
+        return $pleb !== null
+            && $this->election_lead_pleb_id !== null
+            && (int) $this->election_lead_pleb_id === (int) $pleb->getKey()
+            && ! $pleb->isErased();
     }
 
     /**

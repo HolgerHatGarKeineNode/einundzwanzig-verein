@@ -3,6 +3,7 @@
 namespace Database\Factories;
 
 use App\Enums\ElectionFeeRule;
+use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
@@ -30,6 +31,25 @@ class ElectionFactory extends Factory
             'fee_rule' => $rule,
             'fee_year' => $year,
         ]);
+    }
+
+    /**
+     * Named as Wahlleitung directly; `ElectionStewardship::appointLead()` is
+     * the audited way.
+     */
+    public function ledBy(EinundzwanzigPleb $lead): static
+    {
+        return $this->state(fn () => ['election_lead_pleb_id' => $lead->getKey()]);
+    }
+
+    public function test(): static
+    {
+        return $this->state(fn () => ['is_test' => true]);
+    }
+
+    public function announced(): static
+    {
+        return $this->state(fn () => ['announced_at' => now()]);
     }
 
     public function honoraryWithoutFee(): static
