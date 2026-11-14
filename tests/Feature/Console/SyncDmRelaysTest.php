@@ -200,6 +200,54 @@ it('writes no row for a member who was erased or changed key while the relays we
     }],
 ]);
 
+/**
+ * Two signed lists of one member with the same created_at, lower id first.
+ *
+ * @return array{0: array<string, mixed>, 1: array<string, mixed>}
+ */
+function sameSecondLists(string $secret): array
+{
+    $lists = [
+        dmRelayList($secret, ['wss://first.example/'], 1_750_000_000),
+        dmRelayList($secret, ['wss://second.example/'], 1_750_000_000),
+    ];
+
+    usort($lists, fn (array $a, array $b): int => strcmp($a['id'], $b['id']));
+
+    return $lists;
+}
+
+it('picks the lowest id among lists read with the same created_at (NIP-01)', function (bool $lowerReadFirst) {
+    [$alice, $aliceKey] = memberWithKey();
+    [$lower, $higher] = sameSecondLists($aliceKey);
+
+    FakeRelayTransport::bind()
+        ->withStoredEvents(INDEXER, [$lowerReadFirst ? $lower : $higher])
+        ->withStoredEvents(SECOND_INDEXER, [$lowerReadFirst ? $higher : $lower]);
+
+    $this->artisan('nostr:sync-dm-relays')->assertSuccessful();
+
+    expect($alice->dmRelays->event_id)->toBe($lower['id']);
+})->with(['lower id read first' => [true], 'lower id read last' => [false]]);
+
+it('replaces a stored list of the same created_at only with a lower id (NIP-01)', function (bool $storedIsLower) {
+    [$alice, $aliceKey] = memberWithKey();
+    [$lower, $higher] = sameSecondLists($aliceKey);
+    $stored = $storedIsLower ? $lower : $higher;
+    $read = $storedIsLower ? $higher : $lower;
+    PlebDmRelay::factory()->for($alice, 'pleb')->create([
+        'relays' => SyncDmRelays::inboxRelays($stored['tags']),
+        'event_id' => $stored['id'],
+        'event_created_at' => $stored['created_at'],
+    ]);
+
+    FakeRelayTransport::bind()->withStoredEvents(INDEXER, [$read]);
+
+    $this->artisan('nostr:sync-dm-relays')->assertSuccessful();
+
+    expect($alice->fresh()->dmRelays->event_id)->toBe($lower['id']);
+})->with(['stored id is lower: kept' => [true], 'read id is lower: replaces' => [false]]);
+
 it('never replaces a stored list with an older one and drops a member whose newest list is empty', function () {
     [$alice, $aliceKey] = memberWithKey();
     [$bob, $bobKey] = memberWithKey();
