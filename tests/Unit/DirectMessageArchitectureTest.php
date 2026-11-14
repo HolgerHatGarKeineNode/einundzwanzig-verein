@@ -25,9 +25,17 @@ const DM_CLASSES = [
     'App\Enums\DmDeliveryStatus',
 ];
 
-arch('the direct message code uses neither the election marks, the ballots nor the receipts')
-    ->expect([...DM_NAMESPACES, ...DM_CLASSES])
-    ->not->toUse([ElectionMark::class, ElectionReceipt::class, ElectionBallotChoice::class]);
+/*
+ * One arch() per target on purpose. With pest 5.3.3 and pest-plugin-arch
+ * 5.0.0, expect([...several targets])->not->toUse(...) passed with an
+ * ElectionMark dependency planted in App\Services\Dm (measured 2026-11-14);
+ * a single target per expectation goes red on the same plant.
+ */
+foreach ([...DM_NAMESPACES, ...DM_CLASSES] as $target) {
+    arch("{$target} uses neither the election marks, the ballots nor the receipts")
+        ->expect($target)
+        ->not->toUse([ElectionMark::class, ElectionReceipt::class, ElectionBallotChoice::class]);
+}
 
 it('names no election mark, ballot or receipt table in the direct message code', function () {
     $files = Finder::create()->files()->name('*.php')->in([
