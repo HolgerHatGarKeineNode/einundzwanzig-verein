@@ -5,7 +5,9 @@ namespace App\Services\Election;
 use App\Enums\ElectionRoundMode;
 use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionRoundStateException;
+use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -24,7 +26,7 @@ class OpenRound
      */
     public const LIVE_MAX_MINUTES = 60;
 
-    public function __construct(protected ElectoralRoll $roll) {}
+    public function __construct(protected ElectoralRoll $roll, protected TallyRound $tally) {}
 
     /**
      * @throws ElectionRoundStateException
@@ -86,14 +88,76 @@ class OpenRound
             throw new ElectionRoundStateException('A round without candidates cannot be opened.');
         }
 
-        if ($round->parent_round_id === null) {
-            return;
+        if ($round->parent_round_id !== null) {
+            $parent = $round->parent;
+
+            if ($parent === null || $parent->election_event_id !== $round->election_event_id || ! $parent->isSealed()) {
+                throw new ElectionRoundStateException('A run-off can only be opened once the round it belongs to is sealed.');
+            }
         }
 
-        $parent = $round->parent;
+        $this->assertNobodyStandsAgainAfterBeingElected($round);
+    }
 
-        if ($parent === null || $parent->election_event_id !== $round->election_event_id || ! $parent->isSealed()) {
-            throw new ElectionRoundStateException('A run-off can only be opened once the round it belongs to is sealed.');
+    /**
+     * Whoever is elected in a round of the election does not stand in the
+     * rounds after it.
+     *
+     * "After" is the order of `position`; the round a run-off belongs to
+     * counts as earlier whatever its position. For every earlier round that
+     * shares a candidate with this one, the earlier result has to be known:
+     *
+     *  - not sealed yet (a draft, open, or merely over by the clock) → refused,
+     *    nobody can say yet whether that candidate is elected there;
+     *  - elected there → refused;
+     *  - level on votes in an undecided tie there → refused, unless this round
+     *    is the run-off of exactly that round, which is what a run-off is for.
+     *
+     * Refusing instead of quietly dropping the candidate keeps the list of
+     * candidates the election officer's to change. An annulled round has no
+     * result and elects nobody.
+     *
+     * @throws ElectionRoundStateException
+     */
+    protected function assertNobodyStandsAgainAfterBeingElected(ElectionRound $round): void
+    {
+        $standing = $round->candidates()->pluck('einundzwanzig_pleb_id')->map(fn (mixed $id): int => (int) $id)->all();
+
+        $earlier = ElectionRound::query()
+            ->where('election_event_id', $round->election_event_id)
+            ->whereKeyNot($round->getKey())
+            ->whereNull('annulled_at')
+            ->where(function (Builder $query) use ($round): void {
+                $query->where('position', '<', $round->position)
+                    ->orWhere('id', $round->parent_round_id);
+            })
+            ->with('candidates')
+            ->get();
+
+        foreach ($earlier as $other) {
+            $shared = $other->candidates
+                ->filter(fn (ElectionCandidate $candidate): bool => in_array((int) $candidate->einundzwanzig_pleb_id, $standing, true))
+                ->map(fn (ElectionCandidate $candidate): int => (int) $candidate->getKey())
+                ->values()
+                ->all();
+
+            if ($shared === []) {
+                continue;
+            }
+
+            if (! $other->isSealed()) {
+                throw new ElectionRoundStateException('A candidate of this round also stands in an earlier round of the election that is not sealed yet.');
+            }
+
+            $result = $this->tally->handle($other);
+
+            if (array_intersect($shared, $result->elected) !== []) {
+                throw new ElectionRoundStateException('A candidate of this round has been elected in an earlier round of the election.');
+            }
+
+            if ((int) $other->getKey() !== (int) $round->parent_round_id && array_intersect($shared, $result->tied) !== []) {
+                throw new ElectionRoundStateException('A candidate of this round is level in an undecided tie of an earlier round of the election.');
+            }
         }
     }
 }

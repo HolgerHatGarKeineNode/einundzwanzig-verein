@@ -24,11 +24,6 @@ require_once __DIR__.'/helpers.php';
  * order they were cast in.
  */
 
-function windowElectionRound(Carbon $opensAt, Carbon $closesAt): ElectionRound
-{
-    return ElectionRound::factory()->withCandidates()->window($opensAt, $closesAt)->create();
-}
-
 it('derives the state of a window round from the clock alone', function () {
     $this->travelTo(Carbon::parse('2027-03-01 09:00:00'));
 
