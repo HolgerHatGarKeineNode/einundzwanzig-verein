@@ -30,7 +30,6 @@ return new class extends Migration
             $table->string('action');
             $table->unsignedBigInteger('election_round_id')->nullable();
             $table->foreignId('actor_pleb_id')->nullable()->constrained('einundzwanzig_plebs')->restrictOnDelete();
-            $table->foreignId('second_pleb_id')->nullable()->constrained('einundzwanzig_plebs')->restrictOnDelete();
             $table->foreignId('subject_pleb_id')->nullable()->constrained('einundzwanzig_plebs')->restrictOnDelete();
             $table->json('details')->nullable();
             $table->char('previous_hash', 64);

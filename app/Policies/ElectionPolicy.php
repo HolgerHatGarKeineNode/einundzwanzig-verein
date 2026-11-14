@@ -24,8 +24,7 @@ use App\Models\ElectionRound;
  *
  * Nobody acts in a round they are a candidate in — a candidacy in any state
  * counts, a rejected or withdrawn one included. The exceptions to the frozen
- * course of an election (reject, withdraw, close early, annul, enrol by hand,
- * paper vote) are the Wahlleitung's alone. Approving, opening and sealing a
+ * course of an election (reject, withdraw, close early, annul, enrol by hand) are the Wahlleitung's alone. Approving, opening and sealing a
  * round whose window has run out are open to the Wahlleitung and to every
  * board member who does not stand in that round, so an election in which the
  * whole board stands can still be run by a Wahlleitung from outside it.
@@ -136,21 +135,6 @@ class ElectionPolicy
     public function enrolByHand(NostrUser $user, ElectionRound $round): bool
     {
         return $this->isUninvolvedLead($user, $round);
-    }
-
-    public function recordPaperVote(NostrUser $user, ElectionRound $round): bool
-    {
-        return $this->isUninvolvedLead($user, $round);
-    }
-
-    /**
-     * The second person of a paper vote: a board member or the Wahlleitung
-     * who does not stand in the round. That it is not the same person as the
-     * first is checked where both are known, in `RecordPaperVote`.
-     */
-    public function confirmPaperVote(NostrUser $user, ElectionRound $round): bool
-    {
-        return $this->isUninvolvedSteward($user, $round);
     }
 
     /**

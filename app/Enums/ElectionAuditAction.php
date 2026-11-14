@@ -33,7 +33,5 @@ enum ElectionAuditAction: string
     /** Written by the payment flow, not by a person: the actor is empty. */
     case VoterEnrolledAfterStatusChange = 'voter_enrolled_after_status_change';
 
-    case PaperVoteRecorded = 'paper_vote_recorded';
-
     case MemberStatusChanged = 'member_status_changed';
 }

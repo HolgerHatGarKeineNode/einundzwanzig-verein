@@ -123,7 +123,7 @@ it('takes no detail outside its fixed list, so no ballot choice and no receipt c
 it('has no column that could hold a ballot choice or a receipt', function () {
     expect(Schema::getColumnListing('election_audit_entries'))->toEqualCanonicalizing([
         'id', 'election_event_id', 'sequence', 'action', 'election_round_id',
-        'actor_pleb_id', 'second_pleb_id', 'subject_pleb_id', 'details',
+        'actor_pleb_id', 'subject_pleb_id', 'details',
         'previous_hash', 'hash', 'created_at',
     ]);
 });

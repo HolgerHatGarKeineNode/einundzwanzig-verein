@@ -42,9 +42,9 @@ function electionRightsScene(): array
     return ['board' => $board, 'lead' => $lead, 'member' => electionVoter(), 'round' => $round, 'pending' => $pending];
 }
 
-dataset('lead-only round abilities', ['closeEarly', 'annul', 'enrolByHand', 'recordPaperVote']);
+dataset('lead-only round abilities', ['closeEarly', 'annul', 'enrolByHand']);
 
-dataset('steward round abilities', ['open', 'close', 'confirmPaperVote']);
+dataset('steward round abilities', ['open', 'close']);
 
 dataset('lead-only candidacy abilities', ['rejectCandidacy', 'withdrawCandidacy']);
 

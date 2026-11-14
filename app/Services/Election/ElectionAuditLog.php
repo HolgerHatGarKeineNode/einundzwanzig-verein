@@ -19,11 +19,9 @@ use InvalidArgumentException;
  * from there on. One chain per election; the first line chains to
  * `GENESIS`.
  *
- * What a line may carry is closed: an action, the round, up to three members
- * (who acted, the second person, whom it concerns) and `details` from
- * `DETAIL_KEYS`. There is no way to put a ballot choice, a ballot id or a
- * receipt into it — the paper vote line names the member who voted on paper
- * and nothing about the vote.
+ * What a line may carry is closed: an action, the round, up to two members
+ * (who acted, whom it concerns) and `details` from `DETAIL_KEYS`. There is
+ * no way to put a ballot choice, a ballot id or a receipt into it.
  */
 class ElectionAuditLog
 {
@@ -57,12 +55,11 @@ class ElectionAuditLog
         ?EinundzwanzigPleb $actor,
         ?ElectionRound $round = null,
         ?EinundzwanzigPleb $subject = null,
-        ?EinundzwanzigPleb $second = null,
         array $details = [],
     ): ElectionAuditEntry {
         $details = $this->checkedDetails($details);
 
-        return DB::transaction(function () use ($election, $action, $actor, $round, $subject, $second, $details): ElectionAuditEntry {
+        return DB::transaction(function () use ($election, $action, $actor, $round, $subject, $details): ElectionAuditEntry {
             Election::query()->lockForUpdate()->whereKey($election->getKey())->first();
 
             $last = ElectionAuditEntry::query()
@@ -76,7 +73,6 @@ class ElectionAuditLog
                 'action' => $action->value,
                 'election_round_id' => $round?->getKey() === null ? null : (int) $round->getKey(),
                 'actor_pleb_id' => $actor?->getKey() === null ? null : (int) $actor->getKey(),
-                'second_pleb_id' => $second?->getKey() === null ? null : (int) $second->getKey(),
                 'subject_pleb_id' => $subject?->getKey() === null ? null : (int) $subject->getKey(),
                 'details' => $details === [] ? null : $details,
                 'previous_hash' => $last?->hash ?? self::GENESIS,
@@ -172,7 +168,6 @@ class ElectionAuditLog
             'action' => (string) $raw['action'],
             'election_round_id' => $raw['election_round_id'] === null ? null : (int) $raw['election_round_id'],
             'actor_pleb_id' => $raw['actor_pleb_id'] === null ? null : (int) $raw['actor_pleb_id'],
-            'second_pleb_id' => $raw['second_pleb_id'] === null ? null : (int) $raw['second_pleb_id'],
             'subject_pleb_id' => $raw['subject_pleb_id'] === null ? null : (int) $raw['subject_pleb_id'],
             'details' => $details === [] ? null : $details,
             'previous_hash' => (string) $raw['previous_hash'],

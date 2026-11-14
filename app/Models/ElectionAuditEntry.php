@@ -26,7 +26,6 @@ class ElectionAuditEntry extends Model
         'action',
         'election_round_id',
         'actor_pleb_id',
-        'second_pleb_id',
         'subject_pleb_id',
         'details',
         'previous_hash',
