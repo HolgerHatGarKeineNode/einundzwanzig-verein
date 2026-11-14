@@ -113,54 +113,71 @@ new class extends Component
             :heading="$proposalId === null ? __('Vorschlag kann nicht eingereicht werden') : __('Dieser Vorschlag kann nicht mehr geändert werden')"
         />
         @if ($proposalId !== null)
-            <p class="mt-4 text-sm text-text-secondary">
+            <p class="mx-auto mt-4 w-full max-w-2xl text-base text-text-secondary">
                 {{ __('Ändern kann nur, wer den Vorschlag eingereicht hat, und nur solange er offen ist.') }}
             </p>
         @endif
     @else
-        <div class="w-full max-w-3xl mx-auto">
-            <div class="mb-5 flex items-center justify-between gap-4">
-                <h1 class="min-w-0 break-words text-2xl font-bold text-text-primary">
+        <div class="w-full max-w-6xl mx-auto pb-20">
+            <flux:button
+                :href="$proposalId === null ? route('association.proposals.index') : route('association.proposals.show', $proposalId)"
+                variant="ghost" icon="arrow-left" inset="left" class="mb-4 min-h-11" wire:navigate>
+                {{ $proposalId === null ? __('Vorschläge') : __('Zurück zum Vorschlag') }}
+            </flux:button>
+
+            <div class="mb-6 max-w-2xl">
+                <h1 class="text-2xl sm:text-3xl font-bold leading-tight text-text-primary break-words">
                     {{ $proposalId === null ? __('Vorschlag einreichen') : __('Vorschlag ändern') }}
                 </h1>
-                <flux:button
-                    :href="$proposalId === null ? route('association.proposals.index') : route('association.proposals.show', $proposalId)"
-                    variant="ghost" icon="arrow-left" class="shrink-0" wire:navigate>
-                    {{ __('Zurück') }}
-                </flux:button>
+                <p class="mt-2 text-base text-text-secondary">
+                    {{ __('Alle Mitglieder können ihn lesen, kommentieren und dafür oder dagegen stimmen. Der Vorstand entscheidet, ob er in eine Sitzung kommt.') }}
+                </p>
             </div>
 
-            <flux:card>
-                <form wire:submit="save" class="space-y-4">
-                    <flux:field>
-                        <flux:label>{{ __('Titel') }}</flux:label>
-                        <flux:input wire:model="form.title" maxlength="255" />
-                        <flux:error name="form.title" />
-                    </flux:field>
+            <form wire:submit="save" class="space-y-6">
+                <flux:field class="max-w-2xl [&_input]:min-h-11">
+                    <flux:label>{{ __('Titel') }}</flux:label>
+                    <flux:description>{{ __('Ein Satz, der sagt, was der Verein tun soll.') }}</flux:description>
+                    <flux:input wire:model="form.title" maxlength="255" />
+                    <flux:error name="form.title" />
+                </flux:field>
 
+                {{-- Writing and the rendered result side by side on wide screens,
+                     one under the other on narrow ones. --}}
+                <div class="grid gap-6 lg:grid-cols-2">
                     <flux:field>
                         <flux:label>{{ __('Beschreibung') }}</flux:label>
-                        <flux:description>{{ __('Markdown ist erlaubt. Dein Name steht am Vorschlag.') }}</flux:description>
-                        <flux:textarea wire:model.live.debounce.500ms="form.description" rows="12" resize="vertical" class="font-mono text-sm" />
+                        <flux:description>{{ __('Warum, was genau, und was es kostet, falls du das weißt. Markdown ist erlaubt. Dein Name steht am Vorschlag.') }}</flux:description>
+                        <flux:textarea wire:model.live.debounce.500ms="form.description" rows="14" resize="vertical" class="text-base" />
                         <flux:error name="form.description" />
                     </flux:field>
 
-                    @if (filled($this->descriptionPreview))
-                        <flux:callout>
-                            <flux:callout.heading>{{ __('Vorschau') }}</flux:callout.heading>
-                            <flux:callout.text>
+                    <section aria-labelledby="preview-heading" aria-live="polite" class="min-w-0">
+                        <h2 id="preview-heading" class="text-sm font-medium text-text-primary">{{ __('Vorschau') }}</h2>
+                        <p class="mt-1 text-sm text-text-secondary">{{ __('So erscheint die Beschreibung auf der Seite des Vorschlags.') }}</p>
+                        <div class="mt-2 min-h-32 rounded-lg border border-dashed border-border-default p-4">
+                            @if (filled($this->descriptionPreview))
                                 <div class="prose max-w-none break-words [&_code]:break-all [&_a]:break-all">
                                     {!! $this->descriptionPreview !!}
                                 </div>
-                            </flux:callout.text>
-                        </flux:callout>
-                    @endif
+                            @else
+                                <p class="text-sm text-text-tertiary">{{ __('Noch leer. Sobald du schreibst, erscheint hier das Ergebnis.') }}</p>
+                            @endif
+                        </div>
+                    </section>
+                </div>
 
-                    <flux:button type="submit" variant="primary" class="w-full" wire:loading.attr="disabled">
-                        {{ __('Speichern') }}
+                <div class="flex flex-col-reverse gap-3 border-t border-border-subtle pt-6 sm:flex-row sm:items-center sm:justify-end">
+                    <flux:button
+                        :href="$proposalId === null ? route('association.proposals.index') : route('association.proposals.show', $proposalId)"
+                        variant="ghost" class="min-h-11" wire:navigate>
+                        {{ __('Abbrechen') }}
                     </flux:button>
-                </form>
-            </flux:card>
+                    <flux:button type="submit" variant="primary" class="min-h-11" wire:loading.attr="disabled">
+                        {{ $proposalId === null ? __('Vorschlag einreichen') : __('Änderungen speichern') }}
+                    </flux:button>
+                </div>
+            </form>
         </div>
     @endif
 </div>

@@ -36,6 +36,16 @@ it('shows outsiders the members-only notice and no proposal', function (?Einundz
     expect(fn () => $page->instance()->proposals)->toThrow(AuthorizationException::class);
 })->with('outsiders');
 
+it('tells a logged-in outsider the whole participation rule, both fee years included', function () {
+    $this->travelTo('2026-03-01');
+    NostrAuth::login(EinundzwanzigPleb::factory()->active()->withPaidYear(2024)->create()->pubkey);
+
+    Livewire::test('association.proposals.index')
+        ->assertSee('Ehrenmitglieder')
+        ->assertSee('aktive und passive Mitglieder')
+        ->assertSee('für 2026 oder 2025 bezahlt');
+});
+
 it('lists current proposals and keeps archived, hidden and withdrawn ones out', function () {
     $open = MemberProposal::factory()->create(['title' => 'Offener Vorschlag']);
     $scheduled = MemberProposal::factory()->inState(MemberProposalState::Scheduled)->create();
