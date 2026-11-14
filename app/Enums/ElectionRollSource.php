@@ -16,6 +16,15 @@ enum ElectionRollSource: string
     /** Copied from the round this run-off belongs to. */
     case Inherited = 'inherited';
 
+    /**
+     * Entitled through a category change the Wahlleitung made under the
+     * status lock (`ChangeMemberStatus`) — enrolled at the opening, or by a
+     * payment inside the window after the change. Never `LatePayment`, so
+     * the roll shows which entries rest on a decision taken during the
+     * election.
+     */
+    case StatusChange = 'status_change';
+
     /** Entered by hand by the Wahlleitung (`EnrolByHand`). */
     case ByHand = 'by_hand';
 }
