@@ -191,7 +191,7 @@ it('seals a live round by hand and refuses ballots from then on', function () {
     expect($sealed->stateAt(now()))->toBe(ElectionRoundState::Closed)
         ->and($sealed->isSealed())->toBeTrue()
         ->and(electionRefusal(fn () => castElectionBallot($round, $late)))->not->toBeNull()
-        ->and(electionRowCounts($round))->toBe(['marks' => 1, 'choices' => 1, 'receipts' => 1]);
+        ->and(electionVoteCount($round))->toBe(1);
 });
 
 it('cannot undo a close', function () {
@@ -272,7 +272,7 @@ it('rewrites ballot rows and receipts at the close, keeping what they say', func
         ->and($idsAfter->every(fn (string $id): bool => preg_match('/^[0-9a-f]{32}$/D', $id) === 1))->toBeTrue()
         ->and($content())->toBe($contentBefore)
         ->and(DB::table('election_receipts')->orderBy('hash')->pluck('hash')->all())->toBe($receiptsBefore)
-        ->and(electionRowCounts($round))->toBe(['marks' => 6, 'choices' => 8, 'receipts' => 6]);
+        ->and(electionVoteCount($round))->toBe(6);
 });
 
 it('leaves the ballots of other rounds alone when one round is sealed', function () {
@@ -287,7 +287,7 @@ it('leaves the ballots of other rounds alone when one round is sealed', function
     app(CloseRound::class)->handle($sealed);
 
     expect(DB::table('election_ballot_choices')->where('election_round_id', $other->id)->value('id'))->toBe($otherId)
-        ->and(electionRowCounts($other))->toBe(['marks' => 1, 'choices' => 1, 'receipts' => 1]);
+        ->and(electionVoteCount($other))->toBe(1);
 });
 
 it('hands out ballot rows only once the round is sealed', function () {
@@ -441,7 +441,7 @@ it('refuses to delete an election once one of its rounds has been opened', funct
     expect(fn () => $election->delete())->toThrow(ElectionRoundStateException::class)
         ->and(Election::query()->whereKey($election->id)->exists())->toBeTrue()
         ->and($election->rounds()->count())->toBe(2)
-        ->and(electionRowCounts($round))->toBe(['marks' => 1, 'choices' => 1, 'receipts' => 1]);
+        ->and(electionVoteCount($round))->toBe(1);
 
     // Nor does the database let the election go past the model.
     expect(fn () => DB::table('election_events')->where('id', $election->id)->delete())->toThrow(QueryException::class)

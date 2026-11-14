@@ -172,7 +172,7 @@ it('enrols a member whose fee is settled while the round is open', function () {
 
     castElectionBallot($round, $late);
 
-    expect(electionRowCounts($round)['marks'])->toBe(1);
+    expect(electionVoteCount($round))->toBe(1);
 });
 
 it('enrols a late payer on a window round that has not begun yet', function () {

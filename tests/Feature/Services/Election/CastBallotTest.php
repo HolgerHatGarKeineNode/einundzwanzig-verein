@@ -6,12 +6,14 @@ use App\Enums\ElectionCountingRule;
 use App\Exceptions\ElectionBallotRefusedException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
-use App\Models\ElectionReceipt;
 use App\Models\ElectionRound;
+use App\Models\ElectionVote;
 use App\Services\Election\CastBallot;
 use App\Services\Election\CloseRound;
 use App\Services\Election\OpenRound;
+use App\Services\Election\VoteEvent;
 use App\Services\MembershipService;
+use App\Services\Nostr\EventSigning;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -23,48 +25,177 @@ use Illuminate\Support\Facades\Queue;
 require_once __DIR__.'/helpers.php';
 
 /*
- * Taking in a ballot: who may, when, how often — and what must not happen
- * around it.
+ * Taking in a signed vote: who may, when, how often, with which event — and
+ * what must not happen around it.
+ *
+ * Mutations that must turn this file red (patches in the plan folder):
+ *  - P2C-signature  the signature check removed from `VoteEvent::failures()`
+ *  - P2C-pubkey     the signer check removed
+ *  - P2C-binding    the election/round binding check removed
+ *  - P2C-unique     the unique index on round and member removed
  */
 
-it('takes in a ballot as one mark, one row per choice and one receipt hash', function () {
+it('takes in a vote as one row with member, pubkey, the signed event and the choices', function () {
     $voter = electionVoter();
     $round = openElectionRound(['counting_rule' => ElectionCountingRule::MostVotes, 'seats' => 2], candidates: 3);
     [$first, $second] = $round->candidates()->pluck('id')->all();
 
-    $code = castElectionBallot($round, $voter, [$first => 'for', $second => 'for']);
+    $event = castElectionBallot($round, $voter, [$first => 'for', $second => 'for']);
+    $vote = ElectionVote::query()->sole();
 
-    expect(electionRowCounts($round))->toBe(['marks' => 1, 'choices' => 2, 'receipts' => 1])
-        ->and(DB::table('election_ballot_choices')->orderBy('election_candidate_id')->pluck('choice', 'election_candidate_id')->all())
-        ->toBe([$first => 'for', $second => 'for'])
-        ->and(DB::table('election_receipts')->value('hash'))->toBe(ElectionReceipt::hashFor($round->id, $code));
+    expect($vote->only(['election_round_id', 'einundzwanzig_pleb_id', 'pubkey', 'event_id', 'event', 'choices']))->toBe([
+        'election_round_id' => $round->id,
+        'einundzwanzig_pleb_id' => $voter->id,
+        'pubkey' => $voter->fresh()->pubkey,
+        'event_id' => $event['id'],
+        'event' => $event,
+        'choices' => [$first => 'for', $second => 'for'],
+    ]);
 });
 
 it('returns nothing to the caller', function () {
     expect((string) (new ReflectionMethod(CastBallot::class, 'handle'))->getReturnType())->toBe('void');
 });
 
-it('accepts an empty ballot and stores it as one blank row', function () {
+it('accepts a blank vote and stores it with no choices', function () {
     $voter = electionVoter();
     $round = openElectionRound();
 
     castElectionBallot($round, $voter, []);
 
-    expect(electionRowCounts($round))->toBe(['marks' => 1, 'choices' => 1, 'receipts' => 1])
-        ->and((array) DB::table('election_ballot_choices')->sole(['election_candidate_id', 'choice']))
-        ->toBe(['election_candidate_id' => null, 'choice' => 'blank']);
+    expect(electionVoteCount($round))->toBe(1)
+        ->and(ElectionVote::query()->sole()->choices)->toBe([]);
 });
 
-it('refuses a second ballot from the same member and keeps one mark and one ballot', function () {
+it('refuses a second vote from the same member, also with other choices, and keeps the first', function () {
     $voter = electionVoter();
     $round = openElectionRound();
-    $candidate = $round->candidates()->value('id');
+    [$first, $second] = $round->candidates()->orderBy('id')->pluck('id')->all();
 
-    castElectionBallot($round, $voter, [$candidate => 'for']);
+    castElectionBallot($round, $voter, [$first => 'for']);
 
-    expect(electionRefusal(fn () => castElectionBallot($round, $voter, [$candidate => 'for'])))
+    expect(electionRefusal(fn () => castElectionBallot($round, $voter, [$second => 'for'])))
         ->toBe(ElectionBallotRefusal::AlreadyVoted)
-        ->and(electionRowCounts($round))->toBe(['marks' => 1, 'choices' => 1, 'receipts' => 1]);
+        ->and(electionVoteCount($round))->toBe(1)
+        ->and(ElectionVote::query()->sole()->choices)->toBe([$first => 'for']);
+});
+
+it('refuses an event whose signature does not hold', function (Closure $tamper) {
+    $voter = electionVoter();
+    $round = openElectionRound();
+    $event = $tamper(signedElectionVote($round, $voter, [$round->candidates()->value('id') => 'for']), $round);
+
+    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $voter, $event)))
+        ->toBe(ElectionBallotRefusal::InvalidSignature)
+        ->and(electionVoteCount($round))->toBe(0);
+})->with([
+    'a forged signature' => [fn (array $event): array => [...$event, 'sig' => str_repeat('ab', 64)]],
+    'the choice changed after signing' => [function (array $event, ElectionRound $round): array {
+        $event['tags'][2][1] = (string) $round->candidates()->orderByDesc('id')->value('id');
+
+        return $event;
+    }],
+    'the id changed' => [fn (array $event): array => [...$event, 'id' => str_repeat('0', 64)]],
+    'no signature' => [fn (array $event): array => array_diff_key($event, ['sig' => true])],
+]);
+
+it('refuses an event signed with another key than the member\'s', function () {
+    $voter = electionVoter();
+    $round = openElectionRound();
+    $template = VoteEvent::template($round, [], now()->getTimestamp());
+    $event = EventSigning::sign(EventSigning::freshSecret(), $template['kind'], $template['tags'], $template['content'], $template['created_at']);
+
+    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $voter, $event)))
+        ->toBe(ElectionBallotRefusal::ForeignSigner)
+        ->and(electionVoteCount($round))->toBe(0);
+});
+
+it('refuses another member\'s signed vote', function () {
+    [$voter, $other] = [electionVoter(), electionVoter()];
+    $round = openElectionRound();
+    $othersEvent = signedElectionVote($round, $other);
+
+    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $voter, $othersEvent)))
+        ->toBe(ElectionBallotRefusal::ForeignSigner)
+        ->and(electionVoteCount($round))->toBe(0);
+});
+
+it('refuses an event of another kind', function () {
+    $voter = electionVoter();
+    $round = openElectionRound();
+
+    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $voter, signedElectionVote($round, $voter, overrides: ['kind' => 1]))))
+        ->toBe(ElectionBallotRefusal::WrongKind)
+        ->and(electionVoteCount($round))->toBe(0);
+});
+
+it('refuses a vote signed for another round when it is replayed into this one', function () {
+    $voter = electionVoter();
+    $election = Election::factory()->create();
+    $first = openElectionRound(election: $election);
+    $second = openElectionRound(['position' => 2], election: $election);
+
+    $signedForFirst = signedElectionVote($first, $voter);
+
+    expect(electionRefusal(fn () => app(CastBallot::class)->handle($second, $voter, $signedForFirst)))
+        ->toBe(ElectionBallotRefusal::WrongRound)
+        ->and(electionVoteCount($second))->toBe(0);
+
+    app(CastBallot::class)->handle($first, $voter, $signedForFirst);
+
+    expect(electionVoteCount($first))->toBe(1);
+});
+
+it('refuses an event that does not name exactly this election and this round', function (Closure $tags) {
+    $voter = electionVoter();
+    $round = openElectionRound();
+    $event = signedElectionVote($round, $voter, overrides: ['tags' => $tags($round)]);
+
+    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $voter, $event)))
+        ->toBe(ElectionBallotRefusal::WrongRound);
+})->with([
+    'another election' => [fn (ElectionRound $round): array => [['election', (string) ($round->election_event_id + 1)], ['round', (string) $round->id]]],
+    'no election' => [fn (ElectionRound $round): array => [['round', (string) $round->id]]],
+    'no round' => [fn (ElectionRound $round): array => [['election', (string) $round->election_event_id]]],
+    'a second round' => [fn (ElectionRound $round): array => [['election', (string) $round->election_event_id], ['round', (string) $round->id], ['round', (string) ($round->id + 1)]]],
+]);
+
+it('refuses an event signed outside the open period, beyond the clock tolerance', function (int $offset, ?ElectionBallotRefusal $refusal) {
+    $this->freezeTime();
+    $voter = electionVoter();
+    $round = openElectionRound();
+
+    $event = signedElectionVote($round, $voter, overrides: ['created_at' => $round->opens_at->getTimestamp() + $offset]);
+
+    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $voter, $event)))->toBe($refusal);
+})->with([
+    'before the beginning, beyond the tolerance' => [-VoteEvent::CLOCK_TOLERANCE_SECONDS - 1, ElectionBallotRefusal::OutsideOpenPeriod],
+    'before the beginning, within the tolerance' => [-VoteEvent::CLOCK_TOLERANCE_SECONDS, null],
+    'ahead of the clock, beyond the tolerance' => [VoteEvent::CLOCK_TOLERANCE_SECONDS + 1, ElectionBallotRefusal::OutsideOpenPeriod],
+    'ahead of the clock, within the tolerance' => [VoteEvent::CLOCK_TOLERANCE_SECONDS, null],
+]);
+
+it('refuses an event signed before a window round began, though the window is open now', function () {
+    $voter = electionVoter();
+    $round = app(OpenRound::class)->handle(ElectionRound::factory()->withCandidates()->window(now()->addHour(), now()->addHours(3))->create());
+    $early = signedElectionVote($round, $voter);
+
+    $this->travelTo(now()->addHours(2));
+
+    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $voter, $early)))
+        ->toBe(ElectionBallotRefusal::OutsideOpenPeriod)
+        ->and(electionRefusal(fn () => castElectionBallot($round, $voter)))->toBeNull();
+});
+
+it('refuses vote tags that are malformed or name a candidate twice', function () {
+    $voter = electionVoter();
+    $round = openElectionRound(['counting_rule' => ElectionCountingRule::YesNoPerCandidate]);
+    $candidate = (string) $round->candidates()->value('id');
+    $tags = [...VoteEvent::template($round, [], 0)['tags'], ['vote', $candidate, 'yes'], ['vote', $candidate, 'no']];
+
+    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $voter, signedElectionVote($round, $voter, overrides: ['tags' => $tags]))))
+        ->toBe(ElectionBallotRefusal::InvalidChoices)
+        ->and(electionVoteCount($round))->toBe(0);
 });
 
 it('lets every member on the roll vote once', function () {
@@ -73,7 +204,7 @@ it('lets every member on the roll vote once', function () {
 
     $voters->each(fn (EinundzwanzigPleb $voter) => castElectionBallot($round, $voter));
 
-    expect(electionRowCounts($round))->toBe(['marks' => 3, 'choices' => 3, 'receipts' => 3]);
+    expect(electionVoteCount($round))->toBe(3);
 });
 
 /**
@@ -118,7 +249,7 @@ it('refuses a ballot for a round that is not open', function (string $kind) {
 
     expect(electionRefusal(fn () => castElectionBallot($round, $voter)))
         ->toBe(ElectionBallotRefusal::RoundNotOpen)
-        ->and(electionRowCounts($round))->toBe(['marks' => 0, 'choices' => 0, 'receipts' => 0]);
+        ->and(electionVoteCount($round))->toBe(0);
 })->with([
     'a draft',
     'a window that has not begun',
@@ -157,7 +288,7 @@ it('refuses a member who is not on the roll', function (string $kind) {
 
     expect(electionRefusal(fn () => castElectionBallot($round, $member)))
         ->toBe(ElectionBallotRefusal::NotOnRoll)
-        ->and(electionRowCounts($round))->toBe(['marks' => 0, 'choices' => 0, 'receipts' => 0]);
+        ->and(electionVoteCount($round))->toBe(0);
 })->with([
     'a passive member who has paid',
     'an active member who has not paid',
@@ -190,7 +321,7 @@ it('keeps the right to vote across a change of year', function () {
 
     castElectionBallot($round, $voter);
 
-    expect(electionRowCounts($round)['marks'])->toBe(1);
+    expect(electionVoteCount($round))->toBe(1);
 });
 
 it('keeps the right to vote when the payment is reversed while the round is open', function () {
@@ -204,7 +335,7 @@ it('keeps the right to vote when the payment is reversed while the round is open
 
     castElectionBallot($round, $voter);
 
-    expect(electionRowCounts($round)['marks'])->toBe(1);
+    expect(electionVoteCount($round))->toBe(1);
 });
 
 it('keeps the right to vote when the member is made passive while the round is open', function () {
@@ -216,7 +347,7 @@ it('keeps the right to vote when the member is made passive while the round is o
 
     castElectionBallot($round, $voter);
 
-    expect(electionRowCounts($round)['marks'])->toBe(1);
+    expect(electionVoteCount($round))->toBe(1);
 });
 
 it('refuses a ballot that does not fit the frozen rule and writes no mark', function (string $kind) {
@@ -232,41 +363,16 @@ it('refuses a ballot that does not fit the frozen rule and writes no mark', func
 
     expect(electionRefusal(fn () => castElectionBallot($round, $voter, $selection)))
         ->toBe(ElectionBallotRefusal::InvalidChoices)
-        ->and(electionRowCounts($round))->toBe(['marks' => 0, 'choices' => 0, 'receipts' => 0]);
+        ->and(electionVoteCount($round))->toBe(0);
 
     castElectionBallot($round, $voter);
 
-    expect(electionRowCounts($round)['marks'])->toBe(1);
+    expect(electionVoteCount($round))->toBe(1);
 })->with([
     'more votes than the rule allows',
     'a candidate of another round',
     'a choice the rule does not know',
 ]);
-
-it('refuses a receipt code that is not 128 bits of lowercase hex', function (string $code) {
-    $voter = electionVoter();
-    $round = openElectionRound();
-
-    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $voter, [], $code)))
-        ->toBe(ElectionBallotRefusal::InvalidReceipt)
-        ->and(electionRowCounts($round))->toBe(['marks' => 0, 'choices' => 0, 'receipts' => 0]);
-})->with(['empty' => [''], 'too short' => ['abc123'], 'uppercase' => [str_repeat('AB', 16)]]);
-
-it('rolls the whole ballot back when the receipt code is already in use', function () {
-    [$first, $second] = [electionVoter(), electionVoter()];
-    $round = openElectionRound();
-    $code = electionReceiptCode();
-
-    app(CastBallot::class)->handle($round, $first, [], $code);
-
-    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $second, [], $code)))
-        ->toBe(ElectionBallotRefusal::InvalidReceipt)
-        ->and(electionRowCounts($round))->toBe(['marks' => 1, 'choices' => 1, 'receipts' => 1]);
-
-    castElectionBallot($round, $second);
-
-    expect(electionRowCounts($round))->toBe(['marks' => 2, 'choices' => 2, 'receipts' => 2]);
-});
 
 it('pushes no job and sends no notification when a ballot is cast', function () {
     $voter = electionVoter();
@@ -284,17 +390,18 @@ it('pushes no job and sends no notification when a ballot is cast', function () 
 it('dispatches no event of its own when a ballot is cast', function () {
     $voter = electionVoter();
     $round = openElectionRound();
+    $event = signedElectionVote($round, $voter, [$round->candidates()->value('id') => 'for']);
 
     Event::fake();
 
-    castElectionBallot($round, $voter, [$round->candidates()->value('id') => 'for']);
+    app(CastBallot::class)->handle($round, $voter, $event);
 
     /*
      * With the dispatcher faked, the framework's own events are still
      * recorded: Eloquent's lifecycle events for the models that were READ,
      * and the database's transaction and query events. Anything beyond those
      * would be something `CastBallot` dispatched — and no Eloquent event may
-     * concern a mark, a ballot row, a receipt or the member. A class being
+     * concern the vote or the member. A class being
      * booted is not a row event: it fires once per process and carries the
      * class name only. The cache events are the per-member throttle's
      * (`CastBallot::throttle()`), raised inside the telemetry blackout.
@@ -307,7 +414,7 @@ it('dispatches no event of its own when a ballot is cast', function () {
 
     $aboutSecretRows = array_values(array_filter($dispatched, fn (string $event): bool => str_starts_with($event, 'eloquent.')
         && preg_match('/^eloquent\.boot(ing|ed): /', $event) !== 1
-        && preg_match('/ElectionMark|ElectionBallotChoice|ElectionReceipt|EinundzwanzigPleb/', $event) === 1));
+        && preg_match('/ElectionVote|EinundzwanzigPleb/', $event) === 1));
 
     expect($own)->toBe([])
         ->and($aboutSecretRows)->toBe([])
@@ -401,23 +508,17 @@ function electionTraceArguments(Throwable $exception): string
     return print_r(array_map(fn (array $frame): mixed => $flatten($frame['args'] ?? []), $exception->getTrace()), true);
 }
 
-it('shows the selection and the receipt code in a stack trace only as SensitiveParameterValue', function () {
-    /*
-     * Mutation B1-S1 (patch in the plan folder): drop `#[\SensitiveParameter]`
-     * from `$selection` and `$receiptCode` → red. B1-S2: hand the raw values
-     * to the transaction closure → red.
-     */
+it('shows the signed event in a stack trace only as SensitiveParameterValue', function () {
     $voter = electionVoter();
     $round = openElectionRound();
-    $selection = [$round->candidates()->value('id') => 'for'];
-    $code = electionReceiptCode();
+    $event = signedElectionVote($round, $voter, [$round->candidates()->value('id') => 'for']);
     app(CloseRound::class)->handle($round);
 
     // CLI defaults to dropping arguments from traces; a production server may not.
     $previous = ini_set('zend.exception_ignore_args', '0');
 
     try {
-        app(CastBallot::class)->handle($round, $voter, $selection, $code);
+        app(CastBallot::class)->handle($round, $voter, $event);
     } catch (ElectionBallotRefusedException $refusal) {
     } finally {
         ini_set('zend.exception_ignore_args', (string) $previous);
@@ -432,7 +533,6 @@ it('shows the selection and the receipt code in a stack trace only as SensitiveP
     expect($frame['args'][0])->toBeInstanceOf(ElectionRound::class)
         ->and($frame['args'][1])->toBeInstanceOf(EinundzwanzigPleb::class)
         ->and($frame['args'][2])->toBeInstanceOf(SensitiveParameterValue::class)
-        ->and($frame['args'][3])->toBeInstanceOf(SensitiveParameterValue::class)
         ->and(electionTraceArguments($refusal))->toContain('[ballot] => SensitiveParameterValue')
-        ->not->toContain($code);
+        ->not->toContain($event['sig']);
 });

@@ -8,10 +8,8 @@ use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionBallotRefusedException;
 use App\Exceptions\ElectionBallotWriteException;
 use App\Models\EinundzwanzigPleb;
-use App\Models\ElectionBallotChoice;
-use App\Models\ElectionMark;
-use App\Models\ElectionReceipt;
 use App\Models\ElectionRound;
+use App\Models\ElectionVote;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
@@ -21,23 +19,19 @@ use Sentry\SentrySdk;
 use Sentry\State\Scope;
 
 /**
- * Take in one ballot.
+ * Take in one vote: a Nostr event the member signed (`VoteEvent`).
  *
- * One transaction, three writes that share nothing: the mark ("this member
- * has voted"), the ballot rows (what was chosen) and the receipt hash (that
- * a ballot was taken in). All three or none.
+ * One transaction, one row: the vote with its event, its signer and its
+ * choices. Checked before it is written: the round is open, the member is on
+ * its roll, the event is authentic, signed by the member, of the vote kind,
+ * bound to this election and round, signed within the open period, and its
+ * choices fit the round's counting rule. One vote per member and round; a
+ * second one is refused, there is no changing a vote.
  *
- * What this class must never do, because each would put voter and choice
- * side by side somewhere outside those tables: dispatch a job, fire an
- * event, send a notification, write a log line, return or throw anything
- * that names the member or the choice. The rows are written through the
- * query builder for that reason too — no model events, no model instances
- * holding a ballot.
- *
- * Nor may the telemetry see it (E23). The cast runs in a Sentry scope of its
- * own, without a current span and discarded afterwards — no SQL breadcrumb,
- * no query span of the writes reaches an event — and with Nightwatch paused.
- * Attempts are throttled per member.
+ * The row is written through the query builder — no model events, no job,
+ * no notification, no log line. The cast runs in a Sentry scope of its own,
+ * without a current span and discarded afterwards, with Nightwatch paused
+ * (E23). Attempts are throttled per member.
  */
 class CastBallot
 {
@@ -49,13 +43,12 @@ class CastBallot
     public function __construct(protected ElectoralRoll $roll) {}
 
     /**
-     * @param  array<array-key, mixed>  $selection  candidate id => choice value, see `ElectionCountingRule::ballotRows()`; empty for a blank ballot
-     * @param  string  $receiptCode  made up by the voter's browser; only its hash is stored
+     * @param  array<mixed>  $event  the signed vote event as the browser sent it, see `VoteEvent`
      *
-     * Both are `#[\SensitiveParameter]`: a stack trace — in a log, an error
-     * report or a debug page — shows them as `SensitiveParameterValue`. The
-     * transaction closure gets them wrapped the same way, because a closure
-     * carries the variables it uses, and a trace holds the closure.
+     * `#[\SensitiveParameter]`: a stack trace — in a log, an error report or
+     * a debug page — shows it as `SensitiveParameterValue`. The transaction
+     * closure gets it wrapped the same way, because a closure carries the
+     * variables it uses, and a trace holds the closure.
      *
      * A database error other than the refusals a voter is told about leaves
      * as an `ElectionBallotWriteException` that names only the SQLSTATE.
@@ -66,10 +59,9 @@ class CastBallot
     public function handle(
         ElectionRound $round,
         EinundzwanzigPleb $voter,
-        #[\SensitiveParameter] array $selection,
-        #[\SensitiveParameter] string $receiptCode,
+        #[\SensitiveParameter] array $event,
     ): void {
-        $ballot = new SensitiveParameterValue(['selection' => $selection, 'receiptCode' => $receiptCode]);
+        $ballot = new SensitiveParameterValue($event);
 
         SentrySdk::getCurrentHub()->withScope(function (Scope $scope) use ($round, $voter, $ballot): void {
             $scope->setSpan(null);
@@ -80,7 +72,7 @@ class CastBallot
                 try {
                     $this->write($round, $voter, $ballot);
                 } catch (\PDOException $exception) {
-                    throw new ElectionBallotWriteException('The database refused to take in the ballot (SQLSTATE '.$exception->getCode().').');
+                    throw new ElectionBallotWriteException('The database refused to take in the vote (SQLSTATE '.$exception->getCode().').');
                 }
             });
         });
@@ -88,8 +80,8 @@ class CastBallot
 
     /**
      * Inside the blackout too: the limiter's cache events carry a key that
-     * names the member. The key holds a count and an expiry, never a round,
-     * a choice or a code.
+     * names the member. The key holds a count and an expiry, never a round
+     * or a choice.
      *
      * @throws ElectionBallotRefusedException
      */
@@ -105,14 +97,14 @@ class CastBallot
     }
 
     /**
-     * @param  SensitiveParameterValue  $ballot  holds `selection` and `receiptCode`
+     * @param  SensitiveParameterValue  $ballot  holds the signed event
      *
      * @throws ElectionBallotRefusedException
      */
     protected function write(ElectionRound $round, EinundzwanzigPleb $voter, SensitiveParameterValue $ballot): void
     {
         DB::transaction(function () use ($round, $voter, $ballot): void {
-            ['selection' => $selection, 'receiptCode' => $receiptCode] = $ballot->getValue();
+            $event = $ballot->getValue();
 
             /*
              * Whether the round is open is decided HERE: on the row as it is
@@ -120,8 +112,9 @@ class CastBallot
              * instance the caller loaded when the page was rendered.
              */
             $round = ElectionRound::query()->lockForUpdate()->find($round->getKey());
+            $now = now();
 
-            if ($round === null || $round->stateAt(now()) !== ElectionRoundState::Open) {
+            if ($round === null || $round->stateAt($now) !== ElectionRoundState::Open) {
                 throw new ElectionBallotRefusedException(ElectionBallotRefusal::RoundNotOpen);
             }
 
@@ -129,47 +122,41 @@ class CastBallot
                 throw new ElectionBallotRefusedException(ElectionBallotRefusal::NotOnRoll);
             }
 
+            $failures = VoteEvent::failures($event, $round, (string) $voter->pubkey, $now);
+
+            if ($failures !== []) {
+                throw new ElectionBallotRefusedException($failures[0]);
+            }
+
+            $selection = VoteEvent::selection($event)
+                ?? throw new ElectionBallotRefusedException(ElectionBallotRefusal::InvalidChoices);
+
             // Approved candidacies only: a pending, rejected or withdrawn one
-            // is not on the ballot, whatever id the request names.
-            $rows = $round->counting_rule->ballotRows(
+            // is not on the ballot, whatever id the event names.
+            $round->counting_rule->ballotRows(
                 $selection,
                 $round->candidates()->where('status', ElectionCandidateStatus::Approved)->pluck('id')->all(),
                 $round->seats,
             );
 
-            if (preg_match(ElectionReceipt::CODE_PATTERN, $receiptCode) !== 1) {
-                throw new ElectionBallotRefusedException(ElectionBallotRefusal::InvalidReceipt);
-            }
-
             /*
-             * The mark goes first, and its unique index is the lock against
-             * a double vote. No `exists()` beforehand: two requests racing
-             * past a check would both write a ballot, and a surplus ballot
-             * can never be found again.
+             * No `exists()` beforehand: two requests racing past a check
+             * would both write a vote. The unique index on round and member
+             * is the lock against a double vote.
              */
             try {
-                ElectionMark::query()->insert([
+                ElectionVote::query()->insert([
                     'election_round_id' => $round->getKey(),
                     'einundzwanzig_pleb_id' => $voter->getKey(),
+                    'pubkey' => $event['pubkey'],
+                    'event_id' => $event['id'],
+                    'event' => json_encode($event, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                    'choices' => json_encode((object) $selection, JSON_THROW_ON_ERROR),
+                    'created_at' => $now,
+                    'updated_at' => $now,
                 ]);
             } catch (UniqueConstraintViolationException) {
                 throw new ElectionBallotRefusedException(ElectionBallotRefusal::AlreadyVoted);
-            }
-
-            ElectionBallotChoice::query()->insert(array_map(fn (array $row): array => [
-                'id' => ElectionBallotChoice::newId(),
-                'election_round_id' => $round->getKey(),
-                'election_candidate_id' => $row['candidate'],
-                'choice' => $row['choice']->value,
-            ], $rows));
-
-            try {
-                ElectionReceipt::query()->insert([
-                    'election_round_id' => $round->getKey(),
-                    'hash' => ElectionReceipt::hashFor($round->getKey(), $receiptCode),
-                ]);
-            } catch (UniqueConstraintViolationException) {
-                throw new ElectionBallotRefusedException(ElectionBallotRefusal::InvalidReceipt);
             }
         });
     }

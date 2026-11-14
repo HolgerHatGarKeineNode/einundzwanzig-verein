@@ -150,6 +150,6 @@ it('takes no vote for a candidacy that is not approved', function (ElectionCandi
     $round = app(OpenRound::class)->handle($round);
 
     expect(electionRefusal(fn () => castElectionBallot($round, $voter, [$other->id => 'for'])))->toBe(ElectionBallotRefusal::InvalidChoices)
-        ->and(electionRowCounts($round))->toBe(['marks' => 0, 'choices' => 0, 'receipts' => 0])
+        ->and(electionVoteCount($round))->toBe(0)
         ->and(electionRefusal(fn () => castElectionBallot($round, $voter, [$round->candidates()->where('status', 'approved')->value('id') => 'for'])))->toBeNull();
 })->with([ElectionCandidateStatus::Pending, ElectionCandidateStatus::Rejected, ElectionCandidateStatus::Withdrawn]);

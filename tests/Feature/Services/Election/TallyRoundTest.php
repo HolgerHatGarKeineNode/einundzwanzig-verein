@@ -76,7 +76,7 @@ it('counts a sealed round with every number written out', function () {
         'elected' => [$a],
         'tied' => [],
         'tied_seats' => 0,
-    ])->and(electionRowCounts($round))->toBe(['marks' => 7, 'choices' => 7, 'receipts' => 7]);
+    ])->and(electionVoteCount($round))->toBe(7);
 });
 
 it('counts nothing while a round is open or merely over by the clock', function () {

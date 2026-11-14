@@ -105,14 +105,14 @@ afterEach(function () {
  */
 it('leaves no breadcrumb and no query span of a cast in Sentry, with bindings switched on', function () {
     [$round, $voter] = telemetryRound();
+    $event = signedElectionVote($round, $voter, [TELEMETRY_CANDIDATE_ID => 'for']);
     $events = recordSentryEvents();
-    $code = electionReceiptCode();
 
     $hub = SentrySdk::getCurrentHub();
     $transaction = $hub->startTransaction(TransactionContext::make()->setName('cast')->setSampled(true));
     $hub->setSpan($transaction);
 
-    app(CastBallot::class)->handle($round, $voter, [TELEMETRY_CANDIDATE_ID => 'for'], $code);
+    app(CastBallot::class)->handle($round, $voter, $event);
 
     // Positive control: a query outside the cast is recorded, binding and all.
     DB::table('einundzwanzig_plebs')->where('id', 9876543)->count();
@@ -130,12 +130,10 @@ it('leaves no breadcrumb and no query span of a cast in Sentry, with bindings sw
 
     expect($recorded)->toContain('9876543')
         ->not->toContain((string) TELEMETRY_CANDIDATE_ID)
-        ->not->toContain($code)
+        ->not->toContain($event['sig'])
         ->not->toContain($voter->pubkey)
-        ->not->toContain('election_marks')
-        ->not->toContain('election_ballot_choices')
-        ->not->toContain('election_receipts')
-        ->and(electionRowCounts($round))->toBe(['marks' => 1, 'choices' => 1, 'receipts' => 1]);
+        ->not->toContain('election_votes')
+        ->and(electionVoteCount($round))->toBe(1);
 });
 
 /*
@@ -177,17 +175,20 @@ it('keeps choice and pubkey out of security_attempts for a tampered ballot reque
  * `database.connections.sqlite.mask_bindings_in_exception_messages` — the
  * failed insert then names candidate and choice in its message.
  */
-it('keeps choice, receipt code and pubkey out of the messages of a failed and of a refused cast', function () {
+it('keeps choice, signature and pubkey out of the messages of a failed and of a refused cast', function () {
     [$round, $voter] = telemetryRound();
-    $code = electionReceiptCode();
+    $events = [
+        signedElectionVote($round, $voter, [TELEMETRY_CANDIDATE_ID => 'for']),
+        signedElectionVote($round, $voter, [TELEMETRY_CANDIDATE_ID => 'tampered']),
+    ];
 
-    DB::statement("CREATE TRIGGER refuse_ballot_rows BEFORE INSERT ON election_ballot_choices BEGIN SELECT RAISE(ABORT, 'ballot row refused'); END");
+    DB::statement("CREATE TRIGGER refuse_votes BEFORE INSERT ON election_votes BEGIN SELECT RAISE(ABORT, 'vote refused'); END");
 
     $messages = [];
 
-    foreach ([[TELEMETRY_CANDIDATE_ID => 'for'], [TELEMETRY_CANDIDATE_ID => 'tampered']] as $selection) {
+    foreach ($events as $event) {
         try {
-            app(CastBallot::class)->handle($round, $voter, $selection, $code);
+            app(CastBallot::class)->handle($round, $voter, $event);
         } catch (Throwable $thrown) {
             for ($exception = $thrown; $exception !== null; $exception = $exception->getPrevious()) {
                 $messages[] = get_class($exception).': '.$exception->getMessage();
@@ -196,12 +197,12 @@ it('keeps choice, receipt code and pubkey out of the messages of a failed and of
     }
 
     expect(collect($messages)->first(fn (string $message) => str_starts_with($message, ElectionBallotWriteException::class)))->toContain('SQLSTATE')
-        ->and(collect($messages)->contains(fn (string $message) => str_contains($message, 'ballot row refused')))->toBeFalse()
+        ->and(collect($messages)->contains(fn (string $message) => str_contains($message, 'vote refused')))->toBeFalse()
         ->and(collect($messages)->contains(fn (string $message) => str_contains($message, 'Ballot refused: '.ElectionBallotRefusal::InvalidChoices->value)))->toBeTrue();
 
     foreach ($messages as $message) {
         expect($message)->not->toContain((string) TELEMETRY_CANDIDATE_ID)
-            ->not->toContain($code)
+            ->not->toContain($events[0]['sig'])
             ->not->toContain($voter->pubkey)
             ->not->toMatch('/\b(for|tampered)\b/');
     }
@@ -220,7 +221,7 @@ it('throttles casting per member and leaves other members alone', function () {
     }
 
     expect(electionRefusal(fn () => castElectionBallot($round, $voter, [TELEMETRY_CANDIDATE_ID => 'for'])))->toBe(ElectionBallotRefusal::TooManyAttempts)
-        ->and(electionRowCounts($round)['marks'])->toBe(0)
+        ->and(electionVoteCount($round))->toBe(0)
         ->and(electionRefusal(fn () => castElectionBallot($round, $other, [TELEMETRY_CANDIDATE_ID => 'for'])))->toBe(ElectionBallotRefusal::NotOnRoll);
 
     RateLimiter::clear('election-cast:'.$voter->getKey());

@@ -174,5 +174,5 @@ it('keeps the ballot out of the message of a failed insert', function () {
             ->not->toMatch('/\bfor\b/');
     }
 
-    expect(electionRowCounts($round))->toBe(['marks' => 0, 'choices' => 0, 'receipts' => 0]);
+    expect(electionVoteCount($round))->toBe(0);
 });

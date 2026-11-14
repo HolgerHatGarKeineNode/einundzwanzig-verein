@@ -193,5 +193,5 @@ it('keeps a candidacy decision and the opening apart from the rows of the ballot
     stewardship()->open($round, $boardMember);
 
     expect($pending->fresh()->status)->toBe(ElectionCandidateStatus::Withdrawn)
-        ->and(electionRowCounts($round))->toBe(['marks' => 0, 'choices' => 0, 'receipts' => 0]);
+        ->and(electionVoteCount($round))->toBe(0);
 });

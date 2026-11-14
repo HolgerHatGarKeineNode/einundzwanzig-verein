@@ -18,8 +18,6 @@ enum ElectionBallotRefusal: string
 
     case InvalidChoices = 'invalid_choices';
 
-    case InvalidReceipt = 'invalid_receipt';
-
     case TooManyAttempts = 'too_many_attempts';
 
     /** The event's id or signature does not hold. */
@@ -44,7 +42,6 @@ enum ElectionBallotRefusal: string
             self::NotOnRoll => __('Du stehst für diesen Wahlgang nicht im Wählerverzeichnis.'),
             self::AlreadyVoted => __('Du hast in diesem Wahlgang bereits gewählt.'),
             self::InvalidChoices => __('Dieser Stimmzettel ist nicht gültig ausgefüllt.'),
-            self::InvalidReceipt => __('Der Quittungscode ist ungültig. Bitte lade die Seite neu und versuche es noch einmal.'),
             self::TooManyAttempts => __('Zu viele Versuche. Bitte warte eine Minute und versuche es dann noch einmal.'),
             self::InvalidSignature => __('Die Signatur deiner Stimme ist ungültig. Bitte signiere sie noch einmal.'),
             self::ForeignSigner => __('Deine Stimme wurde mit einem anderen Nostr-Schlüssel signiert als dem, mit dem du angemeldet bist.'),

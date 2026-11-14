@@ -50,7 +50,7 @@ it('takes a ballot from the opening instant up to, not including, the closing in
     $refusal = electionRefusal(fn () => castElectionBallot($round, $voter));
 
     expect($refusal)->toBe($accepted ? null : ElectionBallotRefusal::RoundNotOpen)
-        ->and(electionRowCounts($round)['marks'])->toBe($accepted ? 1 : 0);
+        ->and(electionVoteCount($round))->toBe($accepted ? 1 : 0);
 })->with([
     '1 s before opens_at' => [fn (ElectionRound $round) => $round->opens_at->copy()->subSecond(), false],
     'exactly opens_at' => [fn (ElectionRound $round) => $round->opens_at->copy(), true],
@@ -70,13 +70,13 @@ it('refuses a ballot in a live round until the chair opens it, and after the clo
     $this->travelTo(now()->addDays(30));
 
     expect(electionRefusal(fn () => castElectionBallot($round, $voter)))->toBe(ElectionBallotRefusal::RoundNotOpen)
-        ->and(electionRowCounts($round)['marks'])->toBe(0);
+        ->and(electionVoteCount($round))->toBe(0);
 
     $round = app(OpenRound::class)->handle($round);
     $round = app(CloseRound::class)->handle($round);
 
     expect(electionRefusal(fn () => castElectionBallot($round, $voter)))->toBe(ElectionBallotRefusal::RoundNotOpen)
-        ->and(electionRowCounts($round))->toBe(['marks' => 0, 'choices' => 0, 'receipts' => 0]);
+        ->and(electionVoteCount($round))->toBe(0);
 });
 
 /*
@@ -96,5 +96,5 @@ it('refuses a ballot that arrives after the chair closed the round, on a stale i
     app(CloseRound::class)->handle($round);
 
     expect(electionRefusal(fn () => castElectionBallot($stale, $voter)))->toBe(ElectionBallotRefusal::RoundNotOpen)
-        ->and(electionRowCounts($round))->toBe(['marks' => 0, 'choices' => 0, 'receipts' => 0]);
+        ->and(electionVoteCount($round))->toBe(0);
 });
