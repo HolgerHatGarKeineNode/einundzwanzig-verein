@@ -15,4 +15,7 @@ enum ElectionRollSource: string
 
     /** Copied from the round this run-off belongs to. */
     case Inherited = 'inherited';
+
+    /** Entered by hand by the Wahlleitung (`EnrolByHand`). */
+    case ByHand = 'by_hand';
 }

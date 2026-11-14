@@ -13,4 +13,10 @@ enum ElectionRollReason: string
 
     /** Honorary member, and this election exempts honorary members from the fee. */
     case HonoraryExempt = 'honorary_exempt';
+
+    /**
+     * Entered by the Wahlleitung with a reason in the audit log — the roll
+     * does not say more than that, the audit line does.
+     */
+    case ConfirmedByLead = 'confirmed_by_lead';
 }
