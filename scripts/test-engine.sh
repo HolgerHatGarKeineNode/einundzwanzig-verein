@@ -91,15 +91,16 @@ trap 'exit 143' TERM
 
 case "$engine" in
     pgsql)
-        "$runtime" run -d --rm --name "$container" \
-            -e POSTGRES_USER="$username" -e POSTGRES_DB="$database" -e POSTGRES_PASSWORD="$ENGINE_PASSWORD" \
+        POSTGRES_PASSWORD="$ENGINE_PASSWORD" "$runtime" run -d --rm --name "$container" \
+            -e POSTGRES_USER="$username" -e POSTGRES_DB="$database" -e POSTGRES_PASSWORD \
             --tmpfs /var/lib/postgresql \
             -p "127.0.0.1::$container_port" "$image" >/dev/null
         dsn_prefix="pgsql"
         ;;
     mysql | mariadb)
-        "$runtime" run -d --rm --name "$container" \
-            -e MYSQL_ROOT_PASSWORD="$ENGINE_PASSWORD" -e MARIADB_ROOT_PASSWORD="$ENGINE_PASSWORD" \
+        MYSQL_ROOT_PASSWORD="$ENGINE_PASSWORD" MARIADB_ROOT_PASSWORD="$ENGINE_PASSWORD" \
+            "$runtime" run -d --rm --name "$container" \
+            -e MYSQL_ROOT_PASSWORD -e MARIADB_ROOT_PASSWORD \
             -e MYSQL_DATABASE="$database" -e MARIADB_DATABASE="$database" \
             --tmpfs /var/lib/mysql \
             -p "127.0.0.1::$container_port" "$image" >/dev/null
