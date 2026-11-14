@@ -388,6 +388,7 @@ it('pins every public method of the classes that hold or hand out ballot rows', 
             'handle(App\Models\ElectionRound $round, App\Models\EinundzwanzigPleb $voter, array $selection, string $receiptCode): void',
         ],
         CloseRound::class => [
+            '__construct(App\Services\Election\RoundManifest $manifest)',
             'handle(App\Models\ElectionRound $round): App\Models\ElectionRound',
         ],
     ];

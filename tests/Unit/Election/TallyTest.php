@@ -12,7 +12,7 @@ use App\Services\Election\Tally;
  *  - M6c  most_votes counts one vote per candidate instead of one per row
  *  - M7a  equal votes on the last seat: take the first of the sorted list
  *  - B1-T1 single majority counts half as a majority (`>=` for `>`)
- *  - B1-T2 blank ballots count towards the majority base
+ *  - B1-T2 a round with fewer elected than seats is reported as complete
  */
 
 /**
