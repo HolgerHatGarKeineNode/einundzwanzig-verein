@@ -2,8 +2,10 @@
 
 namespace App\Providers;
 
+use App\Models\MemberProposal;
 use App\Models\ProjectProposal;
 use App\Models\Vote;
+use App\Policies\MemberProposalPolicy;
 use App\Policies\ProjectProposalPolicy;
 use App\Policies\VotePolicy;
 use App\Support\ApiIdentity;
@@ -31,6 +33,7 @@ class AppServiceProvider extends ServiceProvider
     {
         Gate::policy(ProjectProposal::class, ProjectProposalPolicy::class);
         Gate::policy(Vote::class, VotePolicy::class);
+        Gate::policy(MemberProposal::class, MemberProposalPolicy::class);
 
         RateLimiter::for('api', function (Request $request) {
             return Limit::perMinute(60)->by($request->ip());

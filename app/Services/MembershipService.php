@@ -8,6 +8,7 @@ use App\Enums\PaymentReviewReason;
 use App\Exceptions\MembershipUnavailableException;
 use App\Jobs\PublishPaymentEventToNostr;
 use App\Models\EinundzwanzigPleb;
+use App\Models\MemberProposalVote;
 use App\Models\MembershipGrant;
 use App\Models\PaymentEvent;
 use App\Models\PaymentReversal;
@@ -1205,6 +1206,21 @@ class MembershipService
                 'event_id' => null,
                 'btc_pay_invoice' => null,
             ]);
+
+            /*
+             * MEMBER PROPOSALS. A vote row is nothing but "this member, this
+             * proposal, for or against" — there is no part of it that could
+             * stay without the person, so the rows go and the two counts drop
+             * accordingly.
+             *
+             * Proposals and comments stay, like project proposals do: they
+             * hang on this row by its primary key, and with the profile
+             * deleted and pubkey and npub replaced above there is no name
+             * left for them to carry — the pages print "Ehemaliges Mitglied"
+             * for an erased author. What the member TYPED stays as typed; a
+             * name written into a title or a comment is not found here.
+             */
+            MemberProposalVote::query()->where('einundzwanzig_pleb_id', $pleb->id)->delete();
 
             /*
              * After the save, never before: saving re-upserts the blind index

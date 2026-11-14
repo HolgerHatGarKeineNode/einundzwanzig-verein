@@ -108,3 +108,10 @@ Route::livewire('/association/project-support', 'association.project-support.ind
 Route::livewire('/association/project-support/create', 'association.project-support.form.create')->name('association.projectSupport.create');
 Route::livewire('/association/project-support/{projectProposal:slug}', 'association.project-support.show')->name('association.projectSupport.item');
 Route::livewire('/association/project-support/edit/{projectProposal:slug}', 'association.project-support.form.edit')->name('association.projectSupport.edit');
+
+Route::livewire('/association/proposals', 'association.proposals.index')->name('association.proposals.index');
+Route::livewire('/association/proposals/archive', 'association.proposals.index')->defaults('archive', true)->name('association.proposals.archive');
+Route::livewire('/association/proposals/create', 'association.proposals.form')->name('association.proposals.create');
+Route::livewire('/association/proposals/board', 'association.proposals.board')->name('association.proposals.board');
+Route::livewire('/association/proposals/{memberProposal}', 'association.proposals.show')->whereNumber('memberProposal')->name('association.proposals.show');
+Route::livewire('/association/proposals/{memberProposal}/edit', 'association.proposals.form')->whereNumber('memberProposal')->name('association.proposals.edit');

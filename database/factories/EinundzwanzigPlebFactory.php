@@ -41,11 +41,11 @@ class EinundzwanzigPlebFactory extends Factory
         ]);
     }
 
-    public function withPaidYear(int $year): static
+    public function withPaidCurrentYear(): static
     {
-        return $this->afterCreating(function (EinundzwanzigPleb $pleb) use ($year) {
+        return $this->afterCreating(function (EinundzwanzigPleb $pleb) {
             $pleb->paymentEvents()->create([
-                'year' => $year,
+                'year' => date('Y'),
                 'amount' => 21000,
                 'paid' => true,
                 'event_id' => 'test_event_'.fake()->sha256(),
@@ -53,11 +53,18 @@ class EinundzwanzigPlebFactory extends Factory
         });
     }
 
-    public function withPaidCurrentYear(): static
+    /**
+     * A paid fee for exactly this year, whatever the clock says.
+     *
+     * withPaidCurrentYear() takes its year from date('Y'), which ignores
+     * travelTo(), while hasPaidMembership() reads now(). A test that moves the
+     * clock names the year here instead. Chain it for several years.
+     */
+    public function withPaidYear(int $year): static
     {
-        return $this->afterCreating(function (EinundzwanzigPleb $pleb) {
+        return $this->afterCreating(function (EinundzwanzigPleb $pleb) use ($year) {
             $pleb->paymentEvents()->create([
-                'year' => date('Y'),
+                'year' => $year,
                 'amount' => 21000,
                 'paid' => true,
                 'event_id' => 'test_event_'.fake()->sha256(),
