@@ -55,8 +55,7 @@ class ElectionStewardship
     }
 
     /**
-     * Announce the election. From now on `ChangeMemberStatus` refuses
-     * everybody but its Wahlleitung.
+     * Announce the election to the members.
      *
      * @throws AuthorizationException
      */

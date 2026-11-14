@@ -1,14 +1,11 @@
 <?php
 
 use App\Enums\AssociationStatus;
-use App\Exceptions\ElectionActionRefusedException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\PaymentEvent;
-use App\Services\Election\ChangeMemberStatus;
 use App\Support\Board;
 use App\Support\NostrAuth;
 use Flux\Flux;
-use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Livewire\Attributes\Computed;
@@ -270,20 +267,7 @@ new class extends Component
         }
 
         if ($target->value > $pleb->association_status->value) {
-            /*
-             * Through ChangeMemberStatus: while an election holds the status
-             * lock, only its Wahlleitung changes a category. Refused, the
-             * application stays pending, so nothing is lost.
-             */
-            try {
-                $pleb = app(ChangeMemberStatus::class)->handle($pleb, $target, NostrAuth::user()?->getPleb());
-            } catch (AuthorizationException|ElectionActionRefusedException) {
-                Flux::toast('Während einer angekündigten Wahl ändert nur die Wahlleitung den Mitgliedsstatus.', variant: 'danger');
-                $this->confirmAcceptId = null;
-                Flux::modal('confirm-accept-pleb')->close();
-
-                return;
-            }
+            $pleb->association_status = $target;
         }
 
         $pleb->archived_application_text = $pleb->application_text;

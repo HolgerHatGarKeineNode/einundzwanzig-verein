@@ -3,13 +3,11 @@
 namespace App\Services\Election;
 
 use App\Enums\AssociationStatus;
-use App\Enums\ElectionAuditAction;
 use App\Enums\ElectionFeeRule;
 use App\Enums\ElectionRollReason;
 use App\Enums\ElectionRollSource;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
-use App\Models\ElectionAuditEntry;
 use App\Models\ElectionRollEntry;
 use App\Models\ElectionRound;
 use App\Models\PaymentEvent;
@@ -44,8 +42,6 @@ class ElectoralRoll
      * @var list<AssociationStatus>
      */
     public const VOTING_STATUSES = [AssociationStatus::ACTIVE, AssociationStatus::HONORARY];
-
-    public function __construct(protected ElectionAuditLog $audit) {}
 
     /**
      * Why `$pleb` is entitled to vote in `$election` at `$at` — or null if
@@ -86,25 +82,15 @@ class ElectoralRoll
      */
     public function snapshot(ElectionRound $round, CarbonInterface $at): int
     {
-        $changed = $round->parent_round_id === null ? $this->changedUnderLock($round->election) : [];
-
         $rows = $round->parent_round_id !== null
             ? $this->inheritedRows($round)
             : $this->entitled($round->election, $at)->get()->map(fn (EinundzwanzigPleb $pleb): array => [
                 'einundzwanzig_pleb_id' => $pleb->getKey(),
                 'reason' => $this->reasonOf($pleb)->value,
-                'source' => in_array((int) $pleb->getKey(), $changed, true)
-                    ? ElectionRollSource::StatusChange->value
-                    : ElectionRollSource::Opening->value,
+                'source' => ElectionRollSource::Opening->value,
             ])->all();
 
         $this->insert($round, $rows, $at);
-
-        foreach ($rows as $row) {
-            if ($row['source'] === ElectionRollSource::StatusChange->value) {
-                $this->auditStatusChangeEnrolment($round, (int) $row['einundzwanzig_pleb_id']);
-            }
-        }
 
         return $round->rollEntries()->count();
     }
@@ -124,10 +110,6 @@ class ElectoralRoll
      * enrolled in it.
      *
      * Only ever adds. Called again for the same payment it changes nothing.
-     *
-     * A member whose category the Wahlleitung changed under the status lock
-     * (`ChangeMemberStatus`) is entered with the source `status_change`
-     * instead of `late_payment`, and the enrolment gets an audit line.
      */
     public function enrolLatePayer(EinundzwanzigPleb $pleb, CarbonInterface $at): void
     {
@@ -157,18 +139,12 @@ class ElectoralRoll
             }
 
             $reason = $this->reasonOf($entitled);
-            $afterStatusChange = in_array((int) $pleb->getKey(), $this->changedUnderLock($round->election), true);
-            $onRollBefore = $this->contains($round, $pleb);
 
             $this->insert($round, [[
                 'einundzwanzig_pleb_id' => $pleb->getKey(),
                 'reason' => $reason->value,
-                'source' => $afterStatusChange ? ElectionRollSource::StatusChange->value : ElectionRollSource::LatePayment->value,
+                'source' => ElectionRollSource::LatePayment->value,
             ]], $at);
-
-            if ($afterStatusChange && ! $onRollBefore) {
-                $this->auditStatusChangeEnrolment($round, (int) $pleb->getKey());
-            }
         }
     }
 
@@ -281,42 +257,6 @@ class ElectoralRoll
                 'source' => ElectionRollSource::Inherited->value,
             ])
             ->all();
-    }
-
-    /**
-     * Members whose category the Wahlleitung changed while this election held
-     * the status lock — read from its audit log, the one place that records
-     * it.
-     *
-     * @return list<int>
-     */
-    protected function changedUnderLock(Election $election): array
-    {
-        return ElectionAuditEntry::query()
-            ->where('election_event_id', $election->getKey())
-            ->where('action', ElectionAuditAction::MemberStatusChanged->value)
-            ->whereNotNull('subject_pleb_id')
-            ->pluck('subject_pleb_id')
-            ->map(fn (mixed $id): int => (int) $id)
-            ->unique()
-            ->values()
-            ->all();
-    }
-
-    /**
-     * The enrolment that followed a status change, as its own audit line. No
-     * actor: the opening or the member's payment caused it, not a person.
-     */
-    protected function auditStatusChangeEnrolment(ElectionRound $round, int $plebId): void
-    {
-        $this->audit->append(
-            $round->election,
-            ElectionAuditAction::VoterEnrolledAfterStatusChange,
-            null,
-            round: $round,
-            subject: EinundzwanzigPleb::query()->findOrFail($plebId),
-            details: ['source' => ElectionRollSource::StatusChange->value],
-        );
     }
 
     /**

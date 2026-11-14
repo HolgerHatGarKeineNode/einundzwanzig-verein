@@ -11,8 +11,7 @@ return new class extends Migration
      *   resolution. May be a member outside the board.
      * - `is_test`: a trial election — visible to the board and its lead only,
      *   and the only kind `election:purge-test` deletes. Fixed at creation.
-     * - `announced_at`: from this moment on, membership categories change
-     *   only through the lead (see `ChangeMemberStatus`).
+     * - `announced_at`: when the election was announced to the members.
      */
     public function up(): void
     {

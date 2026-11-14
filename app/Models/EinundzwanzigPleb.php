@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use App\Enums\AssociationStatus;
-use App\Services\Election\ChangeMemberStatus;
 use App\Support\Board;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -115,16 +114,6 @@ class EinundzwanzigPleb extends Authenticatable implements CipherSweetEncrypted,
         'application_text',
         'archived_application_text',
     ];
-
-    /**
-     * While an election holds the status lock, a category change that touches
-     * the vote is refused unless it comes through `ChangeMemberStatus` — the
-     * board screen, a seeder, tinker included.
-     */
-    protected static function booted(): void
-    {
-        static::updating(fn (EinundzwanzigPleb $pleb) => ChangeMemberStatus::guard($pleb));
-    }
 
     protected function casts(): array
     {

@@ -29,9 +29,4 @@ enum ElectionAuditAction: string
     case RoundAnnulled = 'round_annulled';
 
     case VoterEnrolledByHand = 'voter_enrolled_by_hand';
-
-    /** Written by the payment flow, not by a person: the actor is empty. */
-    case VoterEnrolledAfterStatusChange = 'voter_enrolled_after_status_change';
-
-    case MemberStatusChanged = 'member_status_changed';
 }

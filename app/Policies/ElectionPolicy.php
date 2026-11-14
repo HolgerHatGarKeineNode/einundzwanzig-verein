@@ -138,23 +138,6 @@ class ElectionPolicy
     }
 
     /**
-     * A change of a membership category while the election holds the status
-     * lock (`ChangeMemberStatus`): its Wahlleitung, standing in none of its
-     * rounds — a category decides who votes for the candidates.
-     */
-    public function changeMemberStatus(NostrUser $user, Election $election): bool
-    {
-        $pleb = $this->pleb($user);
-
-        return $pleb !== null
-            && $election->isLedBy($pleb)
-            && ! ElectionCandidate::query()
-                ->whereIn('election_round_id', $election->rounds()->select('id'))
-                ->where('einundzwanzig_pleb_id', $pleb->getKey())
-                ->exists();
-    }
-
-    /**
      * The Wahlleitung of the round's election, not standing in the round.
      *
      * Mutation that must turn `ElectionPolicyTest` red: drop the
