@@ -73,8 +73,12 @@ class ElectoralRoll
      * Write the roll of a round that is being opened. Returns the number of
      * entries on it afterwards.
      *
-     * A run-off does not ask the question again: it copies the roll of the
-     * round it belongs to, so the same people decide both.
+     * A run-off does not ask the question again at its opening: it copies
+     * the roll of the round it belongs to, and a status change since that
+     * opening adds nobody and removes nobody. Its roll is not closed for
+     * good, though — whoever settles a qualifying fee while the run-off is
+     * open is added to it by `enrolLatePayer()`, so a run-off can have
+     * voters its parent round did not have.
      */
     public function snapshot(ElectionRound $round, CarbonInterface $at): int
     {
