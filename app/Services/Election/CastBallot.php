@@ -12,6 +12,7 @@ use App\Models\ElectionReceipt;
 use App\Models\ElectionRound;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use SensitiveParameterValue;
 
 /**
  * Take in one ballot.
@@ -35,11 +36,24 @@ class CastBallot
      * @param  array<array-key, mixed>  $selection  candidate id => choice value, see `ElectionCountingRule::ballotRows()`; empty for a blank ballot
      * @param  string  $receiptCode  made up by the voter's browser; only its hash is stored
      *
+     * Both are `#[\SensitiveParameter]`: a stack trace — in a log, an error
+     * report or a debug page — shows them as `SensitiveParameterValue`. The
+     * transaction closure gets them wrapped the same way, because a closure
+     * carries the variables it uses, and a trace holds the closure.
+     *
      * @throws ElectionBallotRefusedException
      */
-    public function handle(ElectionRound $round, EinundzwanzigPleb $voter, array $selection, string $receiptCode): void
-    {
-        DB::transaction(function () use ($round, $voter, $selection, $receiptCode): void {
+    public function handle(
+        ElectionRound $round,
+        EinundzwanzigPleb $voter,
+        #[\SensitiveParameter] array $selection,
+        #[\SensitiveParameter] string $receiptCode,
+    ): void {
+        $ballot = new SensitiveParameterValue(['selection' => $selection, 'receiptCode' => $receiptCode]);
+
+        DB::transaction(function () use ($round, $voter, $ballot): void {
+            ['selection' => $selection, 'receiptCode' => $receiptCode] = $ballot->getValue();
+
             /*
              * Whether the round is open is decided HERE: on the row as it is
              * now, locked, against the clock of this transaction. Not on the

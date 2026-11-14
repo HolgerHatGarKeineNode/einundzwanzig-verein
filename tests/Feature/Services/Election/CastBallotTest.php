@@ -379,3 +379,58 @@ it('does not report a refused ballot, nor a refusal of a subclass', function () 
     Exceptions::assertReported(RuntimeException::class);
     expect(Exceptions::reported())->toHaveCount(1);
 });
+
+/**
+ * Every argument of every frame of `$exception`'s trace as text: scalars and
+ * arrays as they are, closures as the variables they use, any other object as
+ * its class name.
+ */
+function electionTraceArguments(Throwable $exception): string
+{
+    $flatten = function (mixed $value) use (&$flatten): mixed {
+        return match (true) {
+            $value instanceof Closure => array_map($flatten, (new ReflectionFunction($value))->getClosureUsedVariables()),
+            is_object($value) => $value::class,
+            is_array($value) => array_map($flatten, $value),
+            default => $value,
+        };
+    };
+
+    return print_r(array_map(fn (array $frame): mixed => $flatten($frame['args'] ?? []), $exception->getTrace()), true);
+}
+
+it('shows the selection and the receipt code in a stack trace only as SensitiveParameterValue', function () {
+    /*
+     * Mutation B1-S1 (patch in the plan folder): drop `#[\SensitiveParameter]`
+     * from `$selection` and `$receiptCode` → red. B1-S2: hand the raw values
+     * to the transaction closure → red.
+     */
+    $voter = electionVoter();
+    $round = openElectionRound();
+    $selection = [$round->candidates()->value('id') => 'for'];
+    $code = electionReceiptCode();
+    app(CloseRound::class)->handle($round);
+
+    // CLI defaults to dropping arguments from traces; a production server may not.
+    $previous = ini_set('zend.exception_ignore_args', '0');
+
+    try {
+        app(CastBallot::class)->handle($round, $voter, $selection, $code);
+    } catch (ElectionBallotRefusedException $refusal) {
+    } finally {
+        ini_set('zend.exception_ignore_args', (string) $previous);
+    }
+
+    expect($refusal ?? null)->toBeInstanceOf(ElectionBallotRefusedException::class);
+
+    $frame = collect($refusal->getTrace())
+        ->first(fn (array $frame): bool => ($frame['class'] ?? null) === CastBallot::class && $frame['function'] === 'handle');
+
+    // The first two arguments are there as they are: the trace does carry arguments.
+    expect($frame['args'][0])->toBeInstanceOf(ElectionRound::class)
+        ->and($frame['args'][1])->toBeInstanceOf(EinundzwanzigPleb::class)
+        ->and($frame['args'][2])->toBeInstanceOf(SensitiveParameterValue::class)
+        ->and($frame['args'][3])->toBeInstanceOf(SensitiveParameterValue::class)
+        ->and(electionTraceArguments($refusal))->toContain('[ballot] => SensitiveParameterValue')
+        ->not->toContain($code);
+});

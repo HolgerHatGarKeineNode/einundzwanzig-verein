@@ -19,7 +19,7 @@ require_once __DIR__.'/helpers.php';
  * run-off behind the round it belongs to.
  *
  * Mutations that must turn this file red (patches in the plan folder):
- *  - B1-C1 the command selects rounds whose end is still ahead (`>` for `<=`)
+ *  - B1-C1 the command selects rounds whose end is one second ahead
  *  - B1-C2 the command stops at the first round it cannot seal
  *  - B1-C3 the command is not scheduled
  *  - B1-R1 `OpenRound` opens a run-off whose round is not sealed
