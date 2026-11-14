@@ -1131,6 +1131,10 @@ class MembershipService
         return DB::transaction(function () use ($pleb): array {
             Profile::query()->where('pubkey', $pleb->pubkey)->delete();
 
+            // Inbox relays name where this person reads; the row would outlive
+            // the anonymised member, whose record is updated, never deleted.
+            $pleb->dmRelays()->delete();
+
             // Images the member embedded in project descriptions are theirs.
             $pleb->clearMediaCollection(EinundzwanzigPleb::DESCRIPTION_IMAGES);
 
