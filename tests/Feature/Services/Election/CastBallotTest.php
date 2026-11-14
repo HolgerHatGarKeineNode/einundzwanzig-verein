@@ -15,6 +15,7 @@ use App\Services\MembershipService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
@@ -352,4 +353,29 @@ it('tells the member why a ballot was refused, in German under any locale', func
 
     expect(ElectionBallotRefusal::AlreadyVoted->label())->toBe('Du hast in diesem Wahlgang bereits gewählt.')
         ->and(collect(ElectionBallotRefusal::cases())->map->label()->unique())->toHaveCount(count(ElectionBallotRefusal::cases()));
+});
+
+it('does not report a refused ballot, nor a refusal of a subclass', function () {
+    Exceptions::fake();
+
+    $round = openElectionRound();
+    $stranger = electionVoter();
+
+    try {
+        castElectionBallot($round, $stranger);
+    } catch (ElectionBallotRefusedException $refusal) {
+        report($refusal);
+    }
+
+    expect($refusal ?? null)->toBeInstanceOf(ElectionBallotRefusedException::class);
+
+    report(new class(ElectionBallotRefusal::AlreadyVoted) extends ElectionBallotRefusedException {});
+
+    Exceptions::assertNothingReported();
+
+    // The fake does record what is reportable — the assertion above can fail.
+    report(new RuntimeException('reportable'));
+
+    Exceptions::assertReported(RuntimeException::class);
+    expect(Exceptions::reported())->toHaveCount(1);
 });
