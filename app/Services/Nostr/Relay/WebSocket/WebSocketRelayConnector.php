@@ -6,6 +6,7 @@ use App\Services\Nostr\Relay\PinnedRelayAddress;
 use App\Services\Nostr\Relay\RelayConnection;
 use App\Services\Nostr\Relay\RelayConnectionTimedOut;
 use App\Services\Nostr\Relay\RelayConnector;
+use Phrity\Net\Context;
 use Throwable;
 use WebSocket\Client;
 use WebSocket\Middleware\CloseHandler;
@@ -53,9 +54,12 @@ final class WebSocketRelayConnector implements RelayConnector
         try {
             $client = new Client("wss://{$authority}:{$address->port}{$address->pathAndQuery}", null, $factory);
 
+            // A Context object, not an array: phrity raises E_USER_DEPRECATED
+            // for the array form on every connect. The client's default
+            // context is empty, so replacing it loses nothing.
             $client
                 ->setTimeout(min($this->connectTimeoutSeconds, $remaining))
-                ->setContext(['ssl' => [
+                ->setContext((new Context)->setOptions(['ssl' => [
                     'peer_name' => $address->host,
                     'verify_peer' => true,
                     'verify_peer_name' => true,
@@ -63,7 +67,7 @@ final class WebSocketRelayConnector implements RelayConnector
                     // RFC 6066: SNI carries host names, never addresses.
                     'SNI_enabled' => ! $hostIsLiteral,
                     'SNI_server_name' => $address->host,
-                ]])
+                ]]))
                 ->addMiddleware(new CloseHandler)
                 ->addMiddleware(new PingResponder);
 
