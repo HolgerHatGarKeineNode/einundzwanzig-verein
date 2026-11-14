@@ -1,0 +1,82 @@
+<?php
+
+use App\Services\Nostr\EventHash;
+use App\Services\Nostr\NotificationKey;
+use App\Services\Nostr\NotificationKeyUnavailable;
+use Mdanter\Ecc\Crypto\Signature\SchnorrSignature;
+use swentel\nostr\Key\Key;
+
+it('throws a typed exception when no notification key is configured', function () {
+    config()->set('services.nostr_notification_key', '');
+
+    expect(fn () => app(NotificationKey::class)->publicKey())
+        ->toThrow(NotificationKeyUnavailable::class, 'No notification key is configured');
+});
+
+it('does not fall back to the fee-signing key', function () {
+    config()->set('services.nostr', testPrivateKey());
+    config()->set('services.nostr_notification_key', null);
+
+    expect(fn () => app(NotificationKey::class)->signSeal('ciphertext', time()))
+        ->toThrow(NotificationKeyUnavailable::class);
+});
+
+it('refuses a malformed key without repeating it', function (string $configured) {
+    $key = new NotificationKey($configured);
+
+    try {
+        $key->publicKey();
+        $this->fail('A malformed key was accepted.');
+    } catch (NotificationKeyUnavailable $exception) {
+        expect($exception->getMessage())->toContain('neither an nsec')
+            ->not->toContain($configured);
+    }
+})->with([
+    'too short' => [str_repeat('ab', 31)],
+    'not hex' => [str_repeat('zz', 32)],
+    'zero' => [str_repeat('0', 64)],
+    'curve order' => ['fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141'],
+    'broken nsec' => ['nsec1notarealkeyatall'],
+]);
+
+it('accepts the hex and the nsec form of the same key', function () {
+    $secret = testPrivateKey();
+    $nsec = (new Key)->convertPrivateKeyToBech32($secret);
+
+    config()->set('services.nostr_notification_key', $nsec);
+
+    expect(app(NotificationKey::class)->publicKey())
+        ->toBe((new NotificationKey(strtoupper($secret)))->publicKey())
+        ->toBe((new Key)->getPublicKey($secret));
+});
+
+it('signs a seal as kind 13 with empty tags and a valid signature', function () {
+    $secret = testPrivateKey();
+    $key = new NotificationKey($secret);
+
+    $seal = $key->signSeal('ciphertext', 1_700_000_000);
+
+    expect($seal['kind'])->toBe(13)
+        ->and($seal['tags'])->toBe([])
+        ->and($seal['pubkey'])->toBe((new Key)->getPublicKey($secret))
+        ->and($seal['id'])->toBe(EventHash::of($seal['pubkey'], 1_700_000_000, 13, [], 'ciphertext'))
+        ->and((new SchnorrSignature)->verify($seal['pubkey'], $seal['sig'], $seal['id']))->toBeTrue();
+});
+
+it('signs a relay AUTH answer as kind 22242 naming relay and challenge', function () {
+    $key = new NotificationKey(testPrivateKey());
+
+    $auth = $key->signRelayAuth('wss://relay.example.com', 'challenge-123', 1_700_000_000);
+
+    expect($auth['kind'])->toBe(22242)
+        ->and($auth['tags'])->toBe([['relay', 'wss://relay.example.com'], ['challenge', 'challenge-123']])
+        ->and($auth['content'])->toBe('')
+        ->and((new SchnorrSignature)->verify($auth['pubkey'], $auth['sig'], $auth['id']))->toBeTrue();
+});
+
+it('keeps the secret out of a dump', function () {
+    $secret = testPrivateKey();
+
+    expect(print_r(new NotificationKey($secret), true))->not->toContain($secret)
+        ->and(print_r(new NotificationKey($secret), true))->toContain('yes');
+});

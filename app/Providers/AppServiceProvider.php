@@ -6,6 +6,7 @@ use App\Models\ProjectProposal;
 use App\Models\Vote;
 use App\Policies\ProjectProposalPolicy;
 use App\Policies\VotePolicy;
+use App\Services\Nostr\NotificationKey;
 use App\Support\ApiIdentity;
 use App\Support\NostrAuth;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -21,7 +22,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        /*
+         * Not a singleton: the key holder reads its configuration lazily, and
+         * a fresh instance per resolution sees the current value.
+         */
+        $this->app->bind(NotificationKey::class, fn (): NotificationKey => NotificationKey::fromConfig());
     }
 
     /**
