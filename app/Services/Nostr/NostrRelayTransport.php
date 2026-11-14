@@ -54,6 +54,9 @@ final class NostrRelayTransport implements RelayTransport
      */
     public function publish(string $relayUrl, array $event): RelayPublishResult
     {
+        // Fixed before the DNS lookup in pin(): resolving is part of the budget.
+        $deadline = $this->deadline();
+
         // A missing key is an installation problem, not a relay outcome.
         $this->key->publicKey();
 
@@ -83,7 +86,7 @@ final class NostrRelayTransport implements RelayTransport
         $connection = null;
 
         try {
-            $connection = $this->connector->connect($address, $this->deadline());
+            $connection = $this->connector->connect($address, $deadline);
 
             return $this->exchangeEvent($connection, trim($relayUrl), $frame, $eventId, $trace);
         } catch (RelayConnectionTimedOut) {
@@ -106,6 +109,9 @@ final class NostrRelayTransport implements RelayTransport
 
     public function fetch(string $relayUrl, array $filter): RelayFetchResult
     {
+        // Fixed before the DNS lookup in pin(): resolving is part of the budget.
+        $deadline = $this->deadline();
+
         try {
             $address = $this->guard->pin($relayUrl);
         } catch (RelayAddressRefused $refusal) {
@@ -117,7 +123,7 @@ final class NostrRelayTransport implements RelayTransport
         $subscription = bin2hex(random_bytes(8));
 
         try {
-            $connection = $this->connector->connect($address, $this->deadline());
+            $connection = $this->connector->connect($address, $deadline);
             $connection->send(EventHash::json(['REQ', $subscription, (object) $filter]));
 
             while (true) {

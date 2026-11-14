@@ -101,6 +101,32 @@ it('throws the typed key error before any socket is opened', function () {
         ->and(RelayTripwire::takeAttempts())->toBe([]);
 });
 
+it('counts the DNS lookup against the deadline and dials nothing once it is spent', function (string $operation) {
+    $slowDns = new class implements HostResolver
+    {
+        public function resolve(string $host): array
+        {
+            usleep(300_000);
+
+            return ['93.184.215.14'];
+        }
+    };
+    $transport = new NostrRelayTransport(
+        new NotificationKey(testPrivateKey()),
+        new RelayAddressGuard($slowDns),
+        new WebSocketRelayConnector,
+        deadlineSeconds: 0.2,
+    );
+    $wrap = socketTestWrap();
+
+    $message = $operation === 'publish'
+        ? $transport->publish('wss://relay.example.com', $wrap)->message
+        : $transport->fetch('wss://relay.example.com', ['kinds' => [10050]])->message;
+
+    expect($message)->toStartWith('timeout:')
+        ->and(RelayTripwire::takeAttempts())->toBe([]);
+})->with(['publish', 'fetch']);
+
 it('reports a failed read as an incomplete result, not as an empty one', function () {
     $result = socketTransport(null)->fetch('wss://relay.example.com', ['kinds' => [10050]]);
 
