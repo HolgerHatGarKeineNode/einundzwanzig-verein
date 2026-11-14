@@ -20,8 +20,11 @@ interface RelayTransport
     /**
      * Send one signed event to one relay and return that relay's answer.
      *
-     * A relay that answers `OK false` is a result, not an exception. A relay
-     * that cannot be reached, or that answers nothing usable, is an exception.
+     * Every outcome of talking to the relay is a result, not an exception:
+     * `OK false` is RelayPublishStatus::Rejected, no usable answer is Failed,
+     * an address or event that did not pass our checks is Refused. An
+     * exception means the installation cannot publish at all (production:
+     * NotificationKeyUnavailable when the key for NIP-42 AUTH is missing).
      *
      * @param  array{id: string, pubkey: string, created_at: int, kind: int, tags: array<int, array<int, string>>, content: string, sig: string}  $event
      */
@@ -30,8 +33,11 @@ interface RelayTransport
     /**
      * Ask one relay for the stored events matching one NIP-01 filter.
      *
+     * The events are returned as the relay sent them; verifying ids and
+     * signatures is the caller's job. A relay that did not reach EOSE yields
+     * an incomplete result, never an exception.
+     *
      * @param  array<string, mixed>  $filter
-     * @return array<int, array<string, mixed>>
      */
-    public function fetch(string $relayUrl, array $filter): array;
+    public function fetch(string $relayUrl, array $filter): RelayFetchResult;
 }

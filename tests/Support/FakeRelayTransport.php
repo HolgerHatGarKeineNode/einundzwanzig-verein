@@ -2,6 +2,7 @@
 
 namespace Tests\Support;
 
+use App\Services\Nostr\RelayFetchResult;
 use App\Services\Nostr\RelayPublishResult;
 use App\Services\Nostr\RelayTransport;
 use PHPUnit\Framework\Assert;
@@ -21,7 +22,8 @@ use Throwable;
  *
  * fetch() returns the events stored for the asked relay and records the
  * filter. It does not evaluate the filter — a test that depends on filtering
- * asserts the recorded filter instead.
+ * asserts the recorded filter instead. A relay marked unanswering returns an
+ * incomplete result, the way the production adapter reports a timeout.
  */
 final class FakeRelayTransport implements RelayTransport
 {
@@ -36,6 +38,9 @@ final class FakeRelayTransport implements RelayTransport
 
     /** @var array<string, array<int, array<string, mixed>>> */
     private array $stored = [];
+
+    /** @var array<string, string> */
+    private array $unanswering = [];
 
     public static function bind(): self
     {
@@ -61,8 +66,30 @@ final class FakeRelayTransport implements RelayTransport
     }
 
     /**
-     * The relay never took the event: unreachable, timed out, or the vendor's
-     * TypeError for a relay that answered nothing.
+     * No usable answer, reported the way the production adapter reports it:
+     * as a result with RelayPublishStatus::Failed.
+     */
+    public function thenFail(string $message): self
+    {
+        $this->outcomes[] = ['result' => RelayPublishResult::failed($message), 'throw' => null];
+
+        return $this;
+    }
+
+    /**
+     * Our own checks stopped the publish before any connection.
+     */
+    public function thenRefuse(string $message): self
+    {
+        $this->outcomes[] = ['result' => RelayPublishResult::refused($message), 'throw' => null];
+
+        return $this;
+    }
+
+    /**
+     * The relay never took the event and the transport threw. The production
+     * adapter maps connection errors to thenFail(); this remains for code that
+     * must survive a transport that throws anyway.
      */
     public function thenThrow(Throwable $exception): self
     {
@@ -93,6 +120,16 @@ final class FakeRelayTransport implements RelayTransport
         return $this;
     }
 
+    /**
+     * fetch() on this relay ends without EOSE: what it returns is incomplete.
+     */
+    public function withUnansweringRelay(string $relayUrl, string $message = 'timeout: no EOSE'): self
+    {
+        $this->unanswering[$relayUrl] = $message;
+
+        return $this;
+    }
+
     public function publish(string $relayUrl, array $event): RelayPublishResult
     {
         $outcome = array_shift($this->outcomes)
@@ -111,11 +148,15 @@ final class FakeRelayTransport implements RelayTransport
         return $outcome['result'];
     }
 
-    public function fetch(string $relayUrl, array $filter): array
+    public function fetch(string $relayUrl, array $filter): RelayFetchResult
     {
         $this->fetched[] = ['relay' => $relayUrl, 'filter' => $filter];
 
-        return $this->stored[$relayUrl] ?? [];
+        if (isset($this->unanswering[$relayUrl])) {
+            return RelayFetchResult::incomplete($this->stored[$relayUrl] ?? [], $this->unanswering[$relayUrl]);
+        }
+
+        return RelayFetchResult::complete($this->stored[$relayUrl] ?? []);
     }
 
     /**
