@@ -138,7 +138,8 @@ it('freezes the window and the rule once the round is opened', function (string 
     'counting_rule' => ['counting_rule', ElectionCountingRule::MostVotes],
     'seats' => ['seats', 5],
     'mode' => ['mode', ElectionRoundMode::Window],
-    'position' => ['position', 99],
+    // Far above the factory's running position counter, so the value always changes.
+    'position' => ['position', 999999],
 ]);
 
 it('freezes the window of a window round that has been opened ahead of time', function () {
