@@ -2,6 +2,8 @@
 
 namespace App\Services\Nostr;
 
+use LogicException;
+use SensitiveParameterValue;
 use swentel\nostr\Encryption\Nip44;
 use swentel\nostr\Key\Key;
 use Throwable;
@@ -25,11 +27,22 @@ final class NotificationKey
 
     public const int KIND_RELAY_AUTH = 22242;
 
-    private ?string $secretHex = null;
+    /*
+     * Both the configured value and the derived hex secret are held as
+     * SensitiveParameterValue: VarDumper (dump(), dd()), var_export(), an
+     * (array) cast and serialize() all read properties directly, past
+     * __debugInfo(). The wrapper shows them nothing and refuses serialize().
+     */
+    private readonly SensitiveParameterValue $configured;
+
+    private ?SensitiveParameterValue $secretHex = null;
 
     private ?string $publicKey = null;
 
-    public function __construct(#[\SensitiveParameter] private readonly ?string $configured) {}
+    public function __construct(#[\SensitiveParameter] ?string $configured)
+    {
+        $this->configured = new SensitiveParameterValue($configured);
+    }
 
     public static function fromConfig(): self
     {
@@ -93,7 +106,17 @@ final class NotificationKey
      */
     public function __debugInfo(): array
     {
-        return ['configured' => $this->configured === null || trim($this->configured) === '' ? 'no' : 'yes'];
+        return ['configured' => trim((string) $this->configured->getValue()) === '' ? 'no' : 'yes'];
+    }
+
+    /**
+     * A key holder is never written to a cache, a queue payload or a session.
+     *
+     * @return never
+     */
+    public function __serialize(): array
+    {
+        throw new LogicException('The notification key cannot be serialized.');
     }
 
     /**
@@ -102,10 +125,10 @@ final class NotificationKey
     private function secret(): string
     {
         if ($this->secretHex !== null) {
-            return $this->secretHex;
+            return $this->secretHex->getValue();
         }
 
-        $configured = trim((string) $this->configured);
+        $configured = trim((string) $this->configured->getValue());
 
         if ($configured === '') {
             throw NotificationKeyUnavailable::notConfigured();
@@ -125,6 +148,8 @@ final class NotificationKey
             throw NotificationKeyUnavailable::malformed();
         }
 
-        return $this->secretHex = $configured;
+        $this->secretHex = new SensitiveParameterValue($configured);
+
+        return $configured;
     }
 }

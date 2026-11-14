@@ -172,6 +172,16 @@ it('keeps a wrap of the longest allowed text below 64 KiB', function () {
     expect(strlen(EventHash::json(['EVENT', $message->wrap])))->toBeLessThan(65536);
 });
 
+it('refuses a short text whose encoding outgrows NIP-44 or the frame limit, with its own exception', function (string $text, string $part) {
+    expect(strlen($text))->toBeLessThanOrEqual(DirectMessageSigner::MAX_TEXT_BYTES)
+        ->and(fn () => nip59Signer()->wrapFor(nip59Recipient(), $text))
+        ->toThrow(DirectMessageNotBuildable::class, "The {$part} is ");
+})->with([
+    '11,000 x U+0001: the rumor JSON passes 65,535 bytes' => [str_repeat("\u{0001}", 11_000), 'encoded rumor'],
+    '8,000 x U+0001: the seal JSON passes 65,535 bytes' => [str_repeat("\u{0001}", 8_000), 'encoded seal'],
+    '16,384 x quote: the EVENT frame passes 65,536 bytes' => [str_repeat('"', 16_384), 'gift wrap EVENT frame'],
+]);
+
 it('throws the key error, not a recipient error, when no key is configured', function () {
     expect(fn () => nip59Signer(null)->wrapFor(nip59Recipient(), 'Hallo'))
         ->toThrow(NotificationKeyUnavailable::class);

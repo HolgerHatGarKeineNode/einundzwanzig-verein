@@ -8,6 +8,7 @@ use App\Services\Nostr\NotificationKey;
 use App\Services\Nostr\NotificationKeyUnavailable;
 use App\Services\Nostr\Relay\DnsHostResolver;
 use App\Services\Nostr\Relay\HostResolver;
+use App\Services\Nostr\Relay\PinnedRelayAddress;
 use App\Services\Nostr\Relay\RelayAddressGuard;
 use App\Services\Nostr\Relay\RelayConnectionFailed;
 use App\Services\Nostr\Relay\RelayConnectionTimedOut;
@@ -101,12 +102,103 @@ it('throws the typed key error before any socket is opened', function () {
         ->and(RelayTripwire::takeAttempts())->toBe([]);
 });
 
+it('counts the DNS lookup against the deadline and dials nothing once it is spent', function (string $operation) {
+    $slowDns = new class implements HostResolver
+    {
+        public function resolve(string $host): array
+        {
+            usleep(300_000);
+
+            return ['93.184.215.14'];
+        }
+    };
+    $transport = new NostrRelayTransport(
+        new NotificationKey(testPrivateKey()),
+        new RelayAddressGuard($slowDns),
+        new WebSocketRelayConnector,
+        deadlineSeconds: 0.2,
+    );
+    $wrap = socketTestWrap();
+
+    $message = $operation === 'publish'
+        ? $transport->publish('wss://relay.example.com', $wrap)->message
+        : $transport->fetch('wss://relay.example.com', ['kinds' => [10050]])->message;
+
+    expect($message)->toStartWith('timeout:')
+        ->and(RelayTripwire::takeAttempts())->toBe([]);
+})->with(['publish', 'fetch']);
+
 it('reports a failed read as an incomplete result, not as an empty one', function () {
     $result = socketTransport(null)->fetch('wss://relay.example.com', ['kinds' => [10050]]);
 
     expect([$result->complete, $result->events])->toBe([false, []])
         ->and($result->message)->toStartWith('failed: connect failed')
         ->and(RelayTripwire::takeAttempts())->toHaveCount(1);
+});
+
+it('verifies the relay certificate and raises no deprecation while connecting', function () {
+    // A TLS server on a loopback port, in a child process, with a self-signed
+    // certificate for relay.example.com: valid in form, trusted by nobody.
+    $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
+    $certificate = openssl_csr_sign(openssl_csr_new(['commonName' => 'relay.example.com'], $key), null, $key, 1);
+    $certificateFile = tempnam(sys_get_temp_dir(), 'relay-cert-');
+    $keyFile = tempnam(sys_get_temp_dir(), 'relay-key-');
+    openssl_x509_export_to_file($certificate, $certificateFile);
+    openssl_pkey_export_to_file($key, $keyFile);
+
+    $server = proc_open(
+        [PHP_BINARY, '-r', <<<'PHP'
+            $context = stream_context_create(['ssl' => ['local_cert' => $argv[1], 'local_pk' => $argv[2]]]);
+            $server = stream_socket_server('ssl://127.0.0.1:0', $code, $message, STREAM_SERVER_BIND | STREAM_SERVER_LISTEN, $context);
+            fwrite(STDOUT, stream_socket_get_name($server, false)."\n");
+            fflush(STDOUT);
+            for ($i = 0; $i < 2; $i++) {
+                // An ssl:// server shakes hands inside accept(): false means the client broke it off.
+                $peer = @stream_socket_accept($server, 5);
+                fwrite(STDOUT, ($peer === false ? 'handshake refused' : 'handshake completed')."\n");
+                fflush(STDOUT);
+                if ($peer) {
+                    fclose($peer);
+                }
+            }
+            PHP, $certificateFile, $keyFile],
+        [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+    );
+
+    $deprecations = [];
+    set_error_handler(function (int $level, string $message) use (&$deprecations): bool {
+        $deprecations[] = $message;
+
+        return true;
+    }, E_DEPRECATED | E_USER_DEPRECATED);
+
+    try {
+        $port = (int) substr(trim((string) fgets($pipes[1])), strlen('127.0.0.1:'));
+        RelayTripwire::allowLoopback();
+
+        // Control: without verification the handshake with this server succeeds.
+        $unverified = @stream_socket_client("ssl://127.0.0.1:{$port}", $code, $message, 5, STREAM_CLIENT_CONNECT,
+            stream_context_create(['ssl' => ['verify_peer' => false, 'verify_peer_name' => false]]));
+        expect($unverified)->not->toBeFalse()
+            ->and(trim((string) fgets($pipes[1])))->toBe('handshake completed');
+        fclose($unverified);
+
+        // phrity drops OpenSSL's reason from its exception, so the server says
+        // what happened: the connector broke the handshake off.
+        $address = new PinnedRelayAddress("wss://relay.example.com:{$port}/", 'relay.example.com', $port, '/', '127.0.0.1');
+
+        expect(fn () => (new WebSocketRelayConnector)->connect($address, hrtime(true) / 1e9 + 5.0))
+            ->toThrow(RelayConnectionFailed::class, 'connect failed')
+            ->and(trim((string) fgets($pipes[1])))->toBe('handshake refused')
+            ->and($deprecations)->toBe([]);
+    } finally {
+        restore_error_handler();
+        proc_terminate($server, 9);
+        proc_close($server);
+        unlink($certificateFile);
+        unlink($keyFile);
+    }
 });
 
 /**
@@ -149,6 +241,39 @@ it('gives up at the deadline when the relay sends nothing', function () {
         ->and($stream->failure())->toBe(BoundedSocketStream::FAILURE_TIMEOUT)
         ->and((hrtime(true) - $started) / 1e9)->toBeGreaterThan(0.2)->toBeLessThan(2.0)
         ->and(is_resource($silentRelay))->toBeTrue();
+});
+
+it('holds the deadline against a relay that drips the handshake line one byte at a time', function () {
+    [$stream, $relay] = boundedPair(1.0, 1024);
+
+    // A child process owns the other end and writes one byte every 0.4 s: every
+    // single recv() gets its byte well inside any per-read timeout.
+    $dripper = proc_open(
+        [PHP_BINARY, '-r', 'foreach (str_split("HTTP/1.1 101 Switching Protocols\r\n") as $byte) { fwrite(STDOUT, $byte); fflush(STDOUT); usleep(400000); }'],
+        [0 => ['pipe', 'r'], 1 => $relay, 2 => ['pipe', 'w']],
+        $pipes,
+    );
+    fclose($relay);
+    $started = hrtime(true);
+
+    try {
+        expect(fn () => $stream->readLine(1024))->toThrow(RelayConnectionTimedOut::class)
+            ->and($stream->failure())->toBe(BoundedSocketStream::FAILURE_TIMEOUT)
+            ->and((hrtime(true) - $started) / 1e9)->toBeGreaterThan(0.9)->toBeLessThan(1.5);
+    } finally {
+        proc_terminate($dripper, 9);
+        proc_close($dripper);
+    }
+});
+
+it('reads a header line that arrives at once, up to and including the line break', function () {
+    [$stream, $relay] = boundedPair(5.0, 1024);
+
+    fwrite($relay, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n");
+    fclose($relay);
+
+    expect([$stream->readLine(1024), $stream->readLine(8), $stream->readLine(1024), $stream->readLine(1024)])
+        ->toBe(["HTTP/1.1 101 Switching Protocols\r\n", 'Upgrade', ": websocket\r\n", null]);
 });
 
 it('refuses to write once the deadline has passed', function () {

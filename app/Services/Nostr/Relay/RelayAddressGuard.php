@@ -20,8 +20,10 @@ namespace App\Services\Nostr\Relay;
  *   link-local, unique-local, CGNAT, documentation, reserved, IPv4-mapped,
  *   6to4 …) plus the ranges that flag lets through, measured on PHP 8.5 on
  *   2026-11-14: multicast (224.0.0.0/4, ff00::/8), NAT64 (64:ff9b::/96,
- *   64:ff9b:1::/48), IPv4-compatible IPv6 (::/96) and the old 6to4 relay
- *   anycast 192.88.99.0/24.
+ *   64:ff9b:1::/48), IPv4-compatible IPv6 (::/96), the old 6to4 relay
+ *   anycast 192.88.99.0/24 and the deprecated site-local fec0::/10.
+ *   IPv4-mapped (::ffff:0:0/96) is listed as well although the flag refuses
+ *   it today: the deny list must not depend on which PHP version decides.
  *
  * Redirects are not followed by the WebSocket client (no FollowRedirect
  * middleware is installed), so a relay cannot hand the connection on.
@@ -38,6 +40,8 @@ final class RelayAddressGuard
         '64:ff9b::/96',
         '64:ff9b:1::/48',
         '::/96',
+        'fec0::/10',
+        '::ffff:0:0/96',
     ];
 
     public function __construct(private readonly HostResolver $resolver) {}

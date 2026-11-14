@@ -51,7 +51,31 @@ it('refuses an address literal that is not public', function (string $url) {
     'NAT64 of loopback' => ['wss://[64:ff9b::7f00:1]'],
     'IPv4-compatible loopback' => ['wss://[::7f00:1]'],
     'IPv6 multicast' => ['wss://[ff02::1]'],
+    'IPv6 site-local, deprecated' => ['wss://[fec0::1]'],
+    'IPv6 site-local, top of the range' => ['wss://[feff:ffff::1]'],
+    'IPv4-mapped public address' => ['wss://[::ffff:93.184.215.14]'],
 ]);
+
+it('denies site-local and IPv4-mapped addresses through its own list, whatever PHP\'s range flag decides', function (string $address) {
+    // FILTER_FLAG_GLOBAL_RANGE lets fec0::/10 through on PHP 8.5 and refuses
+    // ::ffff:0:0/96; the list has to hold both without the flag's help.
+    $inRange = new ReflectionMethod(RelayAddressGuard::class, 'inRange');
+    $ranges = (new ReflectionClassConstant(RelayAddressGuard::class, 'DENIED_RANGES'))->getValue();
+
+    $covering = array_values(array_filter($ranges, fn (string $range): bool => $inRange->invoke(null, $address, $range)));
+
+    expect($covering)->not->toBe([]);
+})->with([
+    'site-local, bottom' => ['fec0::'],
+    'site-local, top' => ['feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'],
+    'IPv4-mapped public' => ['::ffff:93.184.215.14'],
+    'IPv4-mapped loopback' => ['::ffff:127.0.0.1'],
+]);
+
+it('refuses a name that resolves to a site-local IPv6 address', function () {
+    expect(fn () => (new RelayAddressGuard(new TableHostResolver(['relay.example.com' => ['93.184.215.14', 'fec0::1']])))->pin('wss://relay.example.com'))
+        ->toThrow(RelayAddressRefused::class, 'non-public');
+});
 
 it('refuses a name when any of its addresses is not public', function (array $addresses) {
     expect(fn () => (new RelayAddressGuard(new TableHostResolver(['relay.example.com' => $addresses])))->pin('wss://relay.example.com'))

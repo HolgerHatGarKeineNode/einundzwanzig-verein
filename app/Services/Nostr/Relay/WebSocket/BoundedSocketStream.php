@@ -62,21 +62,36 @@ final class BoundedSocketStream extends SocketStream
         return $data;
     }
 
+    /**
+     * fgets() semantics — at most $length - 1 bytes, up to and including "\n",
+     * null at end of stream with nothing read — but one byte per read().
+     *
+     * Not parent::readLine(): fgets() loops over recv() inside PHP and re-arms
+     * the socket timeout for every call, so a relay that sends the handshake
+     * line one byte at a time kept a 10 s deadline open for 60 s. Going
+     * through read() checks the deadline and the budget before every byte.
+     * PHP's stream buffer serves the single-byte reads, so a relay that sends
+     * the line at once still costs one recv().
+     */
     public function readLine(int $length): ?string
     {
-        $this->beforeIo();
+        $line = '';
 
-        $remaining = $this->maxInboundBytes - $this->bytesRead;
+        while (strlen($line) < $length - 1) {
+            $byte = $this->read(1);
 
-        if ($remaining < 1) {
-            $this->tooLarge();
+            if ($byte === '') {
+                break;
+            }
+
+            $line .= $byte;
+
+            if ($byte === "\n") {
+                break;
+            }
         }
 
-        // fgets() reads at most $length - 1 bytes.
-        $line = parent::readLine(min($length, $remaining + 1));
-        $this->afterRead($line ?? '');
-
-        return $line;
+        return $line === '' ? null : $line;
     }
 
     public function write(string $string): int

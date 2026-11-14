@@ -38,6 +38,15 @@ final class DirectMessageNotBuildable extends InvalidArgumentException
         return new self("The message text is {$bytes} bytes long; the limit is {$limit}.");
     }
 
+    /**
+     * The text is within MAX_TEXT_BYTES, but what it encodes to is not: JSON
+     * escapes and two rounds of NIP-44 and base64 grow it past a limit.
+     */
+    public static function tooLarge(string $part, int $bytes, int $limit): self
+    {
+        return new self("The {$part} is {$bytes} bytes long; the limit is {$limit}. The text has to be shorter.");
+    }
+
     public static function invalidTimestamp(): self
     {
         return new self('The rumor timestamp must be a positive Unix time that is not in the future.');
