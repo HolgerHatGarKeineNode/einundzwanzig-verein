@@ -163,7 +163,7 @@ new class extends Component
                                                     <flux:menu>
                                                         @foreach (MemberProposalState::cases() as $state)
                                                             @if ($state !== $proposal->state)
-                                                                <flux:menu.item wire:click="setProposalState({{ $proposal->id }}, '{{ $state->value }}')"
+                                                                <flux:menu.item class="min-h-11" wire:click="setProposalState({{ $proposal->id }}, '{{ $state->value }}')"
                                                                                 wire:key="{{ $section }}-{{ $proposal->id }}-{{ $state->value }}"
                                                                                 :icon="$state->icon()">
                                                                     {{ __($state->label()) }}

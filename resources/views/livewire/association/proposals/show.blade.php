@@ -312,6 +312,10 @@ new class extends Component
 
                         @if ($proposal->isArchived())
                             <p class="mt-3 text-sm text-text-primary">{{ __('Dieser Vorschlag liegt im Archiv. Stimmen und Kommentare sind geschlossen.') }}</p>
+                        @elseif ($proposal->isWithdrawn())
+                            <p class="mt-3 text-sm text-text-primary">{{ __('Dieser Vorschlag wurde zurückgezogen. Stimmen und Kommentare sind geschlossen.') }}</p>
+                        @elseif ($proposal->is_hidden)
+                            <p class="mt-3 text-sm text-text-primary">{{ __('Dieser Vorschlag ist ausgeblendet. Stimmen und Kommentare sind geschlossen.') }}</p>
                         @elseif (! $this->canVote)
                             <p class="mt-3 text-sm text-text-primary">{{ __('Abstimmen und kommentieren können Ehrenmitglieder sowie Mitglieder, die den Beitrag für dieses oder das vergangene Jahr bezahlt haben.') }}</p>
                         @endif
@@ -341,7 +345,7 @@ new class extends Component
                                     <flux:menu>
                                         @foreach (MemberProposalState::cases() as $state)
                                             @if ($state !== $proposal->state)
-                                                <flux:menu.item wire:click="setProposalState({{ $proposal->id }}, '{{ $state->value }}')"
+                                                <flux:menu.item class="min-h-11" wire:click="setProposalState({{ $proposal->id }}, '{{ $state->value }}')"
                                                                 wire:key="state-{{ $state->value }}" :icon="$state->icon()">
                                                     {{ __($state->label()) }}
                                                 </flux:menu.item>
