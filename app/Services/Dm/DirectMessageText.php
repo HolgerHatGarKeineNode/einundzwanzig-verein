@@ -133,6 +133,9 @@ final class DirectMessageText
 
         $profile = $recipient->profile;
         $name = (string) ($profile?->display_name ?: $profile?->name ?: '');
+        // Format characters (bidi overrides, zero-width) would let a name
+        // reorder or hide the text around it.
+        $name = (string) preg_replace('/\p{Cf}+/u', '', $name);
         $name = trim((string) preg_replace('/[\s\p{Cc}]+/u', ' ', $name));
 
         if ($name === '') {

@@ -113,6 +113,16 @@ it('puts a profile name on one bounded line and falls back without one', functio
         ->and($renderer->render($message, $nameless))->toStartWith('[Mitglied]');
 });
 
+it('strips bidi overrides and zero-width characters from a profile name', function () {
+    $member = EinundzwanzigPleb::factory()->create();
+    Profile::factory()->create(['pubkey' => $member->pubkey, 'display_name' => "Sa\u{202E}to\u{200B}shi\u{2066}"]);
+
+    $text = app(DirectMessageText::class)->render(DmMessage::factory()->create(['plaintext' => '[{name}]']), $member);
+
+    expect($text)->toStartWith('[Satoshi]')
+        ->and($text)->not->toMatch('/\p{Cf}/u');
+});
+
 it('names an erased member by the fallback only', function () {
     $member = EinundzwanzigPleb::factory()->create();
     Profile::factory()->create(['pubkey' => $member->pubkey, 'display_name' => 'Satoshi']);
