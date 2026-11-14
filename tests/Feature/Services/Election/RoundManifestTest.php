@@ -21,7 +21,8 @@ require_once __DIR__.'/helpers.php';
  * Mutations that must turn this file red (patches in the plan folder):
  *  - M6a   `ballots_cast` counted from the marks instead of the receipts
  *  - B1-M1 `CloseRound` seals without writing a manifest
- *  - B1-M2 the receipt hashes are listed in table order instead of sorted
+ *  - (B1-M2, unsorted receipt hashes, stays green on SQLite, which reads them
+ *    through the unique index; tests/Engine/BallotTraceTest.php catches it)
  *  - B1-M3 `election:verify` compares the stored text with itself only
  *  - B1-M4 `election:verify` does not check the stored text against its hash
  */
