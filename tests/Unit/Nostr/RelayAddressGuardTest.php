@@ -1,8 +1,8 @@
 <?php
 
-use App\Services\Nostr\Relay\HostResolver;
 use App\Services\Nostr\Relay\RelayAddressGuard;
 use App\Services\Nostr\Relay\RelayAddressRefused;
+use Tests\Support\TableHostResolver;
 
 /*
  * Relay URLs come from strangers' kind 10050 lists. The guard is the only
@@ -11,29 +11,8 @@ use App\Services\Nostr\Relay\RelayAddressRefused;
  * would never give on demand.
  */
 
-/**
- * A resolver that answers from a table and remembers what it was asked.
- */
-function tableResolver(array $answers): HostResolver
-{
-    return new class($answers) implements HostResolver
-    {
-        /** @var array<int, string> */
-        public array $asked = [];
-
-        public function __construct(private readonly array $answers) {}
-
-        public function resolve(string $host): array
-        {
-            $this->asked[] = $host;
-
-            return $this->answers[$host] ?? [];
-        }
-    };
-}
-
 it('refuses a URL before any lookup when its form is wrong', function (string $url) {
-    $resolver = tableResolver([]);
+    $resolver = new TableHostResolver([]);
 
     expect(fn () => (new RelayAddressGuard($resolver))->pin($url))
         ->toThrow(RelayAddressRefused::class)
@@ -53,7 +32,7 @@ it('refuses a URL before any lookup when its form is wrong', function (string $u
 ]);
 
 it('refuses an address literal that is not public', function (string $url) {
-    expect(fn () => (new RelayAddressGuard(tableResolver([])))->pin($url))
+    expect(fn () => (new RelayAddressGuard(new TableHostResolver([])))->pin($url))
         ->toThrow(RelayAddressRefused::class, 'non-public');
 })->with([
     'loopback' => ['wss://127.0.0.1'],
@@ -75,7 +54,7 @@ it('refuses an address literal that is not public', function (string $url) {
 ]);
 
 it('refuses a name when any of its addresses is not public', function (array $addresses) {
-    expect(fn () => (new RelayAddressGuard(tableResolver(['relay.example.com' => $addresses])))->pin('wss://relay.example.com'))
+    expect(fn () => (new RelayAddressGuard(new TableHostResolver(['relay.example.com' => $addresses])))->pin('wss://relay.example.com'))
         ->toThrow(RelayAddressRefused::class, 'non-public');
 })->with([
     'private only' => [['10.0.0.1']],
@@ -84,12 +63,12 @@ it('refuses a name when any of its addresses is not public', function (array $ad
 ]);
 
 it('refuses a name that does not resolve', function () {
-    expect(fn () => (new RelayAddressGuard(tableResolver([])))->pin('wss://gone.example.com'))
+    expect(fn () => (new RelayAddressGuard(new TableHostResolver([])))->pin('wss://gone.example.com'))
         ->toThrow(RelayAddressRefused::class, 'does not resolve');
 });
 
 it('pins a public name to the address it was checked at', function () {
-    $resolver = tableResolver(['relay.example.com' => ['93.184.215.14', '2606:4700::1']]);
+    $resolver = new TableHostResolver(['relay.example.com' => ['93.184.215.14', '2606:4700::1']]);
 
     $pinned = (new RelayAddressGuard($resolver))->pin('WSS://Relay.Example.com.:8443/inbox?auth=1');
 
@@ -99,7 +78,7 @@ it('pins a public name to the address it was checked at', function () {
 });
 
 it('accepts a public address literal without a lookup', function () {
-    $resolver = tableResolver([]);
+    $resolver = new TableHostResolver([]);
 
     $pinned = (new RelayAddressGuard($resolver))->pin('wss://[2606:4700::1]');
 

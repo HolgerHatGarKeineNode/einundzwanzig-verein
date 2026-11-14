@@ -6,7 +6,13 @@ use App\Models\ProjectProposal;
 use App\Models\Vote;
 use App\Policies\ProjectProposalPolicy;
 use App\Policies\VotePolicy;
+use App\Services\Nostr\NostrRelayTransport;
 use App\Services\Nostr\NotificationKey;
+use App\Services\Nostr\Relay\DnsHostResolver;
+use App\Services\Nostr\Relay\HostResolver;
+use App\Services\Nostr\Relay\RelayConnector;
+use App\Services\Nostr\Relay\WebSocket\WebSocketRelayConnector;
+use App\Services\Nostr\RelayTransport;
 use App\Support\ApiIdentity;
 use App\Support\NostrAuth;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -27,6 +33,19 @@ class AppServiceProvider extends ServiceProvider
          * a fresh instance per resolution sees the current value.
          */
         $this->app->bind(NotificationKey::class, fn (): NotificationKey => NotificationKey::fromConfig());
+
+        /*
+         * The real relay transport outside the test environment only. Under
+         * `testing` nothing is bound here: tests/Pest.php binds the refusing
+         * transport before every test, and a test that wants a relay binds
+         * Tests\Support\FakeRelayTransport. A DNS resolver is not bound either,
+         * because a lookup is network traffic as well.
+         */
+        if (! $this->app->environment('testing')) {
+            $this->app->bind(HostResolver::class, DnsHostResolver::class);
+            $this->app->bind(RelayConnector::class, WebSocketRelayConnector::class);
+            $this->app->bind(RelayTransport::class, NostrRelayTransport::class);
+        }
     }
 
     /**
