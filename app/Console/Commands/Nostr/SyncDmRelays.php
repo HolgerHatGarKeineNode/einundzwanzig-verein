@@ -108,9 +108,11 @@ class SyncDmRelays extends Command
      */
     private function readNewestLists(RelayTransport $transport, array $sources, array $memberIdByPubkey): array
     {
-        $newest = [];
         $complete = true;
         $latestAcceptable = CarbonImmutable::now()->getTimestamp() + self::MAX_FUTURE_SECONDS;
+
+        /** @var array<string, array<string, mixed>> $candidates */
+        $candidates = [];
 
         foreach (array_chunk(array_keys($memberIdByPubkey), self::AUTHORS_PER_REQUEST) as $authors) {
             foreach ($sources as $url) {
@@ -122,25 +124,71 @@ class SyncDmRelays extends Command
                 }
 
                 foreach ($result->events as $event) {
+                    // Types first: a relay's JSON can put a list where a string belongs,
+                    // and a list used as an array key throws instead of failing the check.
                     if (! is_array($event)
-                        || ($event['kind'] ?? null) !== self::KIND_DM_RELAYS
-                        || ! isset($memberIdByPubkey[$event['pubkey'] ?? ''])
+                        || ! is_string($event['pubkey'] ?? null)
+                        || ! is_string($event['id'] ?? null)
                         || ! is_int($event['created_at'] ?? null)
-                        || $event['created_at'] > $latestAcceptable
-                        || ! EventVerification::isAuthentic($event)) {
+                        || ($event['kind'] ?? null) !== self::KIND_DM_RELAYS
+                        || ! isset($memberIdByPubkey[$event['pubkey']])
+                        || $event['created_at'] > $latestAcceptable) {
                         continue;
                     }
 
-                    $current = $newest[$event['pubkey']] ?? null;
-
-                    if ($current === null || self::isNewer($event['created_at'], $event['id'], $current['created_at'], $current['id'])) {
-                        $newest[$event['pubkey']] = $event;
-                    }
+                    $candidates[self::fingerprint($event)] = $event;
                 }
             }
         }
 
-        return [$newest, $complete];
+        return [self::newestAuthenticPerAuthor($candidates), $complete];
+    }
+
+    /**
+     * The newest authentic list of each author (NIP-01: the higher created_at
+     * wins, an equal one goes to the lowest id). Candidates are checked
+     * newest-first and each author's search stops at the first event whose id
+     * and signature hold, so older lists cost no signature check.
+     *
+     * @param  array<string, array<string, mixed>>  $candidates
+     * @return array<string, array<string, mixed>>
+     */
+    private static function newestAuthenticPerAuthor(array $candidates): array
+    {
+        usort($candidates, fn (array $a, array $b): int => ($b['created_at'] <=> $a['created_at']) ?: strcmp($a['id'], $b['id']));
+
+        $newest = [];
+
+        foreach ($candidates as $event) {
+            if (! isset($newest[$event['pubkey']]) && EventVerification::isAuthentic($event)) {
+                $newest[$event['pubkey']] = $event;
+            }
+        }
+
+        return $newest;
+    }
+
+    /**
+     * Identifies an event by everything it is signed over, plus the signature.
+     *
+     * Not by its id alone: an id is only a claim until verified. A copy that
+     * carries a list's real id with other tags would, deduplicated by id,
+     * displace the real list read from another relay, and the member's
+     * newest list would silently fall back to an older one.
+     *
+     * @param  array<string, mixed>  $event
+     */
+    private static function fingerprint(array $event): string
+    {
+        return hash('sha256', serialize([
+            $event['id'],
+            $event['pubkey'],
+            $event['created_at'],
+            $event['kind'],
+            $event['tags'] ?? null,
+            $event['content'] ?? null,
+            $event['sig'] ?? null,
+        ]));
     }
 
     /**

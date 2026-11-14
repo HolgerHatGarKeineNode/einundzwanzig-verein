@@ -111,6 +111,46 @@ it('ignores lists of non-members, of other kinds, of erased members and lists da
     expect(PlebDmRelay::query()->count())->toBe(0);
 });
 
+it('skips an event with fields of the wrong type and still stores the list from the other relay', function (Closure $poison) {
+    [$alice, $aliceKey] = memberWithKey();
+    $valid = dmRelayList($aliceKey, ['wss://inbox.alice.example/'], 1_750_000_000);
+
+    FakeRelayTransport::bind()
+        ->withStoredEvents(INDEXER, [$poison($valid)])
+        ->withStoredEvents(SECOND_INDEXER, [$valid]);
+
+    $this->artisan('nostr:sync-dm-relays')
+        ->expectsOutput('members=1 with_inbox=1 without_inbox=0')
+        ->assertSuccessful();
+
+    expect($alice->dmRelays->relays)->toBe(['wss://inbox.alice.example/']);
+})->with([
+    'pubkey is a list' => [fn (array $event): array => [...$event, 'pubkey' => [$event['pubkey']], 'created_at' => $event['created_at'] + 1]],
+    'pubkey is an object' => [fn (array $event): array => [...$event, 'pubkey' => ['hex' => $event['pubkey']], 'created_at' => $event['created_at'] + 1]],
+    'id is a list' => [fn (array $event): array => [...$event, 'id' => [$event['id']], 'created_at' => $event['created_at'] + 1]],
+    'id is a number' => [fn (array $event): array => [...$event, 'id' => 7, 'created_at' => $event['created_at'] + 1]],
+    'created_at is a string' => [fn (array $event): array => [...$event, 'created_at' => (string) ($event['created_at'] + 1)]],
+    'event is a string' => [fn (array $event): string => 'not an event'],
+]);
+
+it('is not displaced by a forged copy that carries the real list\'s id', function (bool $forgedFirst) {
+    [$alice, $aliceKey] = memberWithKey();
+    PlebDmRelay::factory()->for($alice, 'pleb')->create(['relays' => ['wss://old.example/'], 'event_created_at' => 1_700_000_000]);
+    $real = dmRelayList($aliceKey, ['wss://inbox.alice.example/'], 1_750_000_000);
+    $forgedCopy = [...$real, 'tags' => [['relay', 'wss://evil.example/']]];
+
+    // Both orders: deduplicating by id alone loses the real list in one of them,
+    // whichever of two equal ids it keeps.
+    FakeRelayTransport::bind()
+        ->withStoredEvents(INDEXER, [$forgedFirst ? $forgedCopy : $real])
+        ->withStoredEvents(SECOND_INDEXER, [$forgedFirst ? $real : $forgedCopy]);
+
+    $this->artisan('nostr:sync-dm-relays')->assertSuccessful();
+
+    expect($alice->fresh()->dmRelays->relays)->toBe(['wss://inbox.alice.example/'])
+        ->and($alice->fresh()->dmRelays->event_id)->toBe($real['id']);
+})->with(['forged copy read first' => [true], 'forged copy read last' => [false]]);
+
 it('never replaces a stored list with an older one and drops a member whose newest list is empty', function () {
     [$alice, $aliceKey] = memberWithKey();
     [$bob, $bobKey] = memberWithKey();
