@@ -42,6 +42,9 @@ final class DirectMessageSigner
      */
     public const int MAX_TEXT_BYTES = 16384;
 
+    /** NIP-44 v2: "plaintext ... 1..65535 bytes". */
+    public const int NIP44_MAX_PLAINTEXT_BYTES = 65535;
+
     /**
      * The secp256k1 field prime. An x coordinate at or above it is not a key,
      * and the library reduces it silently instead of refusing it.
@@ -102,7 +105,7 @@ final class DirectMessageSigner
         } while ($wrapCreatedAt === $sealCreatedAt);
 
         $seal = $this->key->signSeal(
-            Nip44::encrypt(EventHash::json($rumor), $sealConversationKey),
+            self::encrypt('rumor', EventHash::json($rumor), $sealConversationKey),
             $sealCreatedAt,
         );
 
@@ -112,11 +115,33 @@ final class DirectMessageSigner
             $oneTimeSecret,
             self::KIND_GIFT_WRAP,
             [['p', $recipientPubkey]],
-            Nip44::encrypt(EventHash::json($seal), Nip44::getConversationKey($oneTimeSecret, $recipientPubkey)),
+            self::encrypt('seal', EventHash::json($seal), Nip44::getConversationKey($oneTimeSecret, $recipientPubkey)),
             $wrapCreatedAt,
         );
 
+        $frameBytes = strlen(EventHash::json(['EVENT', $wrap]));
+
+        if ($frameBytes > NostrRelayTransport::MAX_EVENT_FRAME_BYTES) {
+            throw DirectMessageNotBuildable::tooLarge('gift wrap EVENT frame', $frameBytes, NostrRelayTransport::MAX_EVENT_FRAME_BYTES);
+        }
+
         return new GiftWrappedMessage($rumor['id'], $rumorCreatedAt, $recipientPubkey, $wrap);
+    }
+
+    /**
+     * NIP-44 v2 over a JSON document, refused here when it is longer than
+     * NIP-44 can carry. MAX_TEXT_BYTES counts the text, not its JSON: every
+     * control character becomes a six-byte \u escape, so 11,000 bytes of
+     * U+0001 make a rumor of 66,000 bytes — and Nip44::encrypt() answers that
+     * with a bare \Exception nobody declared.
+     */
+    private static function encrypt(string $part, string $json, string $conversationKey): string
+    {
+        if (strlen($json) > self::NIP44_MAX_PLAINTEXT_BYTES) {
+            throw DirectMessageNotBuildable::tooLarge("encoded {$part}", strlen($json), self::NIP44_MAX_PLAINTEXT_BYTES);
+        }
+
+        return Nip44::encrypt($json, $conversationKey);
     }
 
     private function recipientPubkey(EinundzwanzigPleb $recipient): string
