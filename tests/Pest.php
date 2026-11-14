@@ -14,6 +14,7 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use swentel\nostr\Event\Event;
 use swentel\nostr\Key\Key;
 use swentel\nostr\Sign\Sign;
+use Tests\Support\RelayTripwire;
 use Tests\TestCase;
 
 /*
@@ -155,6 +156,43 @@ pest()->beforeEach(function (): void {
         fn ($app, HttpClientFactory $factory) => $factory->preventStrayRequests(),
     );
 })->in('Feature');
+
+/*
+|--------------------------------------------------------------------------
+| Relays
+|--------------------------------------------------------------------------
+|
+| The second half of "no test leaves the machine". Http::preventStrayRequests()
+| cannot see a relay: swentel\nostr\Relay\Relay opens its own WebSocket. Blank
+| relay URLs in phpunit.xml only cover code that reads them — the vendor's
+| NIP-17 path dials hard-wired public relays whatever the configuration says.
+|
+| The shadow file must be loaded before the first WebSocket dial of the
+| process, so it is required here and not from a test. See its header for why
+| a function in the vendor's namespace intercepts the vendor's sockets.
+|
+| The check after each test is the part that makes the guard report instead of
+| merely refuse: the vendor and three places in this application catch the
+| refusal and carry on with an empty result. Tests\Support\RelayTripwire
+| explains the layers; tests/Feature/RelayStrayConnectionTest.php proves them.
+|
+| tests/Unit has no application to bind a transport in, but a unit test of
+| event-building code can still wander into the vendor's network path, so the
+| socket ledger is checked there too.
+|
+*/
+
+require_once __DIR__.'/Support/phrity-net-socket-shadow.php';
+
+pest()
+    ->beforeEach(fn () => RelayTripwire::arm(app()))
+    ->afterEach(fn () => RelayTripwire::assertNothingAttempted())
+    ->in('Feature');
+
+pest()
+    ->beforeEach(fn () => RelayTripwire::reset())
+    ->afterEach(fn () => RelayTripwire::assertNothingAttempted())
+    ->in('Unit');
 
 /*
 |--------------------------------------------------------------------------
