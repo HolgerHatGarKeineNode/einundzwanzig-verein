@@ -131,6 +131,16 @@ it('leaves the ballot rows and receipts out of cast order after the close', func
 it('lists the receipt hashes of the manifest sorted, not in the order the rewrite left them', function () {
     [$round] = tracedRound();
 
+    /*
+     * Which order a query without ORDER BY returns is the planner's choice.
+     * On a test-sized table it reads the unique index (round, hash) and
+     * hands the receipts out sorted anyway; on a table of real size it may
+     * scan the heap. Ruled out here, for the rest of the test's transaction.
+     */
+    DB::statement('SET LOCAL enable_indexscan = off');
+    DB::statement('SET LOCAL enable_indexonlyscan = off');
+    DB::statement('SET LOCAL enable_bitmapscan = off');
+
     app(CloseRound::class)->handle($round);
 
     $hashes = json_decode(ElectionManifest::query()->where('election_round_id', $round->id)->value('body'), true)['receipt_hashes'];
