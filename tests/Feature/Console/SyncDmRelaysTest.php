@@ -5,6 +5,9 @@ use App\Models\EinundzwanzigPleb;
 use App\Models\PlebDmRelay;
 use App\Services\MembershipService;
 use App\Services\Nostr\EventSigning;
+use App\Services\Nostr\RelayFetchResult;
+use App\Services\Nostr\RelayPublishResult;
+use App\Services\Nostr\RelayTransport;
 use Carbon\CarbonImmutable;
 use swentel\nostr\Key\Key;
 use Tests\Support\FakeRelayTransport;
@@ -150,6 +153,52 @@ it('is not displaced by a forged copy that carries the real list\'s id', functio
     expect($alice->fresh()->dmRelays->relays)->toBe(['wss://inbox.alice.example/'])
         ->and($alice->fresh()->dmRelays->event_id)->toBe($real['id']);
 })->with(['forged copy read first' => [true], 'forged copy read last' => [false]]);
+
+it('writes no row for a member who was erased or changed key while the relays were read', function (Closure $duringFetch) {
+    [$alice, $aliceKey] = memberWithKey();
+    [$bob, $bobKey] = memberWithKey();
+    PlebDmRelay::factory()->for($alice, 'pleb')->create(['relays' => ['wss://old.example/'], 'event_created_at' => 1_700_000_000]);
+
+    $relay = (new FakeRelayTransport)->withStoredEvents(INDEXER, [
+        dmRelayList($aliceKey, ['wss://inbox.alice.example/'], 1_750_000_000),
+        dmRelayList($bobKey, ['wss://inbox.bob.example/'], 1_750_000_000),
+    ]);
+
+    // The real transport takes seconds per relay; this one lets the change
+    // land between the read of the member list and the write.
+    app()->instance(RelayTransport::class, new class($relay, fn () => $duringFetch($alice)) implements RelayTransport
+    {
+        private bool $fired = false;
+
+        public function __construct(private readonly FakeRelayTransport $relay, private readonly Closure $sideEffect) {}
+
+        public function publish(string $relayUrl, array $event): RelayPublishResult
+        {
+            return $this->relay->publish($relayUrl, $event);
+        }
+
+        public function fetch(string $relayUrl, array $filter): RelayFetchResult
+        {
+            if (! $this->fired) {
+                $this->fired = true;
+                ($this->sideEffect)();
+            }
+
+            return $this->relay->fetch($relayUrl, $filter);
+        }
+    });
+
+    $this->artisan('nostr:sync-dm-relays')->assertSuccessful();
+
+    expect(PlebDmRelay::query()->where('einundzwanzig_pleb_id', $alice->id)->exists())->toBeFalse()
+        ->and($bob->fresh()->dmRelays->relays)->toBe(['wss://inbox.bob.example/']);
+})->with([
+    'erased' => [fn (EinundzwanzigPleb $member) => app(MembershipService::class)->erasePersonalData($member)],
+    'changed key' => [function (EinundzwanzigPleb $member): void {
+        $member->dmRelays()->delete();
+        $member->forceFill(['pubkey' => (new Key)->getPublicKey(testPrivateKey())])->save();
+    }],
+]);
 
 it('never replaces a stored list with an older one and drops a member whose newest list is empty', function () {
     [$alice, $aliceKey] = memberWithKey();

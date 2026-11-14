@@ -199,10 +199,25 @@ class SyncDmRelays extends Command
     private function store(array $newest, array $inboxes, array $memberIdByPubkey, bool $complete): void
     {
         DB::transaction(function () use ($newest, $inboxes, $memberIdByPubkey, $complete): void {
+            /*
+             * Asked again, inside the transaction: the relays were read with the
+             * member list from before the reads, and an erasure in between has
+             * already deleted that member's row — writing it now would bring the
+             * relays of an erased person back. A list also belongs to a key, not
+             * to a record, so a member whose pubkey changed is skipped as well.
+             * Locked, so an erasure that has already updated a member finishes
+             * before this reads it.
+             */
+            $currentPubkeyById = EinundzwanzigPleb::query()->notErased()->lockForUpdate()->pluck('pubkey', 'id');
             $stored = PlebDmRelay::query()->get()->keyBy('einundzwanzig_pleb_id');
 
             foreach ($newest as $pubkey => $event) {
                 $memberId = $memberIdByPubkey[$pubkey];
+
+                if ($currentPubkeyById->get($memberId) !== $pubkey) {
+                    continue;
+                }
+
                 $row = $stored->get($memberId);
 
                 if ($row !== null && ! self::isNewer($event['created_at'], $event['id'], $row->event_created_at, $row->event_id)) {
