@@ -129,3 +129,54 @@
         @apply bg-gradient-to-b from-purple-accent/20 to-transparent border border-purple-accent;
     }
 }
+
+/*
+ * Accessibility floor for Flux controls on the election pages (board page,
+ * share view, minutes; scoped by `.election-ui` so legacy pages and the group
+ * package keep their look until they are measured themselves).
+ *
+ * Deliberately outside @layer: Flux sets these values with utilities
+ * (`dark:border-white/10`, `size="sm"` → `h-8 w-8`), and a rule inside
+ * @layer components always loses to @layer utilities.
+ */
+
+/* WCAG 1.4.11 — control boundaries at least 3:1. neutral-500 #6B6B70 is
+   3.74:1 on bg-page #0A0A0B and 3.56:1 on bg-surface #111113 (white/10 was
+   1.15–1.32:1). Checked, invalid and disabled keep Flux' own colour; a
+   focused field turns brand orange next to its ring. */
+.election-ui :is(input, textarea, select)[data-flux-control]:not([data-invalid], :disabled),
+.election-ui [data-flux-radio-cards]:not([data-checked], [disabled]) {
+    border-color: var(--color-neutral-500);
+}
+
+/* The 18px radio and checkbox marks also sit on the lighter card fill of
+   radio cards, where neutral-500 drops to 2.73:1 — they take neutral-400
+   (#8B8B90, 5.84:1 on bg-page). */
+.election-ui ui-radio:not([data-checked], [disabled]) [data-flux-radio-indicator],
+.election-ui ui-checkbox:not([data-checked], [data-indeterminate], [disabled]) [data-flux-checkbox-indicator] {
+    border-color: var(--color-neutral-400);
+}
+
+.election-ui :is(input, textarea, select)[data-flux-control]:not([data-invalid], :disabled):focus {
+    border-color: var(--color-orange-500);
+}
+
+/* WCAG 2.4.7 — the project's focus ring on every Flux button: 2px brand
+   orange (8.6:1 on bg-page), offset so it also reads on an orange fill. */
+.election-ui [data-flux-button]:focus-visible {
+    outline: 2px solid var(--color-orange-500);
+    outline-offset: 2px;
+}
+
+/* Target size — the modal's close button is `size="sm"` (32×32). 44×44
+   (Apple HIG) instead; WCAG 2.5.8 alone would accept 24. */
+.election-ui [data-flux-modal-close] [data-flux-button] {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+}
+
+/* The close button sits 16px from the dialog's corner and is now 44px wide:
+   the heading keeps clear of it (24px dialog padding + 40px = 64px ≥ 60px). */
+.election-ui dialog[data-modal] [data-flux-heading] {
+    padding-inline-end: 2.5rem;
+}
