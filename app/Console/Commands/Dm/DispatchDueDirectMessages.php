@@ -14,7 +14,8 @@ use Throwable;
  * Idempotent: a started row carries its run and is not selected again, and
  * StartDirectMessageRun::forSchedule() re-checks that under a lock. While
  * the sending is paused nothing is started; the rows stay due and go out on
- * the first run after the pause is lifted. A row that cannot be started is
+ * the first run after the pause is lifted. Rows of a test election are
+ * never started. A row that cannot be started is
  * reported and the others are started regardless; the command then exits 1.
  */
 class DispatchDueDirectMessages extends Command
@@ -31,8 +32,11 @@ class DispatchDueDirectMessages extends Command
             return self::SUCCESS;
         }
 
+        // A test election is the board's rehearsal: its rows are shown on the
+        // schedule but never started by it.
         $schedules = DmSchedule::query()
             ->due(now())
+            ->whereHas('election', fn ($election) => $election->where('is_test', false))
             ->orderBy('send_at')
             ->orderBy('id')
             ->get();

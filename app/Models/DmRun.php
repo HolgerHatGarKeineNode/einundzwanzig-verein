@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\DmAudience;
 use Database\Factories\DmRunFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -9,7 +10,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * One sending of a message to a recipient list frozen at creation.
+ * One sending of a message to a recipient list frozen at creation, with the
+ * audience it was resolved from (null for a test to one board member).
  */
 class DmRun extends Model
 {
@@ -19,6 +21,8 @@ class DmRun extends Model
     /** @var list<string> */
     protected $fillable = [
         'dm_message_id',
+        'audience',
+        'election_event_id',
         'recipient_ids',
         'recipient_count',
         'fanned_out_at',
@@ -30,6 +34,7 @@ class DmRun extends Model
     protected function casts(): array
     {
         return [
+            'audience' => DmAudience::class,
             'recipient_ids' => 'array',
             'recipient_count' => 'integer',
             'fanned_out_at' => 'datetime',
@@ -42,6 +47,18 @@ class DmRun extends Model
     public function message(): BelongsTo
     {
         return $this->belongsTo(DmMessage::class, 'dm_message_id');
+    }
+
+    /**
+     * The election the audience was resolved against; null when the audience
+     * needs none, for a test to a single board member, and for runs from
+     * before the column existed.
+     *
+     * @return BelongsTo<Election, $this>
+     */
+    public function election(): BelongsTo
+    {
+        return $this->belongsTo(Election::class, 'election_event_id');
     }
 
     /**

@@ -7,6 +7,7 @@ use App\Jobs\Dm\DispatchBulkDirectMessages;
 use App\Models\DmMessage;
 use App\Models\DmRun;
 use App\Models\DmSchedule;
+use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use Illuminate\Support\Facades\DB;
 
@@ -35,6 +36,24 @@ final class StartDirectMessageRun
         }
 
         $run = $this->freeze($message, $audience, $election);
+
+        DispatchBulkDirectMessages::dispatch($run->id);
+
+        return $run;
+    }
+
+    /**
+     * Send a message to exactly one member: the board member who writes it,
+     * to read it in their own client before it goes to many. The run stores
+     * no audience; that is what marks it as such a test.
+     */
+    public function toSelf(DmMessage $message, EinundzwanzigPleb $boardMember): ?DmRun
+    {
+        if ($this->pause->isPaused()) {
+            return null;
+        }
+
+        $run = $message->freezeRun([$boardMember]);
 
         DispatchBulkDirectMessages::dispatch($run->id);
 
@@ -81,6 +100,8 @@ final class StartDirectMessageRun
     {
         return $message->freezeRun(
             $this->audience->query($audience, $election)->select('einundzwanzig_plebs.id')->get(),
+            $audience,
+            $audience->needsElection() ? $election : null,
         );
     }
 }
