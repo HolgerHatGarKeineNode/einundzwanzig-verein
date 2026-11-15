@@ -92,26 +92,29 @@ enum DmMessageType: string
         return match ($this) {
             self::Individual => "Hallo {name},\n\n",
             self::ElectionAnnouncement => "Hallo {name},\n\n"
-                .'am {assembly_date} wählt der Verein EINUNDZWANZIG einen neuen Vorstand. '
-                ."Gewählt wird im Vereinsportal, angemeldet wird mit Nostr wie bisher.\n\n"
-                .'Prüfe jetzt, ob du wahlberechtigt bist: {link}',
+                .'am {assembly_date} wählt der Verein EINUNDZWANZIG in der Mitgliederversammlung einen neuen Vorstand. '
+                .'Gewählt wird live im Video-Call der Versammlung: Du stimmst im Vereinsportal ab '
+                ."und unterschreibst deine Stimme mit deinem Nostr-Signer (Browser-Erweiterung).\n\n"
+                .'Prüfe jetzt im Vereinsportal, ob du wahlberechtigt bist: {link}',
             self::NominationDeadline => "Hallo {name},\n\n"
-                .'Kandidaturen für den Vorstand nimmt das Vereinsportal bis {deadline} entgegen. '
-                .'Wer kandidieren möchte, reicht dort einen kurzen Vorstellungstext ein: {link}',
+                .'du möchtest für den Vorstand kandidieren? Kandidaturen nimmt das Vereinsportal bis {deadline} entgegen. '
+                .'Reich dort nach der Anmeldung einen kurzen Vorstellungstext ein: {link}',
             self::FeeReminder => "Hallo {name},\n\n"
                 .'laut Vereinsportal ist dein Mitgliedsbeitrag für {year} noch offen. '
                 .'Ohne bezahlten Beitrag kannst du bei der Vorstandswahl nicht abstimmen. '
                 ."Bezahlen kannst du nach der Anmeldung im Portal: {link}\n\n"
                 .'Per Nachricht fragen wir nie nach Schlüsseln oder Zahlungsdaten.',
             self::ElectionStartsNow => "Hallo {name},\n\n"
-                .'die Wahl des neuen Vorstands beginnt jetzt in der Mitgliederversammlung im Video-Call. '
-                .'Abstimmen kannst du nach der Anmeldung im Vereinsportal: {link}',
+                .'die Wahl des neuen Vorstands beginnt jetzt live im Video-Call der Mitgliederversammlung. '
+                ."Melde dich jetzt im Vereinsportal an: {link}\n\n"
+                .'Deine Stimme gibst du dort ab und unterschreibst sie mit deinem Nostr-Signer (Browser-Erweiterung).',
             self::RoundOpened => "Hallo {name},\n\n"
                 .'der Wahlgang „{round}“ ist geöffnet und läuft bis {closes_at}. '
-                .'Abstimmen kannst du nach der Anmeldung im Vereinsportal: {link}',
+                .'Stimm jetzt im Vereinsportal ab und unterschreib deine Stimme mit deinem Nostr-Signer: {link}',
             self::RoundClosingSoon => "Hallo {name},\n\n"
-                .'der Wahlgang „{round}“ schließt am {closes_at}. '
-                .'Falls du noch abstimmen möchtest: {link}',
+                .'der Wahlgang „{round}“ läuft nur noch bis {closes_at}. '
+                .'Falls du noch nicht abgestimmt hast: Stimm jetzt im Vereinsportal ab '
+                .'und unterschreib deine Stimme mit deinem Nostr-Signer: {link}',
             self::ElectionResult => "Hallo {name},\n\n"
                 .'das Ergebnis des Wahlgangs „{round}“ steht fest. '
                 .'Du findest es nach der Anmeldung im Vereinsportal: {link}',

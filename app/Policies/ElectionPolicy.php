@@ -41,6 +41,21 @@ class ElectionPolicy
         return ! $election->is_test || $pleb->isBoardMember();
     }
 
+    /**
+     * Setting up an election is the board's. Whether the election may still
+     * be changed is `ElectionSetup`'s question: it refuses once a round has
+     * been opened.
+     */
+    public function create(NostrUser $user): bool
+    {
+        return $this->isBoard($user);
+    }
+
+    public function update(NostrUser $user, Election $election): bool
+    {
+        return $this->isBoard($user);
+    }
+
     public function announce(NostrUser $user, Election $election): bool
     {
         return $election->announced_at === null && $this->isBoard($user);

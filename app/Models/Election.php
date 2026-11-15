@@ -35,6 +35,8 @@ class Election extends Model
     /** @var list<string> */
     protected $fillable = [
         'name',
+        'meeting_at',
+        'call_url',
         'fee_rule',
         'fee_year',
         'honorary_without_fee',
@@ -52,6 +54,7 @@ class Election extends Model
             'honorary_without_fee' => 'boolean',
             'is_test' => 'boolean',
             'announced_at' => 'datetime',
+            'meeting_at' => 'datetime',
         ];
     }
 

@@ -1209,6 +1209,7 @@ class MembershipService
             $pleb->application_text = null;
             $pleb->archived_application_text = null;
             $pleb->application_for = null;
+            $pleb->last_login_at = null;
             $pleb->save();
 
             /*

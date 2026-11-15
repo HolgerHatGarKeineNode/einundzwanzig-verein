@@ -48,7 +48,7 @@ final class DirectMessageInbox
     }
 
     /**
-     * @return Collection<int, array{delivery_id: int, type: string, label: string, text: string|null, received_at: string, seen_at: string|null}>
+     * @return Collection<int, array{delivery_id: int, status: string, type: string, label: string, text: string|null, received_at: string, seen_at: string|null}>
      */
     public function messages(EinundzwanzigPleb $member): Collection
     {
@@ -57,6 +57,7 @@ final class DirectMessageInbox
             ->get()
             ->map(fn (DmDelivery $delivery): array => [
                 'delivery_id' => (int) $delivery->getKey(),
+                'status' => $delivery->status->value,
                 'type' => $delivery->run->message->type->value,
                 'label' => $delivery->run->message->type->label(),
                 'text' => $this->textOf($delivery, $member),
