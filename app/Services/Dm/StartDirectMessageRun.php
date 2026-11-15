@@ -29,13 +29,19 @@ final class StartDirectMessageRun
         private readonly DirectMessagePause $pause,
     ) {}
 
-    public function handle(DmMessage $message, DmAudience $audience, ?Election $election = null): ?DmRun
+    /**
+     * @param  list<int>|null  $confirmedRecipientIds  the members the board confirmed (DirectMessageDryRunResult::$recipientIds);
+     *                                                 when given, the start freezes exactly these or nothing
+     *
+     * @throws DirectMessageAudienceChanged when the audience resolved now differs from the confirmed one; nothing is written
+     */
+    public function handle(DmMessage $message, DmAudience $audience, ?Election $election = null, ?array $confirmedRecipientIds = null): ?DmRun
     {
         if ($this->pause->isPaused()) {
             return null;
         }
 
-        $run = $this->freeze($message, $audience, $election);
+        $run = $this->freeze($message, $audience, $election, $confirmedRecipientIds);
 
         DispatchBulkDirectMessages::dispatch($run->id);
 
@@ -96,10 +102,24 @@ final class StartDirectMessageRun
         return $run;
     }
 
-    private function freeze(DmMessage $message, DmAudience $audience, ?Election $election): DmRun
+    /**
+     * @param  list<int>|null  $confirmedRecipientIds
+     */
+    private function freeze(DmMessage $message, DmAudience $audience, ?Election $election, ?array $confirmedRecipientIds = null): DmRun
     {
+        $recipients = $this->audience->query($audience, $election)->select('einundzwanzig_plebs.id')->get();
+
+        if ($confirmedRecipientIds !== null) {
+            $current = $recipients->map(fn (EinundzwanzigPleb $recipient): int => (int) $recipient->getKey())->unique()->sort()->values()->all();
+            $confirmed = collect($confirmedRecipientIds)->map(fn ($id): int => (int) $id)->unique()->sort()->values()->all();
+
+            if ($current !== $confirmed) {
+                throw new DirectMessageAudienceChanged(count($confirmed), count($current));
+            }
+        }
+
         return $message->freezeRun(
-            $this->audience->query($audience, $election)->select('einundzwanzig_plebs.id')->get(),
+            $recipients,
             $audience,
             $audience->needsElection() ? $election : null,
         );

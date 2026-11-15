@@ -83,7 +83,7 @@ it('answers 403 on every public method once the session belongs to a member who 
         ->reject(fn (ReflectionMethod $method) => $method->isStatic())
         ->filter(fn (ReflectionMethod $method) => $method->getDeclaringClass()->getName() === $instance::class)
         ->map(fn (ReflectionMethod $method) => $method->getName())
-        ->reject(fn (string $name) => str_starts_with($name, 'updated') || in_array($name, ['mount', 'dryRunIsCurrent', 'scheduleTypes', 'variableLabel', 'variableHint', 'recipientsOf', 'countsOf', 'countsSentence', 'relaySummary', 'nameOf', 'longDate', 'shortDate'], true))
+        ->reject(fn (string $name) => str_starts_with($name, 'updated') || in_array($name, ['mount', 'dryRunIsCurrent', 'scheduleTypes', 'variableLabel', 'variableHint', 'recipientsOf', 'countsOf', 'countsSentence', 'relaySummary', 'deliveryFailed', 'deliveryLabel', 'nameOf', 'longDate', 'shortDate'], true))
         ->values();
 
     expect($methods->all())->toContain('confirmSend', 'sendTestToSelf', 'runDryRun', 'resendFailed', 'addSchedule', 'removeSchedule', 'runs');
@@ -227,6 +227,115 @@ it('refuses to send when the draft changed after the dry run', function () {
 
     expect(DmRun::query()->count())->toBe(0)->and(DmMessage::query()->count())->toBe(0);
     Queue::assertNothingPushed();
+});
+
+it('refuses to send when the audience changed after the dry run, and queues nothing', function () {
+    Queue::fake();
+    messageCentreBoard(3);
+
+    $page = messageCentre()
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('audience', DmAudience::Members->value)
+        ->set('text', 'Hallo {name}, eine Nachricht.')
+        ->call('runDryRun');
+
+    expect($page->get('dryRun')['count'])->toBe(4);
+
+    // two members join between the dry run and the confirmation
+    EinundzwanzigPleb::factory()->active()->count(2)->create();
+
+    $page->call('confirmSend')
+        ->assertDispatched('toast-show', fn (string $event, array $params): bool => ($params['dataset']['variant'] ?? null) === 'danger'
+            && $params['slots']['text'] === 'Die Zielgruppe hat sich seit dem Probelauf geändert: jetzt 6 Mitglieder statt 4. Es wurde nichts gesendet. Starte den Probelauf neu.')
+        ->assertSet('dryRun', null)
+        ->assertSet('tab', 'compose');
+
+    expect(DmRun::query()->count())->toBe(0)->and(DmMessage::query()->count())->toBe(0);
+    Queue::assertNothingPushed();
+
+    // a new dry run shows the new number, and that number is what is sent
+    $page->call('runDryRun');
+    expect($page->get('dryRun')['count'])->toBe(6);
+    $page->call('confirmSend')->assertSet('tab', 'history');
+
+    expect(DmRun::query()->sole()->recipient_count)->toBe(6);
+    Queue::assertPushed(DispatchBulkDirectMessages::class, 1);
+});
+
+it('refuses the test to self when the sending was paused after the page checked, and starts nothing', function () {
+    Queue::fake();
+    messageCentreBoard(2);
+
+    // the pause lands between the page's check and the service's check
+    DmMessage::created(fn () => app(DirectMessagePause::class)->pause());
+
+    messageCentre()
+        ->set('type', DmMessageType::Individual->value)
+        ->set('text', 'Hallo {name}, ein Test.')
+        ->call('sendTestToSelf')
+        ->assertDispatched('toast-show', fn (string $event, array $params): bool => ($params['dataset']['variant'] ?? null) === 'danger'
+            && $params['slots']['text'] === 'Der Versand ist pausiert. Setze ihn im Zeitplan fort, dann geht auch der Test raus.')
+        ->assertNotDispatched('toast-show', fn (string $event, array $params): bool => str_starts_with($params['slots']['text'], 'Test an dich gestartet'));
+
+    expect(DmRun::query()->count())->toBe(0)->and(DmMessage::query()->count())->toBe(0);
+    Queue::assertNothingPushed();
+});
+
+it('shows an expired claim as failed everywhere: label, summary and re-send count agree', function () {
+    messageCentreBoard();
+    $recipients = EinundzwanzigPleb::factory()->active()->count(3)->create();
+    $run = DmMessage::factory()->create()->freezeRun($recipients, DmAudience::Members);
+    $now = now();
+    $make = fn (int $index, DmDeliveryStatus $status, ?Carbon $claimedAt = null) => DmDelivery::query()->create([
+        'dm_run_id' => $run->id,
+        'einundzwanzig_pleb_id' => $recipients[$index]->id,
+        'status' => $status,
+        'claimed_at' => $claimedAt,
+    ]);
+    $failed = $make(0, DmDeliveryStatus::Failed);
+    $expired = $make(1, DmDeliveryStatus::Claimed, $now->copy()->subSeconds(SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS + 5));
+    $living = $make(2, DmDeliveryStatus::Claimed, $now->copy()->subSeconds(5));
+    $run->forceFill(['fanned_out_at' => $now])->save();
+
+    Queue::fake();
+    $page = messageCentre()
+        ->assertSee('2 fehlgeschlagen, 1 warten')
+        ->call('toggleRun', $run->id)
+        ->assertSee('Fehlgeschlagene erneut senden (2)')
+        ->assertSeeHtml('data-test="delivery-'.$expired->id.'" data-status="claimed" data-stuck="true"')
+        ->assertDontSeeHtml('data-test="delivery-'.$living->id.'" data-status="claimed" data-stuck="true"');
+
+    $html = $page->html();
+    $expiredRow = str($html)->after('data-test="delivery-'.$expired->id.'"')->before('</li>')->toString();
+    $livingRow = str($html)->after('data-test="delivery-'.$living->id.'"')->before('</li>')->toString();
+
+    expect($expiredRow)->toContain('Hängen geblieben, gilt als fehlgeschlagen')->toContain('text-danger')->not->toContain('Wird gerade gesendet')
+        ->and($livingRow)->toContain('Wird gerade gesendet')->not->toContain('text-danger')
+        ->and($page->instance()->countsOf($page->instance()->runs->firstWhere('id', $run->id)))->toMatchArray(['failed' => 2, 'waiting' => 1, 'retry' => 2]);
+
+    $page->call('resendFailed', $run->id)
+        ->assertDispatched('toast-show', fn (string $event, array $params): bool => $params['slots']['text'] === '2 fehlgeschlagene Zustellungen werden erneut gesendet.');
+    Queue::assertPushed(DispatchBulkDirectMessages::class, fn ($job) => $job->runId === $run->id);
+    expect($failed->fresh()->status)->toBe(DmDeliveryStatus::Failed);
+});
+
+it('keeps one primary button: the header turns secondary while an open run offers its re-send', function () {
+    messageCentreBoard();
+    $recipient = EinundzwanzigPleb::factory()->active()->create();
+    $run = DmMessage::factory()->create()->freezeRun([$recipient], DmAudience::Members);
+    DmDelivery::query()->create(['dm_run_id' => $run->id, 'einundzwanzig_pleb_id' => $recipient->id, 'status' => DmDeliveryStatus::Failed]);
+
+    // The project's primary button is the one filled with bg-orange-primary.
+    $isPrimary = fn (string $html, string $test): bool => preg_match('/<button(?=[^>]*data-test="'.$test.'")[^>]*>/', $html, $tag) === 1
+        && str_contains($tag[0], 'bg-orange-primary');
+
+    $page = messageCentre();
+    expect($isPrimary($page->html(), 'start-compose'))->toBeTrue();
+
+    $page->call('toggleRun', $run->id)->assertSee('Fehlgeschlagene erneut senden (1)');
+    expect($isPrimary($page->html(), 'start-compose'))->toBeFalse()
+        ->and($isPrimary($page->html(), 'resend-failed'))->toBeTrue();
 });
 
 it('re-sends only the failed work of a run: failed and expired claims, never sent, no inbox or a living claim', function () {

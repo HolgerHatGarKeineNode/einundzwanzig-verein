@@ -72,6 +72,29 @@ class DmDelivery extends Model
     }
 
     /**
+     * Failed in the board's eyes: `failed`, or `claimed` by a worker that
+     * died (the same expiry as scopeWithWorkLeft). A re-send picks up
+     * exactly these.
+     *
+     * @param  Builder<self>  $query
+     */
+    public function scopeFailedOrStuck(Builder $query, CarbonInterface $now): void
+    {
+        $query->withWorkLeft($now)->where('status', '!=', DmDeliveryStatus::Pending->value);
+    }
+
+    /**
+     * A claim older than SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS: its
+     * worker is gone and nothing is being sent. Reads as failed.
+     */
+    public function isStuck(CarbonInterface $now): bool
+    {
+        return $this->status === DmDeliveryStatus::Claimed
+            && $this->claimed_at !== null
+            && $this->claimed_at->lt($now->copy()->subSeconds(SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS));
+    }
+
+    /**
      * @return BelongsTo<DmRun, $this>
      */
     public function run(): BelongsTo

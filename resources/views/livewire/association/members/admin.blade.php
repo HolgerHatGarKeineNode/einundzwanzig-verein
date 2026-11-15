@@ -639,7 +639,7 @@ new class extends Component
         @if ($isAllowed && $messagesPlebId && $this->messagesPleb)
             <div class="space-y-6" data-test="member-messages">
                 <div>
-                    <flux:heading size="lg">{{ __('Nachrichten an :name', ['name' => \App\Models\MemberProposal::authorNameOf($this->messagesPleb)]) }}</flux:heading>
+                    <flux:heading size="lg" class="break-words">{{ __('Nachrichten an :name', ['name' => \App\Models\MemberProposal::authorNameOf($this->messagesPleb)]) }}</flux:heading>
                     <flux:text class="mt-2">{{ __('Die letzten Direktnachrichten des Vereins an dieses Mitglied. Alles Weitere steht unter „Nachrichten senden“.') }}</flux:text>
                 </div>
                 @if ($this->memberDeliveries->isEmpty())
