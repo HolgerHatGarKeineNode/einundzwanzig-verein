@@ -260,7 +260,7 @@ it('serves the share view to the board only, without controls and without voters
         ->assertSee('Ausgezählt um')
         ->assertSee('Gewählt ist Kandidatin Anna.')
         ->assertSee('1 Stimme')
-        ->assertSee('1 von 2 haben abgestimmt', false)
+        ->assertSee('1 von 2 hat abgestimmt, davon keine Enthaltung (leer).', false)
         ->assertDontSee('Geheime Wählerin');
 
     expect(liveShareBody($sealed->getContent()))->not->toContain('wire:click')->not->toContain('<button')->not->toContain('<form')->not->toContain('href=');
@@ -286,7 +286,7 @@ it('shows the result after the seal on the board page', function () {
     livePage()
         ->assertSee('Gewählt ist Anna Vorn.')
         ->assertSee('2 Stimmen')
-        ->assertSee('3 von 4 haben abgestimmt, davon 0 mit Enthaltung.')
+        ->assertSee('3 von 4 haben abgestimmt, davon keine Enthaltung (leer).')
         ->assertSee(ElectionManifest::query()->where('election_round_id', $round->id)->value('hash'));
 });
 
@@ -346,7 +346,7 @@ it('writes the minutes with the audit check and the manifest hash, as page and a
     NostrAuth::login($board->pubkey);
     $this->get($url)->assertOk()
         ->assertSee('Probewahl, keine echte Wahl')
-        ->assertSee('Protokollkette unversehrt, 1 Einträge.')
+        ->assertSee('Protokollkette unversehrt, 1 Eintrag.')
         ->assertSee($hash)
         ->assertSee('stimmt mit den gespeicherten Stimmen überein.')
         ->assertSee('Grund: Alle haben abgestimmt')
@@ -749,4 +749,62 @@ it('names the annulled round, not its run-off, as the last one on the card and t
         ->assertSee('„Vorsitz“ ist annulliert. Als Nächstes: „Kasse“.');
 
     expect(Livewire::test('association.election.screen', ['election' => $election->id])->instance()->current['report']['round']->title)->toBe('Vorsitz');
+});
+
+/*
+ * Every count on the board's pages agrees with its number: one vote is
+ * "1 Stimme", one voter "hat", one blank ballot "1 Enthaltung (leer)".
+ * Mutation that must turn this red: drop any of the trans_choice forms.
+ */
+it('says one vote, one voter and one blank ballot in the singular on the live list, the share view and the minutes', function () {
+    $board = liveBoard();
+    $election = Election::factory()->announced()->create();
+    [$first, $second] = [electionVoter(), electionVoter()];
+
+    $annulled = openElectionRound(['title' => 'Vorsitz', 'position' => 1], election: $election);
+    castElectionBallot($annulled, $first, [$annulled->candidates()->value('id') => 'for']);
+    app(ElectionStewardship::class)->annul($annulled, $board, 'Falsche Liste');
+    $this->travel(1)->minutes(); // the share view shows the latest finished round; a shared second would tie
+
+    $sealed = openElectionRound(['title' => 'Kasse', 'position' => 2], election: $election);
+    castElectionBallot($sealed, $second);
+    app(ElectionStewardship::class)->closeEarly($sealed, $board, 'Fertig');
+
+    livePage()
+        ->assertSee('1 Stimme abgegeben, nicht ausgezählt.')
+        ->assertDontSee('1 Stimmen abgegeben')
+        ->assertSee('1 von '.$sealed->fresh()->rollEntries()->count().' hat abgestimmt, davon 1 Enthaltung (leer).');
+
+    Livewire::test('association.election.screen', ['election' => $election->id])
+        ->assertSee('davon 1 Enthaltung (leer).')
+        ->assertDontSee('mit Enthaltung');
+
+    $this->get(route('association.election.admin.protocol', $election))->assertOk()
+        ->assertSee('Enthaltungen (leer): 1');
+});
+
+/*
+ * The share view counts the agenda, not the rows: a run-off belongs to its
+ * round, an annulled round is void and its repeat takes its place.
+ * Mutation that must turn this red: count every report again.
+ */
+it('numbers the round on the share view by the agenda, without run-offs and annulled rounds', function () {
+    $board = liveBoard();
+    $election = Election::factory()->announced()->create();
+    $chair = draftElectionRound(['title' => 'Vorsitz', 'position' => 1], election: $election);
+    draftElectionRound(['title' => 'Kasse', 'position' => 2], election: $election);
+    draftElectionRound(['title' => 'Beisitz', 'position' => 3], election: $election);
+    $screen = fn () => Livewire::test('association.election.screen', ['election' => $election->id]);
+
+    $screen()->assertSeeInOrder(['Wahlgang 1 von 3', 'Vorsitz']);
+
+    app(OpenRound::class)->handle($chair);
+    app(ElectionStewardship::class)->annul($chair->fresh(), $board, 'Falsche Liste');
+
+    $screen()->assertSee('Annullierter Wahlgang, zählt nicht mit')->assertDontSee('von 3');
+
+    $repeat = app(ElectionStewardship::class)->repeat($chair->fresh(), $board);
+    app(OpenRound::class)->handle($repeat);
+
+    $screen()->assertSeeInOrder(['Wahlgang 1 von 3', 'Vorsitz (Wiederholung)'])->assertDontSee('von 4');
 });
