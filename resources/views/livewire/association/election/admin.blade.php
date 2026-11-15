@@ -8,6 +8,7 @@ use App\Enums\ElectionRollReason;
 use App\Enums\ElectionRollSource;
 use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionActionRefusedException;
+use App\Exceptions\ElectionCandidateBlockedException;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
@@ -21,6 +22,7 @@ use App\Services\Election\ElectionSetup;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\ElectoralRoll;
 use App\Services\Election\EnrolByHand;
+use App\Services\Election\OpenRound;
 use App\Services\Election\PurgeTestElection;
 use App\Services\Election\RoundReport;
 use App\Support\NostrAuth;
@@ -85,10 +87,14 @@ new class extends Component
 
     public string $enrolReason = '';
 
+    public ?int $entitleMemberId = null;
+
+    public string $entitleReason = '';
+
     #[Locked]
     public ?int $pendingRoundId = null;
 
-    /** 'open', 'close', 'annul' or 'repeat' — what the round modal confirms. */
+    /** 'open', 'close', 'annul', 'strike' or 'repeat' — what the round modal confirms. */
     #[Locked]
     public ?string $pendingRoundAction = null;
 
@@ -259,7 +265,7 @@ new class extends Component
             $candidacies->approve($candidate, $actor);
         } catch (ElectionActionRefusedException) {
             Flux::toast(
-                __(':name ist nach der Beitragsregel dieser Wahl noch nicht wahlberechtigt. Freigeben geht nach der Zahlung.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]),
+                __(':name ist nach der Beitragsregel dieser Wahl noch nicht wahlberechtigt. Freigeben geht nach der Zahlung. Hat :name bar bezahlt, tragt die Wahlberechtigung unter „Wählerverzeichnis“ von Hand ein.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]),
                 variant: 'danger',
             );
 
@@ -354,6 +360,53 @@ new class extends Component
     }
 
     /**
+     * Record that a member is entitled to vote in the selected election
+     * although the portal knows no qualifying fee — paid in cash, say. From
+     * then on the candidacy can be approved, and every round opened later
+     * puts the member on its roll.
+     */
+    public function entitle(EnrolByHand $enrolByHand): void
+    {
+        $actor = $this->actor();
+
+        $this->validate(
+            [
+                'entitleMemberId' => ['required', 'integer'],
+                'entitleReason' => ['required', 'string', 'min:3', 'max:1000'],
+            ],
+            [
+                'entitleMemberId.required' => __('Wähle das Mitglied, das ihr als wahlberechtigt eintragt.'),
+                'entitleReason.required' => __('Nenne einen Grund, etwa „Beitrag bar bezahlt“. Er steht im Protokoll der Wahl.'),
+                'entitleReason.min' => __('Nenne einen Grund mit mindestens drei Zeichen.'),
+                'entitleReason.max' => __('Der Grund darf höchstens 1000 Zeichen lang sein.'),
+            ],
+        );
+
+        $election = $this->requireSelected();
+        $member = EinundzwanzigPleb::query()->with('profile')->findOrFail($this->entitleMemberId);
+        $name = MemberProposal::authorNameOf($member);
+
+        try {
+            $enrolByHand->entitle($election, $member, $actor, trim($this->entitleReason));
+        } catch (ElectionRoundStateException) {
+            $this->addError('entitleMemberId', __('Jeder Wahlgang dieser Wahl ist schon geöffnet oder abgeschlossen. Tragt :name im Verzeichnis des offenen Wahlgangs nach.', ['name' => $name]));
+
+            return;
+        } catch (ElectionActionRefusedException $refusal) {
+            $this->addError('entitleMemberId', str_contains($refusal->getMessage(), 'entitled already')
+                ? __(':name ist schon wahlberechtigt. Es gibt nichts einzutragen.', ['name' => $name])
+                : __(':name ist weder Aktiv- noch Ehrenmitglied. Wahlberechtigt sind nur Aktiv- und Ehrenmitglieder.', ['name' => $name]));
+
+            return;
+        }
+
+        $this->entitleMemberId = null;
+        $this->entitleReason = '';
+        unset($this->rollPreview, $this->entitleCandidates, $this->candidaciesByRound, $this->elections, $this->selectedElection);
+        Flux::toast(__(':name ist für „:election“ als wahlberechtigt eingetragen.', ['name' => $name, 'election' => $election->name]), variant: 'success');
+    }
+
+    /**
      * Only the meeting time and the call link — the one change allowed after
      * a round has been opened.
      */
@@ -385,7 +438,7 @@ new class extends Component
         }
 
         $this->pendingRoundId = (int) $round->id;
-        $this->pendingRoundAction = in_array($kind, ['open', 'close', 'annul', 'repeat'], true) ? $kind : 'open';
+        $this->pendingRoundAction = in_array($kind, ['open', 'close', 'annul', 'strike', 'repeat'], true) ? $kind : 'open';
         $this->roundReason = $this->pendingRoundAction === 'close' ? __(self::DEFAULT_CLOSE_REASON) : '';
         $this->section = 'live';
         $this->resetErrorBag('roundReason');
@@ -406,7 +459,7 @@ new class extends Component
             return;
         }
 
-        if ($action === 'close' || $action === 'annul') {
+        if (in_array($action, ['close', 'annul', 'strike'], true)) {
             $this->validate(
                 ['roundReason' => ['required', 'string', 'min:3', 'max:1000']],
                 [
@@ -421,6 +474,7 @@ new class extends Component
             $result = match ($action) {
                 'close' => $stewardship->closeEarly($round, $actor, trim($this->roundReason)),
                 'annul' => $stewardship->annul($round, $actor, trim($this->roundReason)),
+                'strike' => $stewardship->strike($round, $actor, trim($this->roundReason)),
                 'repeat' => $stewardship->repeat($round, $actor),
                 default => $stewardship->open($round, $actor),
             };
@@ -443,9 +497,10 @@ new class extends Component
         Flux::toast(match ($action) {
             'close' => __('„:round“ ist geschlossen und ausgezählt.', ['round' => $round->title]),
             'annul' => __('„:round“ ist annulliert.', ['round' => $round->title]),
+            'strike' => __('„:round“ ist gestrichen.', ['round' => $round->title]),
             'repeat' => __('„:round“ ist angelegt. Öffnet ihn, wenn alle bereit sind.', ['round' => $result->title]),
             default => __('„:round“ ist offen. Die Wahlberechtigten können jetzt abstimmen.', ['round' => $round->title]),
-        }, variant: $action === 'annul' ? 'warning' : 'success');
+        }, variant: in_array($action, ['annul', 'strike'], true) ? 'warning' : 'success');
     }
 
     /**
@@ -731,6 +786,43 @@ new class extends Component
     }
 
     /**
+     * Active and honorary members the fee rule of the selected election does
+     * not entitle right now — whom the board can enter as entitled by hand.
+     *
+     * @return Collection<int, array{id: int, name: string}>
+     */
+    #[Computed]
+    public function entitleCandidates(): Collection
+    {
+        $this->actor();
+
+        $election = $this->selectedElection;
+
+        if ($election === null) {
+            return collect();
+        }
+
+        return EinundzwanzigPleb::query()
+            ->notErased()
+            ->whereIn('association_status', array_column(ElectoralRoll::VOTING_STATUSES, 'value'))
+            ->whereNotIn('id', app(ElectoralRoll::class)->entitled($election, now())->select('einundzwanzig_plebs.id'))
+            ->with('profile')
+            ->get()
+            ->map(fn (EinundzwanzigPleb $pleb): array => ['id' => (int) $pleb->id, 'name' => MemberProposal::authorNameOf($pleb)])
+            ->sortBy(fn (array $row): string => mb_strtolower($row['name']))
+            ->values();
+    }
+
+    /**
+     * Can a manual entitlement still matter: is a round of the election
+     * neither opened nor struck?
+     */
+    protected function takesEntitlement(Election $election): bool
+    {
+        return $election->rounds->contains(fn (ElectionRound $round): bool => $round->opened_at === null && $round->annulled_at === null);
+    }
+
+    /**
      * The five stations of the run sheet, each done, current or ahead.
      *
      * @return list<array{label: string, when: string, state: 'done'|'current'|'ahead'}>
@@ -764,13 +856,16 @@ new class extends Component
      *
      * In the meeting it walks the board through the evening: open a round,
      * close it, show the result, set up a run-off if it ended level, open the
-     * next round, and at the end the minutes.
+     * next round, and at the end the minutes. It never offers to open a round
+     * `OpenRound` would refuse: it names the reason and the way out instead —
+     * the candidacies, or striking a round nobody can stand in any more.
      *
-     * @return array{text: string, hint: string|null, action: string|null, label: string|null, click: string|null, href: string|null}
+     * @return array{text: string, hint: string|null, action: string|null, label: string|null, click: string|null, href: string|null, secondary_label: string|null, secondary_click: string|null}
      */
     protected function nextStepOf(Election $election): array
     {
-        $rounds = $election->rounds->whereNull('parent_round_id');
+        // A struck round is void: it holds no step.
+        $rounds = $election->rounds->whereNull('parent_round_id')->whereNull('annulled_at');
         $phase = $this->phaseOf($election);
 
         if ($phase === 0) {
@@ -809,9 +904,11 @@ new class extends Component
             if ($without !== null) {
                 return $this->step(
                     __('„:round“ hat noch keine freigegebene Kandidatur.', ['round' => $without->title]),
-                    __('Ohne freigegebene Kandidatur lässt sich ein Wahlgang in der Sitzung nicht öffnen.'),
+                    __('Ohne freigegebene Kandidatur lässt sich ein Wahlgang in der Sitzung nicht öffnen. Kann niemand mehr antreten, streicht den Wahlgang.'),
                     action: 'candidacies',
                     label: __('Kandidaturen ansehen'),
+                    secondaryLabel: __('Wahlgang streichen'),
+                    secondaryClick: "startRoundAction({$without->id}, 'strike')",
                 );
             }
         }
@@ -867,6 +964,23 @@ new class extends Component
         // An annulled round is void, also a run-off annulled along with its round before it was opened.
         $openable = $all->filter(fn (ElectionRound $round): bool => $round->opened_at === null && $round->annulled_at === null);
         $next = $openable->first(fn (ElectionRound $round): bool => $round->parent_round_id !== null) ?? $openable->first();
+        $stewardship = app(ElectionStewardship::class);
+        $awaiting = $all->first(fn (ElectionRound $round): bool => $stewardship->awaitsRepeat($round));
+
+        if ($next !== null && ($refusal = app(OpenRound::class)->refusal($next)) !== null) {
+            $withoutCandidates = str_contains($refusal->getMessage(), 'without approved candidates');
+            $strike = $next->parent_round_id === null ? "startRoundAction({$next->id}, 'strike')" : null;
+
+            return $this->step(
+                __('„:round“ lässt sich nicht öffnen.', ['round' => $next->title]),
+                $this->refusalText('open', $refusal),
+                action: $withoutCandidates && $strike !== null ? null : 'candidacies',
+                label: $withoutCandidates && $strike !== null ? __('Wahlgang streichen') : __('Kandidaturen ansehen'),
+                click: $withoutCandidates ? $strike : null,
+                secondaryLabel: $strike === null ? null : ($withoutCandidates ? __('Kandidaturen ansehen') : __('Wahlgang streichen')),
+                secondaryClick: $strike === null ? null : ($withoutCandidates ? "showSection('candidacies')" : $strike),
+            );
+        }
 
         if ($next !== null) {
             $last = $all->filter(fn (ElectionRound $round): bool => $round->opened_at !== null && ($round->closed_at !== null || $round->annulled_at !== null))
@@ -879,7 +993,7 @@ new class extends Component
                     $last !== null => __('„:last“ ist annulliert. Als Nächstes: „:round“.', ['last' => $last->title, 'round' => $next->title]),
                     $election->meeting_at !== null && ! $election->is_test => __('Bereit für die Sitzung am :date. Zuerst: „:round“.', ['date' => $this->longDate($election->meeting_at), 'round' => $next->title]),
                     default => __('Bereit. Zuerst: „:round“.', ['round' => $next->title]),
-                },
+                }.($awaiting === null ? '' : ' '.__('„:round“ wartet noch auf die Wiederholung.', ['round' => $awaiting->title])),
                 match (true) {
                     $last?->isSealed() === true => __('Zeigt zuerst das Ergebnis im Call, dann öffnet den nächsten Wahlgang.'),
                     $election->is_test => __('Probewahl: öffnet den Wahlgang, wann immer ihr üben wollt.'),
@@ -890,8 +1004,7 @@ new class extends Component
             );
         }
 
-        $stewardship = app(ElectionStewardship::class);
-        $annulled = $all->first(fn (ElectionRound $round): bool => $stewardship->awaitsRepeat($round));
+        $annulled = $awaiting;
 
         if ($annulled !== null) {
             return $this->step(
@@ -911,11 +1024,11 @@ new class extends Component
     }
 
     /**
-     * @return array{text: string, hint: string|null, action: string|null, label: string|null, click: string|null, href: string|null}
+     * @return array{text: string, hint: string|null, action: string|null, label: string|null, click: string|null, href: string|null, secondary_label: string|null, secondary_click: string|null}
      */
-    protected function step(string $text, ?string $hint = null, ?string $action = null, ?string $label = null, ?string $click = null, ?string $href = null): array
+    protected function step(string $text, ?string $hint = null, ?string $action = null, ?string $label = null, ?string $click = null, ?string $href = null, ?string $secondaryLabel = null, ?string $secondaryClick = null): array
     {
-        return ['text' => $text, 'hint' => $hint, 'action' => $action, 'label' => $label, 'click' => $click, 'href' => $href];
+        return ['text' => $text, 'hint' => $hint, 'action' => $action, 'label' => $label, 'click' => $click, 'href' => $href, 'secondary_label' => $secondaryLabel, 'secondary_click' => $secondaryClick];
     }
 
 
@@ -1032,15 +1145,22 @@ new class extends Component
 
     protected function refusalText(string $action, ElectionRoundStateException $exception): string
     {
+        $message = $exception->getMessage();
+        $name = $exception instanceof ElectionCandidateBlockedException
+            ? MemberProposal::authorNameOf(EinundzwanzigPleb::query()->with('profile')->find($exception->memberId))
+            : null;
+
         return match (true) {
-            $action === 'open' && str_contains($exception->getMessage(), 'without approved candidates') => __('Dieser Wahlgang hat keine freigegebene Kandidatur.'),
-            $action === 'open' && str_contains($exception->getMessage(), 'run-off') => __('Die Stichwahl lässt sich erst öffnen, wenn ihr Wahlgang ausgezählt ist.'),
-            $action === 'open' && str_contains($exception->getMessage(), 'not sealed yet') => __('Eine Person dieses Wahlgangs kandidiert auch in einem früheren Wahlgang, der noch nicht ausgezählt ist. Zählt ihn zuerst aus, oder zieht die Kandidatur hier zurück.'),
-            $action === 'open' && str_contains($exception->getMessage(), 'has been elected') => __('Eine Person dieses Wahlgangs ist in einem früheren Wahlgang schon gewählt. Zieht ihre Kandidatur hier zurück, dann lässt sich der Wahlgang öffnen.'),
-            $action === 'open' && str_contains($exception->getMessage(), 'undecided tie') => __('Eine Person dieses Wahlgangs steht in einem früheren Wahlgang im Gleichstand, und dafür ist noch keine Stichwahl ausgezählt. Legt die Stichwahl an und zählt sie aus, oder zieht die Kandidatur hier zurück.'),
+            $action === 'open' && str_contains($message, 'without approved candidates') => __('Dieser Wahlgang hat keine freigegebene Kandidatur. Gebt unter „Kandidaturen“ eine frei, oder streicht den Wahlgang, wenn niemand mehr antreten kann.'),
+            $action === 'open' && str_contains($message, 'run-off') => __('Die Stichwahl lässt sich erst öffnen, wenn ihr Wahlgang ausgezählt ist.'),
+            $action === 'open' && $name !== null && str_contains($message, 'not sealed yet') => __(':name kandidiert auch in einem früheren Wahlgang, der noch nicht ausgezählt ist. Zählt ihn zuerst aus, oder zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück.', ['name' => $name]),
+            $action === 'open' && $name !== null && str_contains($message, 'has been elected') => __(':name ist in einem früheren Wahlgang schon gewählt. Zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück, dann lässt sich der Wahlgang öffnen. Kann danach niemand mehr antreten, streicht den Wahlgang.', ['name' => $name]),
+            $action === 'open' && $name !== null && str_contains($message, 'undecided tie') => __(':name steht in einem früheren Wahlgang im Gleichstand, und dafür ist noch keine Stichwahl ausgezählt. Legt die Stichwahl an und zählt sie aus, oder zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück.', ['name' => $name]),
+            $action === 'open' && str_contains($message, 'fee year') => __('Die Beitragsregel dieser Wahl braucht ein Beitragsjahr. Tragt es unter „Einstellungen“ ein.'),
             $action === 'open' => __('Dieser Wahlgang lässt sich gerade nicht öffnen. Lade die Seite neu, vielleicht hat ihn schon jemand geöffnet.'),
             $action === 'close' => __('Der Wahlgang nimmt keine Stimmen mehr an. Lade die Seite neu, vielleicht hat ihn schon jemand geschlossen.'),
-            default => __('Der Wahlgang ist schon annulliert oder noch nicht geöffnet.'),
+            $action === 'strike' => __('Streichen geht nur bei einem Wahlgang, der nie geöffnet wurde. Lade die Seite neu, vielleicht hat ihn schon jemand geöffnet oder gestrichen.'),
+            default => __('Der Wahlgang ist schon annulliert oder noch nicht geöffnet. Lade die Seite neu.'),
         };
     }
 
@@ -1050,7 +1170,8 @@ new class extends Component
     protected function pendingRoundText(ElectionRound $round): string
     {
         return match ($this->pendingRoundAction) {
-            'close' => __('Danach nimmt der Wahlgang keine Stimmen mehr an und wird sofort ausgezählt. Das lässt sich nicht zurücknehmen.'),
+            'close' => $this->turnoutText($round).' '.__('Danach nimmt der Wahlgang keine Stimmen mehr an und wird sofort ausgezählt. Das lässt sich nicht zurücknehmen.'),
+            'strike' => __('„:round“ wird nie geöffnet und zählt wie ein annullierter Wahlgang: Niemand stimmt darüber ab. Das lässt sich nicht zurücknehmen. Der Grund steht im Protokoll.', ['round' => $round->title]),
             'annul' => __('Die abgegebenen Stimmen werden nie ausgezählt, und der Wahlgang lässt sich nicht wieder öffnen. Der Grund steht im Protokoll.'),
             'repeat' => __('Legt „:title“ als neuen Wahlgang an, mit denselben freigegebenen Kandidaturen, derselben Zählregel und denselben Sitzen. Abgestimmt wird erst, wenn ihr ihn öffnet.', ['title' => ElectionStewardship::repeatTitle($round->title)]),
             default => __('Ab jetzt können :count Wahlberechtigte abstimmen. Kandidaturen und Zählregel sind danach fest. Schließt ihn niemand, nimmt er nach :minutes Minuten keine Stimmen mehr an.', [
@@ -1060,6 +1181,20 @@ new class extends Component
                 'minutes' => \App\Services\Election\OpenRound::LIVE_MAX_MINUTES,
             ]),
         };
+    }
+
+    /**
+     * How many of the roll have voted so far — read before the board closes
+     * a round, so nobody closes at 0 of 14 by mistake. Counts only.
+     */
+    protected function turnoutText(ElectionRound $round): string
+    {
+        $cast = $round->votes()->count();
+        $roll = $round->rollEntries()->count();
+
+        return $cast === 0
+            ? __('Noch hat niemand abgestimmt: 0 von :roll Wahlberechtigten.', ['roll' => $roll])
+            : __('Abgestimmt haben bisher :cast von :roll Wahlberechtigten.', ['cast' => $cast, 'roll' => $roll]);
     }
 
     /**
@@ -1367,6 +1502,7 @@ new class extends Component
                             @endif
                         </div>
                         @php $primary = $isSelected && ! $creating; @endphp
+                        <div class="flex shrink-0 flex-col gap-2 sm:flex-row-reverse sm:items-center">
                         @if ($step['href'] !== null)
                             <flux:button :href="$step['href']" target="_blank" :variant="$primary ? 'primary' : 'outline'" class="min-h-11 w-full shrink-0 sm:w-auto" data-test="next-step-action">{{ $step['label'] }}</flux:button>
                         @elseif ($step['click'] !== null)
@@ -1394,6 +1530,10 @@ new class extends Component
                                 </flux:button>
                             @endif
                         @endif
+                        @if ($isSelected && $step['secondary_click'] !== null)
+                            <flux:button wire:click="{{ $step['secondary_click'] }}" variant="ghost" class="min-h-11 w-full shrink-0 sm:w-auto" data-test="next-step-secondary">{{ $step['secondary_label'] }}</flux:button>
+                        @endif
+                        </div>
                     </div>
 
                     @if ($isSelected)
@@ -1474,6 +1614,7 @@ new class extends Component
                                 {{ match ($pendingRoundAction) {
                                     'close' => __('„:round“ schließen?', ['round' => $pendingRound->title]),
                                     'annul' => __('„:round“ annullieren?', ['round' => $pendingRound->title]),
+                                    'strike' => __('„:round“ streichen?', ['round' => $pendingRound->title]),
                                     'repeat' => __('„:round“ wiederholen?', ['round' => $pendingRound->title]),
                                     default => __('„:round“ öffnen?', ['round' => $pendingRound->title]),
                                 } }}
@@ -1485,11 +1626,11 @@ new class extends Component
                             @endif
                         </flux:text>
                     </div>
-                    @if ($pendingRoundAction === 'close' || $pendingRoundAction === 'annul')
+                    @if (in_array($pendingRoundAction, ['close', 'annul', 'strike'], true))
                         <flux:field>
                             <flux:label>{{ __('Grund für das Protokoll') }}</flux:label>
                             <flux:textarea wire:model="roundReason" rows="2" maxlength="1000" data-test="round-reason"
-                                           placeholder="{{ $pendingRoundAction === 'annul' ? __('z. B. falsche Kandidatenliste geöffnet') : __('z. B. alle Anwesenden haben abgestimmt') }}" />
+                                           placeholder="{{ match ($pendingRoundAction) { 'annul' => __('z. B. falsche Kandidatenliste geöffnet'), 'strike' => __('z. B. niemand kann mehr antreten'), default => __('z. B. alle Anwesenden haben abgestimmt') } }}" />
                             <flux:error name="roundReason" />
                         </flux:field>
                     @else
@@ -1499,10 +1640,11 @@ new class extends Component
                         <flux:modal.close>
                             <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto">{{ __('Abbrechen') }}</flux:button>
                         </flux:modal.close>
-                        <flux:button type="submit" :variant="$pendingRoundAction === 'annul' ? 'danger' : 'primary'" class="min-h-11 w-full sm:w-auto" data-test="confirm-round-action">
+                        <flux:button type="submit" :variant="in_array($pendingRoundAction, ['annul', 'strike'], true) ? 'danger' : 'primary'" class="min-h-11 w-full sm:w-auto" data-test="confirm-round-action">
                             {{ match ($pendingRoundAction) {
                                 'close' => __('Schließen und auszählen'),
                                 'annul' => __('Annullieren'),
+                                'strike' => __('Wahlgang streichen'),
                                 'repeat' => __('Wahlgang wiederholen'),
                                 default => __('Wahlgang öffnen'),
                             } }}

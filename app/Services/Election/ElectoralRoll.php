@@ -3,11 +3,13 @@
 namespace App\Services\Election;
 
 use App\Enums\AssociationStatus;
+use App\Enums\ElectionAuditAction;
 use App\Enums\ElectionFeeRule;
 use App\Enums\ElectionRollReason;
 use App\Enums\ElectionRollSource;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
+use App\Models\ElectionAuditEntry;
 use App\Models\ElectionRollEntry;
 use App\Models\ElectionRound;
 use App\Models\PaymentEvent;
@@ -172,7 +174,9 @@ class ElectoralRoll
 
     /**
      * Every member entitled to vote in `$election` at `$at`, each carrying a
-     * `fee_paid` flag that says whether the fee rule is met.
+     * `fee_paid` flag that says whether the fee rule is met and a
+     * `confirmed_by_board` flag for an entitlement the board entered by hand
+     * (`EnrolByHand::entitle()`).
      *
      * ONE definition for the snapshot, the single-member check and the
      * direct message audiences (App\Services\Dm\DirectMessageAudience), so
@@ -183,18 +187,37 @@ class ElectoralRoll
     public function entitled(Election $election, CarbonInterface $at): Builder
     {
         $feePaid = $this->feePaid($election, $at);
+        $confirmed = $this->confirmedByBoard($election);
 
         return EinundzwanzigPleb::query()
             ->notErased()
             ->withExists(['paymentEvents as fee_paid' => $feePaid])
+            ->addSelect(['confirmed_by_board' => (clone $confirmed)->whereColumn('election_audit_entries.subject_pleb_id', 'einundzwanzig_plebs.id')->limit(1)])
             ->whereIn('association_status', array_column(self::VOTING_STATUSES, 'value'))
-            ->where(function (Builder $query) use ($election, $feePaid): void {
-                $query->whereHas('paymentEvents', $feePaid);
+            ->where(function (Builder $query) use ($election, $feePaid, $confirmed): void {
+                $query->whereHas('paymentEvents', $feePaid)
+                    ->orWhereIn('einundzwanzig_plebs.id', $confirmed);
 
                 if ($election->honorary_without_fee) {
                     $query->orWhere('association_status', AssociationStatus::HONORARY->value);
                 }
             });
+    }
+
+    /**
+     * The members the board entered as entitled in `$election` by hand: the
+     * audit lines of `EnrolByHand::entitle()`, which carry no round.
+     *
+     * @return Builder<ElectionAuditEntry>
+     */
+    protected function confirmedByBoard(Election $election): Builder
+    {
+        return ElectionAuditEntry::query()
+            ->select('subject_pleb_id')
+            ->where('election_event_id', $election->getKey())
+            ->where('action', ElectionAuditAction::VoterEnrolledByHand->value)
+            ->whereNull('election_round_id')
+            ->whereNotNull('subject_pleb_id');
     }
 
     /**
@@ -237,11 +260,11 @@ class ElectoralRoll
      */
     public function reasonOf(EinundzwanzigPleb $pleb): ElectionRollReason
     {
-        if ($pleb->association_status === AssociationStatus::ACTIVE) {
-            return ElectionRollReason::ActiveFeePaid;
+        if ($pleb->fee_paid) {
+            return $pleb->association_status === AssociationStatus::ACTIVE ? ElectionRollReason::ActiveFeePaid : ElectionRollReason::HonoraryFeePaid;
         }
 
-        return $pleb->fee_paid ? ElectionRollReason::HonoraryFeePaid : ElectionRollReason::HonoraryExempt;
+        return $pleb->confirmed_by_board ? ElectionRollReason::ConfirmedByBoard : ElectionRollReason::HonoraryExempt;
     }
 
     /**
