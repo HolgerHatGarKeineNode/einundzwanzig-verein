@@ -4,7 +4,10 @@
     $titles = $reports->mapWithKeys(fn ($report) => [$report['round']->id => $report['round']->title]);
     // Only one round takes ballots at a time: while one is open, no other is opened.
     $openReport = $reports->first(fn ($report) => $report['state'] === \App\Enums\ElectionRoundState::Open);
+    // Numbering follows the agenda, as on the share view: a run-off belongs to its round, an annulled round is void and its repeat takes its number.
     $number = 0;
+    // A name may end in a full stop ("Erik E."); the sentence must not add a second one.
+    $sentence = fn (string $text): string => preg_replace('/(?<=\S)\.\.(?=\s|$)/u', '.', $text);
 @endphp
 
 <div class="relative" data-test="live">
@@ -30,7 +33,8 @@
                 @php
                     $round = $report['round'];
                     $isRunOff = $round->parent_round_id !== null;
-                    if (! $isRunOff) { $number++; }
+                    $isVoid = ! $isRunOff && $report['state'] === \App\Enums\ElectionRoundState::Annulled;
+                    if (! $isRunOff && ! $isVoid) { $number++; }
                     $isOpen = $report['state'] === \App\Enums\ElectionRoundState::Open;
                     $result = $report['result'];
                     $isYesNo = $round->counting_rule === \App\Enums\ElectionCountingRule::YesNoPerCandidate;
@@ -43,12 +47,12 @@
                     @if ($isOpen)
                         <span class="absolute -left-3 top-6 bottom-6 w-1 bg-orange-500 sm:-left-4" aria-hidden="true"></span>
                     @endif
-                    <span class="pt-0.5 text-lg font-bold text-text-tertiary tabular-nums" aria-hidden="true">{{ $isRunOff ? '' : $number }}</span>
+                    <span class="pt-0.5 text-lg font-bold text-text-tertiary tabular-nums" aria-hidden="true" data-test="live-number">{{ $isRunOff || $isVoid ? '' : $number }}</span>
 
                     <div class="min-w-0">
                         <div class="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
                             <h3 class="min-w-0 text-xl font-bold leading-tight text-text-primary break-words">
-                                <span class="sr-only">{{ $isRunOff ? __('Stichwahl') : __('Wahlgang :number', ['number' => $number]) }}:</span>{{ $round->title }}
+                                <span class="sr-only">{{ match (true) { $isRunOff => __('Stichwahl'), $isVoid => __('Annullierter Wahlgang, zählt nicht mit'), default => __('Wahlgang :number', ['number' => $number]) } }}:</span>{{ $round->title }}
                             </h3>
                             <p class="inline-flex items-center gap-1.5 text-base" data-test="live-state">
                                 @if ($isOpen)
@@ -99,18 +103,18 @@
                             <p class="mt-4 text-lg font-bold text-text-primary break-words" data-test="live-outcome-{{ $round->id }}">
                                 @switch($result['outcome'])
                                     @case(\App\Enums\ElectionOutcome::Complete)
-                                        {{ trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $electedNames->count(), ['names' => $electedNames->join(', ', ' und ')]) }}
+                                        {{ $sentence(trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $electedNames->count(), ['names' => $electedNames->join(', ', ' und ')])) }}
                                         @break
                                     @case(\App\Enums\ElectionOutcome::Tie)
                                         <span class="inline-flex items-center gap-1.5 text-warning"><flux:icon.scale variant="mini" class="size-5" aria-hidden="true" />{{ trans_choice('{1} Gleichstand um einen Sitz.|[2,*] Gleichstand um :count Sitze.', $result['tied_seats'], ['count' => $result['tied_seats']]) }}</span>
                                         @if ($electedNames->isNotEmpty())
-                                            <span class="block text-base font-normal text-text-primary">{{ trans_choice('{1} Gewählt ist schon :names.|[2,*] Gewählt sind schon :names.', $electedNames->count(), ['names' => $electedNames->join(', ', ' und ')]) }}</span>
+                                            <span class="block text-base font-normal text-text-primary">{{ $sentence(trans_choice('{1} Gewählt ist schon :names.|[2,*] Gewählt sind schon :names.', $electedNames->count(), ['names' => $electedNames->join(', ', ' und ')])) }}</span>
                                         @endif
                                         @break
                                     @default
                                         <span class="inline-flex items-center gap-1.5 text-warning"><flux:icon.exclamation-triangle variant="mini" class="size-5" aria-hidden="true" />{{ $electedNames->isEmpty() ? __('Niemand hat die nötige Mehrheit.') : __('Nicht alle Sitze sind besetzt.') }}</span>
                                         @if ($electedNames->isNotEmpty())
-                                            <span class="block text-base font-normal text-text-primary">{{ trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $electedNames->count(), ['names' => $electedNames->join(', ', ' und ')]) }}</span>
+                                            <span class="block text-base font-normal text-text-primary">{{ $sentence(trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $electedNames->count(), ['names' => $electedNames->join(', ', ' und ')])) }}</span>
                                         @endif
                                 @endswitch
                             </p>
