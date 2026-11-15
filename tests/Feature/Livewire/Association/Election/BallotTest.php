@@ -234,6 +234,11 @@ it('tells the member in German why a vote was refused', function (ElectionBallot
         ElectionBallotRefusal::WrongRound => signedElectionVote($round, $member, [], ['tags' => [['election', (string) $round->election_event_id], ['round', '999999']]]),
         ElectionBallotRefusal::OutsideOpenPeriod => signedElectionVote($round, $member, [], ['created_at' => now()->subHours(3)->getTimestamp()]),
         ElectionBallotRefusal::InvalidChoices => signedElectionVote($round, $member, [999999 => 'for']),
+        ElectionBallotRefusal::MissingNonce => (function () use ($round, $member, $now): array {
+            $template = VoteEvent::template($round, [], $now);
+
+            return EventSigning::sign(electionSecretFor($member), $template['kind'], $template['tags'], $template['content'], $template['created_at']);
+        })(),
         ElectionBallotRefusal::TooManyAttempts => (function () use ($round, $member): array {
             for ($i = 0; $i < CastBallot::MAX_ATTEMPTS; $i++) {
                 RateLimiter::hit('election-cast:'.$member->getKey(), CastBallot::DECAY_SECONDS);
@@ -254,6 +259,7 @@ it('tells the member in German why a vote was refused', function (ElectionBallot
     'wrong round' => [ElectionBallotRefusal::WrongRound],
     'outside the open period' => [ElectionBallotRefusal::OutsideOpenPeriod],
     'invalid choices' => [ElectionBallotRefusal::InvalidChoices],
+    'missing nonce' => [ElectionBallotRefusal::MissingNonce],
     'too many attempts' => [ElectionBallotRefusal::TooManyAttempts],
 ]);
 

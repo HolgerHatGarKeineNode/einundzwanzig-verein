@@ -66,7 +66,7 @@
                         @if ($isOpen && $this->openRun)
                             @php
                                 $detail = $this->openRun;
-                                $order = [\App\Enums\DmDeliveryStatus::Failed->value => 0, \App\Enums\DmDeliveryStatus::Claimed->value => 1, \App\Enums\DmDeliveryStatus::Pending->value => 2, \App\Enums\DmDeliveryStatus::NoInbox->value => 3, \App\Enums\DmDeliveryStatus::Sent->value => 4];
+                                $order = [\App\Enums\DmDeliveryStatus::Failed->value => 0, \App\Enums\DmDeliveryStatus::NoSenderKey->value => 0, \App\Enums\DmDeliveryStatus::NotSent->value => 0, \App\Enums\DmDeliveryStatus::Claimed->value => 1, \App\Enums\DmDeliveryStatus::Pending->value => 2, \App\Enums\DmDeliveryStatus::NoInbox->value => 3, \App\Enums\DmDeliveryStatus::Sent->value => 4];
                                 $deliveries = $detail->deliveries->sortBy(fn ($delivery) => [$this->deliveryFailed($delivery) ? 0 : $order[$delivery->status->value], $delivery->id]);
                                 $notFannedOut = $detail->recipient_count - $detail->deliveries->count();
                             @endphp
