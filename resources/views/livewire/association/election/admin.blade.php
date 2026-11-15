@@ -870,7 +870,7 @@ new class extends Component
 
         if ($next !== null) {
             $last = $all->filter(fn (ElectionRound $round): bool => $round->opened_at !== null && ($round->closed_at !== null || $round->annulled_at !== null))
-                ->sortByDesc(fn (ElectionRound $round): int => ($round->closed_at ?? $round->annulled_at)->getTimestamp())
+                ->sortByDesc(fn (ElectionRound $round): int => ($round->annulled_at ?? $round->closed_at)->getTimestamp())
                 ->first();
 
             return $this->step(

@@ -10,6 +10,7 @@ use App\Models\ElectionRound;
 use App\Models\Profile;
 use App\Services\Election\CastBallot;
 use App\Services\Election\CloseRound;
+use App\Services\Election\CreateRunOff;
 use App\Services\Election\OpenRound;
 use App\Services\Election\VoteEvent;
 use App\Services\Nostr\EventSigning;
@@ -502,4 +503,39 @@ it('shows the call link only on the Berlin meeting day or while a round is open'
     $this->travelTo('2027-03-02 12:00:00'); // two days early, but the board opened a round
     app(OpenRound::class)->handle($round);
     ballotPage($voter)->assertSeeHtml('href="https://meet.example.org/einundzwanzig"');
+});
+
+/*
+ * A run-off of a run-off is still part of the evening: the member page lists
+ * it, offers its ballot while it is open and counts its winner in the result.
+ * Mutation that must turn this red: attach only the direct run-offs of a
+ * first-level round again.
+ */
+it('offers the ballot of a second run-off and counts its winner in the result', function () {
+    $round = namedDraftRound(['Alice Ambrosius', 'Bob Brenner'], ElectionCountingRule::MostVotes);
+    [$board] = electionBoard(1);
+    $voters = [electionVoter(), electionVoter()];
+    $alice = candidateIdOf($round, 'Alice Ambrosius');
+
+    $level = function (ElectionRound $round) use ($voters, $board): ElectionRound {
+        $round = app(OpenRound::class)->handle($round);
+        $ids = $round->candidates()->orderBy('id')->pluck('id')->all();
+        castElectionBallot($round, $voters[0], [$ids[0] => 'for']);
+        castElectionBallot($round, $voters[1], [$ids[1] => 'for']);
+
+        return app(CreateRunOff::class)->handle(app(CloseRound::class)->handle($round), $board);
+    };
+
+    $second = app(OpenRound::class)->handle($level($level($round)));
+
+    ballotPage($voters[0])
+        ->assertSee($second->title)
+        ->assertSee('Stimmzettel')
+        ->assertSee('Alice Ambrosius');
+
+    castElectionBallot($second, $voters[0], [$second->candidates()->get()->firstWhere('einundzwanzig_pleb_id', ElectionCandidate::find($alice)->einundzwanzig_pleb_id)->id => 'for']);
+    app(CloseRound::class)->handle($second);
+
+    expect(ballotPage($voters[0])->instance()->outcome)
+        ->toBe([['title' => 'Präsidium', 'seats' => 1, 'names' => ['Alice Ambrosius'], 'annulled' => false, 'open' => 0]]);
 });
