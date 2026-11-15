@@ -8,6 +8,10 @@ namespace App\Enums;
  */
 enum ElectionAuditAction: string
 {
+    case ElectionCreated = 'election_created';
+
+    case ElectionUpdated = 'election_updated';
+
     case ElectionAnnounced = 'election_announced';
 
     case ElectionDeleted = 'election_deleted';

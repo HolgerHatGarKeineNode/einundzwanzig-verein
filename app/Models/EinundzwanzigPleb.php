@@ -122,6 +122,7 @@ class EinundzwanzigPleb extends Authenticatable implements CipherSweetEncrypted,
             'association_status' => AssociationStatus::class,
             'statutes_accepted_at' => 'datetime',
             'applied_at' => 'datetime',
+            'last_login_at' => 'datetime',
         ];
     }
 
