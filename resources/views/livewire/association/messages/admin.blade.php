@@ -354,7 +354,10 @@ class extends Component
             $message->delete();
             $this->dryRun = null;
             Flux::modal('confirm-send')->close();
-            Flux::toast(trans_choice('Die Zielgruppe hat sich seit dem Probelauf geändert: jetzt ein Mitglied statt :confirmed. Es wurde nichts gesendet. Starte den Probelauf neu.|Die Zielgruppe hat sich seit dem Probelauf geändert: jetzt :count Mitglieder statt :confirmed. Es wurde nichts gesendet. Starte den Probelauf neu.', $changed->currentCount, ['count' => $changed->currentCount, 'confirmed' => $changed->confirmedCount]), variant: 'danger');
+            $reason = $changed->currentCount === $changed->confirmedCount
+                ? __('Die Zielgruppe hat sich seit dem Probelauf geändert: gleich viele, aber andere Mitglieder. Es wurde nichts gesendet. Starte den Probelauf neu.')
+                : trans_choice('Die Zielgruppe hat sich seit dem Probelauf geändert: jetzt ein Mitglied statt :confirmed. Es wurde nichts gesendet. Starte den Probelauf neu.|Die Zielgruppe hat sich seit dem Probelauf geändert: jetzt :count Mitglieder statt :confirmed. Es wurde nichts gesendet. Starte den Probelauf neu.', $changed->currentCount, ['count' => $changed->currentCount, 'confirmed' => $changed->confirmedCount]);
+            Flux::toast($reason, variant: 'danger');
 
             return;
         }

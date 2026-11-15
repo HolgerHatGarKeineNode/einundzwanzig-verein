@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\AssociationStatus;
 use App\Enums\DmAudience;
 use App\Enums\DmDeliveryStatus;
 use App\Enums\DmMessageType;
@@ -261,6 +262,32 @@ it('refuses to send when the audience changed after the dry run, and queues noth
 
     expect(DmRun::query()->sole()->recipient_count)->toBe(6);
     Queue::assertPushed(DispatchBulkDirectMessages::class, 1);
+});
+
+it('refuses to send when members were swapped after the dry run although the number is the same', function () {
+    Queue::fake();
+    [, $others] = messageCentreBoard(3);
+
+    $page = messageCentre()
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('audience', DmAudience::Members->value)
+        ->set('text', 'Hallo {name}, eine Nachricht.')
+        ->call('runDryRun');
+
+    expect($page->get('dryRun')['count'])->toBe(4);
+
+    // one member leaves the voting statuses, another one joins: still four
+    $others[0]->forceFill(['association_status' => AssociationStatus::DEFAULT])->save();
+    EinundzwanzigPleb::factory()->active()->create();
+
+    $page->call('confirmSend')
+        ->assertDispatched('toast-show', fn (string $event, array $params): bool => ($params['dataset']['variant'] ?? null) === 'danger'
+            && $params['slots']['text'] === 'Die Zielgruppe hat sich seit dem Probelauf geändert: gleich viele, aber andere Mitglieder. Es wurde nichts gesendet. Starte den Probelauf neu.')
+        ->assertSet('dryRun', null);
+
+    expect(DmRun::query()->count())->toBe(0)->and(DmMessage::query()->count())->toBe(0);
+    Queue::assertNothingPushed();
 });
 
 it('refuses the test to self when the sending was paused after the page checked, and starts nothing', function () {
