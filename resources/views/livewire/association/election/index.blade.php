@@ -524,6 +524,31 @@ new class extends Component
     }
 
     /**
+     * The live meeting as members may see it: the date once the election is
+     * announced, the call link only on the meeting day (Berlin calendar) or
+     * while a round is open.
+     *
+     * @return array{at: CarbonInterface|null, url: string|null}
+     */
+    #[Computed]
+    public function meeting(): array
+    {
+        $election = $this->election;
+
+        if ($election === null) {
+            return ['at' => null, 'url' => null];
+        }
+
+        $at = $election->announced_at !== null ? $election->meeting_at : null;
+        $isMeetingDay = $election->meeting_at !== null
+            && $this->displayTime($election->meeting_at, 'Y-m-d') === $this->displayTime(now(), 'Y-m-d');
+        $roundIsOpen = collect($this->standing)->contains(fn (array $standing): bool => $standing['state'] === ElectionRoundState::Open);
+        $url = filled($election->call_url) && ($isMeetingDay || $roundIsOpen) ? $election->call_url : null;
+
+        return ['at' => $at, 'url' => $url];
+    }
+
+    /**
      * The state the page was rendered from. A change in any of it re-renders.
      */
     protected function currentFingerprint(): string
@@ -533,6 +558,7 @@ new class extends Component
             $this->phase,
             collect($this->standing)->map(fn (array $standing): array => [$standing['state']->value, $standing['onRoll'], $standing['eventId'] !== null])->all(),
             array_keys($this->results),
+            [$this->meeting['at']?->getTimestamp(), $this->meeting['url']],
             $this->allRounds->map(fn (ElectionRound $round): array => [$round->getKey(), $round->candidates->count()])->all(),
         ], JSON_THROW_ON_ERROR));
     }
@@ -741,7 +767,7 @@ new class extends Component
 
     protected function clearCaches(): void
     {
-        unset($this->rounds, $this->allRounds, $this->standing, $this->ballotRounds, $this->results, $this->outcome, $this->ownCandidacies, $this->withdrawableIds, $this->openForCandidacy, $this->primaryAction, $this->phase, $this->election, $this->elections);
+        unset($this->rounds, $this->allRounds, $this->standing, $this->ballotRounds, $this->results, $this->meeting, $this->outcome, $this->ownCandidacies, $this->withdrawableIds, $this->openForCandidacy, $this->primaryAction, $this->phase, $this->election, $this->elections);
     }
 };
 ?>
@@ -1037,14 +1063,30 @@ new class extends Component
                                             @break
 
                                         @case('meeting')
-                                            @php $opensAt = $this->rounds->pluck('opens_at')->filter()->sort()->first(); @endphp
+                                            @php
+                                                $opensAt = $this->rounds->pluck('opens_at')->filter()->sort()->first();
+                                                $meetingAt = $this->meeting['at'] ?? $opensAt;
+                                            @endphp
                                             <p class="mt-1 text-sm text-text-secondary">
-                                                @if ($opensAt)
-                                                    {{ __('Am :date um :time Uhr', ['date' => $this->displayTime($opensAt, 'd.m.Y'), 'time' => $this->displayTime($opensAt, 'H:i')]) }}
+                                                @if ($meetingAt)
+                                                    {{ __('Am :date um :time Uhr', ['date' => $this->displayTime($meetingAt, 'd.m.Y'), 'time' => $this->displayTime($meetingAt, 'H:i')]) }}
                                                 @else
                                                     {{ __('Termin und Link zum Call kommen vom Vorstand') }}
                                                 @endif
                                             </p>
+                                            @if ($this->meeting['url'])
+                                                <p class="mt-3">
+                                                    <a href="{{ $this->meeting['url'] }}" target="_blank" rel="noopener noreferrer" data-test="call-link"
+                                                       class="inline-flex min-h-11 items-center gap-2 rounded-md border border-border-default bg-bg-surface px-4 text-base font-semibold text-text-primary hover:bg-bg-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
+                                                        <flux:icon.video-camera class="size-5 shrink-0" aria-hidden="true" />
+                                                        {{ __('Zum Video-Call') }}
+                                                        <span class="sr-only">{{ __('(öffnet in neuem Tab)') }}</span>
+                                                        <flux:icon.arrow-top-right-on-square class="size-4 shrink-0 text-text-secondary" aria-hidden="true" />
+                                                    </a>
+                                                </p>
+                                            @elseif ($this->meeting['at'])
+                                                <p class="mt-1 text-sm text-text-secondary">{{ __('Den Link zum Call findest du am Sitzungstag hier.') }}</p>
+                                            @endif
                                             @if ($isCurrent && $this->ballotRounds->isEmpty())
                                                 <p class="mt-3 max-w-prose text-base leading-normal text-text-primary">
                                                     {{ __('Der Vorstand öffnet die Wahlgänge nacheinander im Call. Der Stimmzettel erscheint dann hier, ohne dass du die Seite neu lädst.') }}

@@ -412,3 +412,41 @@ it('labels the payment path on the membership page in German', function () {
     expect($template)->toContain("{{ __(':amount Sats bezahlen', ['amount' => \$amountToPay]) }}")
         ->and($template)->not->toMatch('/>\s*Pay \{\{/');
 });
+
+it('shows the meeting date in Europe/Berlin once the election is announced', function () {
+    $election = Election::factory()->create(['name' => 'Vorstandswahl 2027', 'meeting_at' => '2027-03-04 18:00:00', 'announced_at' => null]);
+    namedDraftRound(election: $election);
+    $voter = electionVoter();
+
+    ballotPage($voter)->assertDontSee('Am 04.03.2027 um 19:00 Uhr');
+
+    $election->forceFill(['announced_at' => now()])->save(); // announced_at is not mass assignable
+
+    ballotPage($voter)
+        ->assertSee('Am 04.03.2027 um 19:00 Uhr')
+        ->assertDontSee('Termin und Link zum Call kommen vom Vorstand');
+
+    $election->update(['meeting_at' => null]);
+
+    ballotPage($voter)->assertSee('Termin und Link zum Call kommen vom Vorstand');
+});
+
+it('shows the call link only on the Berlin meeting day or while a round is open', function () {
+    // 23:30 UTC on the 4th is 00:30 on the 5th in Berlin: the meeting day is the 5th.
+    $election = Election::factory()->announced()->create(['name' => 'Vorstandswahl 2027', 'meeting_at' => '2027-03-04 23:30:00', 'call_url' => 'https://meet.example.org/einundzwanzig']);
+    $round = namedDraftRound(election: $election);
+    $voter = electionVoter();
+
+    $this->travelTo('2027-03-04 22:00:00'); // 23:00 on the 4th in Berlin
+    ballotPage($voter)
+        ->assertDontSee('https://meet.example.org/einundzwanzig')
+        ->assertSee('Den Link zum Call findest du am Sitzungstag hier.');
+
+    $this->travelTo('2027-03-04 23:00:00'); // midnight, the 5th in Berlin
+    ballotPage($voter)
+        ->assertSeeHtml('href="https://meet.example.org/einundzwanzig" target="_blank" rel="noopener noreferrer"');
+
+    $this->travelTo('2027-03-02 12:00:00'); // two days early, but the board opened a round
+    app(OpenRound::class)->handle($round);
+    ballotPage($voter)->assertSeeHtml('href="https://meet.example.org/einundzwanzig"');
+});

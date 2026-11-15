@@ -33,7 +33,7 @@
 {{-- The ballot sheet: a light page in the dark portal (decision E13), so the
      act of voting looks like nothing else on the site. The selection lives in
      Alpine only and reaches the server once, as the signed event. --}}
-<div class="mt-3 -ml-14 sm:ml-0"
+<div class="relative mt-3 -ml-14 bg-bg-page sm:ml-0 sm:bg-transparent"
      x-data="electionBallot({ roundId: {{ $round->id }}, pubkey: @js($pubkey), rule: @js($rule->value), max: {{ $max }}, messages: @js($messages) })">
 
     {{-- Step 1: fill in --}}
