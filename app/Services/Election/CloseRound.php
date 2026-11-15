@@ -22,7 +22,7 @@ use Illuminate\Support\Facades\DB;
  */
 class CloseRound
 {
-    public function __construct(protected RoundManifest $manifest) {}
+    public function __construct(protected RoundManifest $manifest, protected ElectionAuditLog $audit) {}
 
     /**
      * @throws ElectionRoundStateException
@@ -57,11 +57,12 @@ class CloseRound
 
             /*
              * In the same transaction as the close: a round is never
-             * sealed without its manifest. The audit-log head stays null
-             * until the audit log of package P2-B2 is merged; it is wired in
-             * here (`ElectionAuditLog::headHash()`).
+             * sealed without its manifest. The manifest names the head of
+             * the election's audit log at this moment, so the chain up to
+             * the seal is part of what its hash covers. The line that
+             * records the seal itself comes after (`ElectionStewardship`).
              */
-            $this->manifest->record($round, auditHeadHash: null);
+            $this->manifest->record($round, auditHeadHash: $this->audit->headHash($round->election));
 
             return $round;
         });

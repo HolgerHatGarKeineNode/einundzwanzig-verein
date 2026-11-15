@@ -32,9 +32,10 @@ class RoundManifest
     /**
      * Build the manifest of a sealed round and store it.
      *
-     * `$auditHeadHash` is the head of the election's audit log at the close.
-     * Null until the audit log of package P2-B2 is merged and wired in here
-     * by `CloseRound`.
+     * `$auditHeadHash` is the head of the election's audit log at the close
+     * (`ElectionAuditLog::headHash()`, `GENESIS` for an election without a
+     * line), passed in by `CloseRound`. Manifests written before it was
+     * wired in carry null.
      *
      * @throws ElectionRoundStateException when the round is not sealed
      */
