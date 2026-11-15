@@ -38,7 +38,7 @@
 
     {{-- Step 1: fill in --}}
     <form x-show="step === 'fill'" x-on:submit.prevent="review()" novalidate>
-        <fieldset x-ref="sheet" tabindex="-1" class="ballot-sheet rounded-md bg-paper text-ink shadow-[0_1px_0_rgb(255_255_255/0.6)_inset] {{ $sheetFocus }}">
+        <fieldset x-ref="sheet" tabindex="-1" class="ballot-sheet min-w-0 rounded-md bg-paper text-ink shadow-[0_1px_0_rgb(255_255_255/0.6)_inset] {{ $sheetFocus }}">
             <legend class="sr-only">{{ __('Stimmzettel: :office', ['office' => $round->title]) }}</legend>
             <div class="border-b-2 border-ink px-4 pb-3 pt-4 sm:px-6">
                 <p class="text-xl font-bold leading-tight">{{ __('Stimmzettel') }}</p>
