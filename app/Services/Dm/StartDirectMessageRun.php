@@ -52,9 +52,11 @@ final class StartDirectMessageRun
      * lock is not free within START_LOCK_WAIT_SECONDS nothing is written.
      *
      * @param  list<int>|null  $confirmedRecipientIds  the members the board confirmed (DirectMessageDryRunResult::$recipientIds);
-     *                                                 when given, the start freezes exactly these or nothing
+     *                                                 when given, the start freezes exactly these, less the
+     *                                                 ones the repeat lock skips now, or nothing
      *
-     * @throws DirectMessageAudienceChanged when the audience resolved now differs from the confirmed one; nothing is written
+     * @throws DirectMessageAudienceChanged when the audience resolved now differs from the confirmed one by more than
+     *                                      the members the repeat lock skips; nothing is written
      * @throws LockTimeoutException when another start holds the lock for longer than START_LOCK_WAIT_SECONDS; nothing is written
      */
     public function handle(DmMessage $message, DmAudience $audience, ?Election $election = null, ?array $confirmedRecipientIds = null): ?DmRun
@@ -148,7 +150,12 @@ final class StartDirectMessageRun
             $current = $recipients->map(fn (EinundzwanzigPleb $recipient): int => (int) $recipient->getKey())->unique()->sort()->values()->all();
             $confirmed = collect($confirmedRecipientIds)->map(fn ($id): int => (int) $id)->unique()->sort()->values()->all();
 
-            if ($current !== $confirmed) {
+            // Members who got this message since the dry run (a second board page confirmed first)
+            // are a skip, not a change of the audience: the rest goes out, nobody gets it twice.
+            $justSent = array_diff($confirmed, $current);
+            $onlyRepeats = array_diff($current, $confirmed) === [] && array_diff($justSent, $skippedIds) === [];
+
+            if ($current !== $confirmed && ! $onlyRepeats) {
                 throw new DirectMessageAudienceChanged(count($confirmed), count($current));
             }
         }
