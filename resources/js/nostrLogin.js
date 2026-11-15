@@ -118,6 +118,16 @@ export default () => ({
         this.nostrLoginOpener = document.activeElement;
         this.nostrLoginInProgress = true;
 
+        // The opener is disabled while the overlay is up, so the focus would
+        // fall to <body>. Move it into the dialog, onto its only control.
+        // $nextTick waits for x-show's transition to make the overlay visible;
+        // focusing before getPublicKey() keeps a vendor dialog that opens
+        // afterwards free to take the focus itself.
+        await this.$nextTick();
+        if (isCurrent() && this.nostrLoginInProgress) {
+            this.$refs.cancelLogin?.focus();
+        }
+
         try {
 
             const challenge = await this.resolveChallenge();
