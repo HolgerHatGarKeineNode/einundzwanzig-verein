@@ -602,6 +602,8 @@ it('repeats an annulled round from the page right after it, and then offers open
     $page->call('startRoundAction', $repeat->id, 'open')->call('confirmRoundAction')->assertHasNoErrors();
 
     expect($repeat->fresh()->opened_at)->not->toBeNull();
+
+    $this->get(route('association.election.admin.protocol', $election))->assertOk()->assertSee('Wahlgang zur Wiederholung angelegt');
 });
 
 it('never calls the evening finished while an annulled round has no repeat', function () {
