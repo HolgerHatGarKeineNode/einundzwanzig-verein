@@ -972,7 +972,8 @@ new class extends Component
             $strike = $next->parent_round_id === null ? "startRoundAction({$next->id}, 'strike')" : null;
 
             return $this->step(
-                __('„:round“ lässt sich nicht öffnen.', ['round' => $next->title]),
+                __('„:round“ lässt sich nicht öffnen.', ['round' => $next->title])
+                    .($awaiting === null ? '' : ' '.__('„:round“ wartet noch auf die Wiederholung.', ['round' => $awaiting->title])),
                 $this->refusalText('open', $refusal),
                 action: $withoutCandidates && $strike !== null ? null : 'candidacies',
                 label: $withoutCandidates && $strike !== null ? __('Wahlgang streichen') : __('Kandidaturen ansehen'),

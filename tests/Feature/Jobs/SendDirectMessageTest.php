@@ -249,6 +249,34 @@ it('fails visibly when the installation has no notification key', function () {
         ->and($delivery->fresh()->wrap)->toBeNull();
 });
 
+/*
+ * Gate A (r1): with the wrap stored by an earlier attempt nothing is signed,
+ * and the key goes missing only when the transport needs it. That is the same
+ * missing key, not a relay outcome. Mutation that must turn this red: finish
+ * the publish-time catch as `Failed`.
+ */
+it('marks a stored wrap whose key goes missing at publish time as no_sender_key', function () {
+    $relay = FakeRelayTransport::bind();
+    [$member] = dmRecipient();
+    $delivery = dmDelivery($member);
+    $relay->thenFail('timeout: no OK within 10 s')->thenThrow(NotificationKeyUnavailable::notConfigured());
+
+    SendDirectMessage::dispatchSync($delivery->id);
+
+    $wrapId = $delivery->fresh()->wrap['id'];
+    // RelayTransport::publish() throws this before dialling when the NIP-42 key is missing.
+    config()->set('services.nostr_notification_key', null);
+
+    expect(fn () => SendDirectMessage::dispatchSync($delivery->id))
+        ->toThrow(NotificationKeyUnavailable::class);
+
+    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::NoSenderKey)
+        ->and($delivery->fresh()->error)->toContain('NOSTR_NOTIFICATION_KEY')
+        ->and($delivery->fresh()->wrap['id'])->toBe($wrapId)
+        ->and(array_column($relay->published(), 'relay'))->toBe(['wss://inbox.example.com/', 'wss://inbox.example.com/'])
+        ->and($delivery->fresh()->status->isClaimable())->toBeTrue();
+});
+
 it('sends nothing to an erased member', function () {
     $relay = FakeRelayTransport::bind();
     [$member] = dmRecipient();

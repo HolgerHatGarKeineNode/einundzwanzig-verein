@@ -169,7 +169,7 @@ class SendDirectMessage implements ShouldQueue
                 $result = $transport->publish($relayUrl, $wrap);
             } catch (NotificationKeyUnavailable $exception) {
                 $this->recordRelay($delivery, $relayUrl, RelayPublishResult::failed($exception->getMessage()));
-                $this->finish($delivery, DmDeliveryStatus::Failed, $exception->getMessage());
+                $this->finish($delivery, DmDeliveryStatus::NoSenderKey, $exception->getMessage());
 
                 throw $exception;
             } catch (Throwable $exception) {

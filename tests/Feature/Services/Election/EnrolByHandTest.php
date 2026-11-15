@@ -161,6 +161,23 @@ it('entitles in its own election only', function () {
     expect(app(ElectoralRoll::class)->reasonFor($other, $cashPayer, now()))->toBeNull();
 });
 
+/*
+ * Gate A (r1): enrolling into one open round writes an audit line with that
+ * round; only `entitle()` writes one without. Mutation that must turn this
+ * red: drop `whereNull('election_round_id')` from the entitlement lookup.
+ */
+it('entitles nobody election-wide by enrolling them by hand into one open round', function () {
+    [$board] = electionBoard(1);
+    $round = openElectionRound();
+    draftElectionRound(election: $round->election);
+    $member = EinundzwanzigPleb::factory()->active()->create();
+
+    app(EnrolByHand::class)->handle($round, $member, $board, 'Bar bezahlt');
+
+    expect(ElectionAuditEntry::query()->where('subject_pleb_id', $member->id)->where('action', ElectionAuditAction::VoterEnrolledByHand)->sole()->election_round_id)->toBe($round->id)
+        ->and(app(ElectoralRoll::class)->reasonFor($round->election, $member, now()))->toBeNull();
+});
+
 it('refuses a manual entitlement for a passive member, for one entitled already, and once every round is opened', function () {
     [$board] = electionBoard(1);
     $election = Election::factory()->create();

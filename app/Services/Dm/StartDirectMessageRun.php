@@ -9,6 +9,8 @@ use App\Models\DmRun;
 use App\Models\DmSchedule;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -24,6 +26,14 @@ use Illuminate\Support\Facades\DB;
  */
 final class StartDirectMessageRun
 {
+    /** The cache lock that serialises the repeat-lock check with the creation of the run. */
+    public const string START_LOCK = 'dm:start-run';
+
+    /** Longer than a start takes; a start whose process died frees the lock after this. */
+    private const int START_LOCK_SECONDS = 60;
+
+    private const int START_LOCK_WAIT_SECONDS = 15;
+
     public function __construct(
         private readonly DirectMessageAudience $audience,
         private readonly DirectMessagePause $pause,
@@ -36,10 +46,16 @@ final class StartDirectMessageRun
      * second click creates no second delivery. Scheduled rows are not locked:
      * a plan may send the same reminder twice on purpose.
      *
+     * The check and the creation of the run hold START_LOCK, so two board
+     * members confirming at once cannot both pass the check before either
+     * run exists: the second one waits, then finds the first run. When the
+     * lock is not free within START_LOCK_WAIT_SECONDS nothing is written.
+     *
      * @param  list<int>|null  $confirmedRecipientIds  the members the board confirmed (DirectMessageDryRunResult::$recipientIds);
      *                                                 when given, the start freezes exactly these or nothing
      *
      * @throws DirectMessageAudienceChanged when the audience resolved now differs from the confirmed one; nothing is written
+     * @throws LockTimeoutException when another start holds the lock for longer than START_LOCK_WAIT_SECONDS; nothing is written
      */
     public function handle(DmMessage $message, DmAudience $audience, ?Election $election = null, ?array $confirmedRecipientIds = null): ?DmRun
     {
@@ -47,7 +63,10 @@ final class StartDirectMessageRun
             return null;
         }
 
-        $run = $this->freeze($message, $audience, $election, $confirmedRecipientIds, lockRepeats: true);
+        $run = Cache::lock(self::START_LOCK, self::START_LOCK_SECONDS)->block(
+            self::START_LOCK_WAIT_SECONDS,
+            fn (): DmRun => $this->freeze($message, $audience, $election, $confirmedRecipientIds, lockRepeats: true),
+        );
 
         DispatchBulkDirectMessages::dispatch($run->id);
 
