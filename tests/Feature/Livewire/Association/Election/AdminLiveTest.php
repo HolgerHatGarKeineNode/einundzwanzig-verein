@@ -560,7 +560,7 @@ it('says in German which earlier result keeps the next round shut', function (st
 })->with([
     'tie without run-off' => ['tie', 'steht in einem früheren Wahlgang im Gleichstand, und dafür ist noch keine Stichwahl ausgezählt'],
     'elected earlier' => ['elected', 'ist in einem früheren Wahlgang schon gewählt'],
-    'earlier not counted' => ['not counted', 'kandidiert auch in einem früheren Wahlgang, der noch nicht ausgezählt ist'],
+    'earlier not counted' => ['not counted', 'kandidiert auch in einem früheren Wahlgang, der noch nicht ausgezählt ist. Zählt ihn zuerst aus'],
 ]);
 
 it('repeats an annulled round from the page right after it, and then offers opening the repeat', function () {
