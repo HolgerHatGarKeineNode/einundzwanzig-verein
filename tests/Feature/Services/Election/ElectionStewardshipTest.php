@@ -250,3 +250,52 @@ it('keeps a candidacy decision and the opening apart from the rows of the ballot
     expect($pending->fresh()->status)->toBe(ElectionCandidateStatus::Withdrawn)
         ->and(electionVoteCount($round))->toBe(0);
 });
+
+/*
+ * Board F1: a round nobody can stand in any more must not hold the election
+ * open for ever. Struck, it is void like an annulled round, never opened and
+ * never awaiting a repeat. Mutations that must turn this red: let `strike()`
+ * accept an opened round; let `awaitsRepeat()` count a struck round.
+ */
+it('strikes a round that was never opened, with the reason in the audit log, and it awaits no repeat', function () {
+    [$board] = electionBoard(1);
+    $election = Election::factory()->announced()->create();
+    $round = draftElectionRound(['title' => 'Beisitz'], election: $election);
+    $stewardship = app(ElectionStewardship::class);
+
+    $struck = $stewardship->strike($round, $board, 'Niemand kann mehr antreten');
+    $line = ElectionAuditEntry::query()->sole();
+
+    expect($struck->stateAt(now()))->toBe(ElectionRoundState::Annulled)
+        ->and($struck->opened_at)->toBeNull()
+        ->and($line->action)->toBe(ElectionAuditAction::RoundAnnulled)
+        ->and([$line->actor_pleb_id, $line->election_round_id])->toBe([$board->id, $round->id])
+        ->and($line->details)->toBe(['reason' => 'Niemand kann mehr antreten'])
+        ->and($stewardship->awaitsRepeat($struck))->toBeFalse()
+        ->and(fn () => $stewardship->repeat($struck, $board))->toThrow(ElectionActionRefusedException::class);
+});
+
+it('refuses to strike an opened round, a struck one and a run-off, and writes nothing', function () {
+    [$board] = electionBoard(1);
+    $stewardship = app(ElectionStewardship::class);
+    $opened = openElectionRound();
+    $runOff = draftElectionRound(['parent_round_id' => $opened->id], election: $opened->election);
+    $struck = $stewardship->strike(draftElectionRound(), $board, 'Niemand mehr da');
+    $lines = ElectionAuditEntry::query()->count();
+
+    foreach ([$opened, $runOff, $struck] as $round) {
+        expect(fn () => $stewardship->strike($round, $board, 'Noch einmal'))->toThrow(ElectionRoundStateException::class);
+    }
+
+    expect($opened->fresh()->annulled_at)->toBeNull()
+        ->and($runOff->fresh()->annulled_at)->toBeNull()
+        ->and(ElectionAuditEntry::query()->count())->toBe($lines);
+});
+
+it('lets only the board strike a round', function () {
+    electionBoard(1);
+    $round = draftElectionRound();
+
+    expect(fn () => app(ElectionStewardship::class)->strike($round, electionVoter(), 'Grund'))->toThrow(AuthorizationException::class)
+        ->and($round->fresh()->annulled_at)->toBeNull();
+});

@@ -3,6 +3,7 @@
 use App\Enums\AssociationStatus;
 use App\Models\DmDelivery;
 use App\Models\EinundzwanzigPleb;
+use App\Models\Election;
 use App\Models\PaymentEvent;
 use App\Support\Board;
 use App\Support\NostrAuth;
@@ -261,12 +262,26 @@ new class extends Component
      *   stale application row must not demote an honorary member back to
      *   passive; a demotion is a deliberate act, not a side effect of
      *   confirming an application.
+     *
+     * Refused while a real election is announced and not finished
+     * (`Election::lockingMemberStatus()`): its roll rests on the categories,
+     * so the Wahlleitung enters a voter there, with a reason in the audit log.
      */
     public function acceptPleb(): void
     {
         $this->ensureAuthorized();
 
         if (! $this->confirmAcceptId) {
+            return;
+        }
+
+        $election = Election::lockingMemberStatus();
+
+        if ($election !== null) {
+            $this->confirmAcceptId = null;
+            Flux::modal('confirm-accept-pleb')->close();
+            Flux::toast(__('Die Wahl „:name“ ist angekündigt und noch nicht abgeschlossen. Bis dahin ändert ihr hier keinen Mitgliedsstatus, denn das Wählerverzeichnis hängt daran. Den Antrag nehmt ihr nach der Wahl an. Hat ein Aktiv- oder Ehrenmitglied bar bezahlt, tragt ihr es auf der Wahlseite unter „Wählerverzeichnis“ mit Grund als wahlberechtigt ein.', ['name' => $election->name]), variant: 'danger');
+
             return;
         }
 

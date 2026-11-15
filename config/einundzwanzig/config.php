@@ -243,4 +243,12 @@ return [
      * APP_URL; with neither set, no DM can be composed or sent.
      */
     'dm_reply_contact' => (string) env('DM_REPLY_CONTACT', ''),
+
+    /*
+     * How long a member who got a message is left out of a second sending of
+     * the same message (same type, text and values) to the same audience,
+     * in hours (design Q23: a repeated send in the lock creates no new
+     * delivery). App\Services\Dm\DirectMessageRepeatLock; 0 switches it off.
+     */
+    'dm_repeat_lock_hours' => (int) env('DM_REPEAT_LOCK_HOURS', 24),
 ];

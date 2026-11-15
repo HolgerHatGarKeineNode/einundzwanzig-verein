@@ -128,4 +128,18 @@
             @endforeach
         </ul>
     @endif
+
+    @if ($this->takesEntitlement($election))
+        <form wire:submit="entitle" class="relative mt-8 max-w-2xl space-y-4 rounded-xl border border-border-default bg-bg-surface p-4 sm:p-6 [&_input]:min-h-11 [&_select]:min-h-11" data-test="entitle-form">
+            <h3 class="text-lg font-semibold text-text-primary">{{ __('Wahlberechtigung von Hand eintragen') }}</h3>
+            <p class="text-base text-text-secondary">{{ __('Für ein Aktiv- oder Ehrenmitglied, dessen Beitrag die Zahlung nicht kennt, etwa bar bezahlt. Danach lässt sich seine Kandidatur freigeben, und jeder Wahlgang, den ihr danach öffnet, nimmt es ins Verzeichnis auf. Der Grund steht im Protokoll der Wahl.') }}</p>
+            <flux:select wire:model="entitleMemberId" :label="__('Mitglied')" :placeholder="__('Mitglied wählen')" data-test="entitle-member">
+                @foreach ($this->entitleCandidates as $candidate)
+                    <flux:select.option value="{{ $candidate['id'] }}">{{ $candidate['name'] }}</flux:select.option>
+                @endforeach
+            </flux:select>
+            <flux:input wire:model="entitleReason" :label="__('Grund')" maxlength="1000" placeholder="{{ __('z. B. Beitrag bar bezahlt am 3. März') }}" data-test="entitle-reason" />
+            <flux:button type="submit" class="min-h-11 w-full sm:w-auto" data-test="entitle-submit">{{ __('Als wahlberechtigt eintragen') }}</flux:button>
+        </form>
+    @endif
 </div>

@@ -19,6 +19,7 @@ final class DirectMessageDryRun
     public function __construct(
         private readonly DirectMessageAudience $audience,
         private readonly DirectMessageText $text,
+        private readonly DirectMessageRepeatLock $repeatLock,
     ) {}
 
     /**
@@ -36,6 +37,18 @@ final class DirectMessageDryRun
     ): DirectMessageDryRunResult {
         $plaintext ??= $type->defaultText();
         $recipients = $this->audience->query($audience, $election)->with(['profile', 'dmRelays'])->get();
+        $skippedIds = $this->repeatLock->skippedIds(
+            $type,
+            $plaintext,
+            $variables,
+            $audience,
+            $election,
+            $recipients->map(fn (EinundzwanzigPleb $recipient): int => (int) $recipient->getKey())->all(),
+            now(),
+        );
+        // Who got this very message within the lock is not a recipient: the
+        // number shown is the number of deliveries a start creates.
+        $recipients = $recipients->reject(fn (EinundzwanzigPleb $recipient): bool => in_array((int) $recipient->getKey(), $skippedIds, true))->values();
         $problems = $this->text->problems($type, $plaintext, $variables);
         $message = new DmMessage(['type' => $type, 'plaintext' => $plaintext, 'variables' => $variables]);
 
@@ -63,6 +76,7 @@ final class DirectMessageDryRun
                 ->sort()
                 ->values()
                 ->all(),
+            skippedIds: $skippedIds,
         );
     }
 

@@ -5,6 +5,7 @@ namespace App\Services\Election;
 use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionRoundMode;
 use App\Enums\ElectionRoundState;
+use App\Exceptions\ElectionCandidateBlockedException;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
@@ -68,6 +69,26 @@ class OpenRound
 
             return $round;
         });
+    }
+
+    /**
+     * Why `$round` cannot be opened right now, or null if it can — the same
+     * checks `handle()` makes, asked without opening anything, so a screen
+     * never offers a step this class would refuse.
+     */
+    public function refusal(ElectionRound $round): ?ElectionRoundStateException
+    {
+        if ($round->stateAt(now()) !== ElectionRoundState::Draft) {
+            return new ElectionRoundStateException('Only a draft round can be opened.');
+        }
+
+        try {
+            $this->assertOpenable($round);
+        } catch (ElectionRoundStateException $refusal) {
+            return $refusal;
+        }
+
+        return null;
     }
 
     /**
@@ -154,8 +175,8 @@ class OpenRound
         $root = $chain[0];
 
         foreach (array_slice($chain, 0, -1) as $ancestor) {
-            if ($ancestor->isSealed() && array_intersect($this->sharedCandidates($ancestor, $standing), $this->tally->handle($ancestor)->elected) !== []) {
-                throw new ElectionRoundStateException('A candidate of this round has been elected in an earlier round of the election.');
+            if ($ancestor->isSealed() && ($elected = array_intersect($this->sharedCandidates($ancestor, $standing), $this->tally->handle($ancestor)->elected)) !== []) {
+                throw $this->blocked('A candidate of this round has been elected in an earlier round of the election.', $ancestor, $elected);
             }
         }
 
@@ -169,8 +190,8 @@ class OpenRound
 
         // Nobody is elected twice, whatever the order of the contests.
         foreach ($otherContests->flatten(1)->filter(fn (ElectionRound $other): bool => $other->isSealed()) as $other) {
-            if (array_intersect($this->sharedCandidates($other, $standing), $this->tally->handle($other)->elected) !== []) {
-                throw new ElectionRoundStateException('A candidate of this round has been elected in an earlier round of the election.');
+            if (($elected = array_intersect($this->sharedCandidates($other, $standing), $this->tally->handle($other)->elected)) !== []) {
+                throw $this->blocked('A candidate of this round has been elected in an earlier round of the election.', $other, $elected);
             }
         }
 
@@ -199,8 +220,8 @@ class OpenRound
         }
 
         foreach ($sharing->filter(fn (ElectionRound $other): bool => $other->isSealed()) as $other) {
-            if (array_intersect($this->sharedCandidates($other, $standing), $this->tally->handle($other)->elected) !== []) {
-                throw new ElectionRoundStateException('A candidate of this round has been elected in an earlier round of the election.');
+            if (($elected = array_intersect($this->sharedCandidates($other, $standing), $this->tally->handle($other)->elected)) !== []) {
+                throw $this->blocked('A candidate of this round has been elected in an earlier round of the election.', $other, $elected);
             }
         }
 
@@ -209,14 +230,31 @@ class OpenRound
             ->sortByDesc(fn (ElectionRound $other): int => count($this->chainOf($other, $rounds)))
             ->first();
 
-        if ($decisive !== null && array_intersect($this->sharedCandidates($decisive, $standing), $this->tally->handle($decisive)->tied) !== []) {
-            throw new ElectionRoundStateException('A candidate of this round is level in an undecided tie of an earlier round of the election.');
+        if ($decisive !== null && ($tied = array_intersect($this->sharedCandidates($decisive, $standing), $this->tally->handle($decisive)->tied)) !== []) {
+            throw $this->blocked('A candidate of this round is level in an undecided tie of an earlier round of the election.', $decisive, $tied);
         }
 
         // An unsealed round only counts the candidacies still standing there.
-        if ($sharing->contains(fn (ElectionRound $other): bool => ! $other->isSealed() && $this->sharedCandidates($other, $standing, standingOnly: true) !== [])) {
-            throw new ElectionRoundStateException('A candidate of this round also stands in an earlier round of the election that is not sealed yet.');
+        $unsealed = $sharing->first(fn (ElectionRound $other): bool => ! $other->isSealed() && $this->sharedCandidates($other, $standing, standingOnly: true) !== []);
+
+        if ($unsealed !== null) {
+            throw $this->blocked('A candidate of this round also stands in an earlier round of the election that is not sealed yet.', $unsealed, $this->sharedCandidates($unsealed, $standing, standingOnly: true));
         }
+    }
+
+    /**
+     * The refusal for the first member behind `$candidateIds`, candidacies of `$other`.
+     *
+     * @param  array<int, int>  $candidateIds
+     */
+    protected function blocked(string $message, ElectionRound $other, array $candidateIds): ElectionCandidateBlockedException
+    {
+        $candidate = $other->candidates
+            ->filter(fn (ElectionCandidate $candidate): bool => in_array((int) $candidate->getKey(), $candidateIds, true))
+            ->sortBy('id')
+            ->first();
+
+        return new ElectionCandidateBlockedException($message, (int) $candidate?->einundzwanzig_pleb_id);
     }
 
     /**
