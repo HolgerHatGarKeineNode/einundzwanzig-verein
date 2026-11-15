@@ -4,7 +4,6 @@ use App\Enums\ElectionCountingRule;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\ElectionManifest;
-use App\Models\ElectionReceipt;
 use App\Models\ElectionRound;
 use App\Services\Election\CloseRound;
 use App\Services\Election\OpenRound;
@@ -19,18 +18,17 @@ require_once __DIR__.'/helpers.php';
  * The manifest written at the close, and `election:verify`.
  *
  * Mutations that must turn this file red (patches in the plan folder):
- *  - M6a   `ballots_cast` counted from the marks instead of the receipts
  *  - B1-M1 `CloseRound` seals without writing a manifest
- *  - (B1-M2, unsorted receipt hashes, stays green on SQLite, which reads them
- *    through the unique index; tests/Engine/BallotTraceTest.php catches it)
  *  - B1-M3 `election:verify` compares the stored text with itself only
  *  - B1-M4 `election:verify` does not check the stored text against its hash
+ *  - P2C-verify-signature  `election:verify` skips the signature re-check
  */
 
 /**
- * A sealed most-votes round with three candidates and four ballots.
+ * A sealed most-votes round with three candidates and four votes. Returns
+ * the round, the signed events and the candidate ids.
  *
- * @return array{0: ElectionRound, 1: list<string>, 2: list<int>}
+ * @return array{0: ElectionRound, 1: list<array<string, mixed>>, 2: list<int>}
  */
 function manifestRound(): array
 {
@@ -38,14 +36,14 @@ function manifestRound(): array
     $round = openElectionRound(['counting_rule' => ElectionCountingRule::MostVotes, 'seats' => 2], candidates: 3);
     $ids = $round->candidates()->orderBy('id')->pluck('id')->all();
 
-    $codes = [
+    $events = [
         castElectionBallot($round, $voters[0], [$ids[0] => 'for', $ids[1] => 'for']),
         castElectionBallot($round, $voters[1], [$ids[0] => 'for']),
         castElectionBallot($round, $voters[2], [$ids[1] => 'for', $ids[2] => 'for']),
         castElectionBallot($round, $voters[3]),
     ];
 
-    return [app(CloseRound::class)->handle($round), $codes, $ids];
+    return [app(CloseRound::class)->handle($round), $events, $ids];
 }
 
 /**
@@ -61,14 +59,14 @@ function verifyRound(ElectionRound|int $round): array
 it('writes the manifest of a round when it is sealed, with every field written out', function () {
     $this->travelTo(Carbon::parse('2027-03-20 15:30:00'));
 
-    [$round, $codes, [$a, $b, $c]] = manifestRound();
+    [$round, $events, [$a, $b, $c]] = manifestRound();
 
     $manifest = ElectionManifest::query()->where('election_round_id', $round->id)->sole();
-    $receipts = collect($codes)->map(fn (string $code): string => ElectionReceipt::hashFor($round->id, $code))->sort()->values()->all();
+    $eventIds = collect($events)->pluck('id')->sort(SORT_STRING)->values()->all();
 
     expect($manifest->hash)->toBe(hash('sha256', $manifest->body))
         ->and(json_decode($manifest->body, true))->toBe([
-            'version' => 1,
+            'version' => 2,
             'election' => $round->election_event_id,
             'round' => $round->id,
             'counting_rule' => 'most_votes',
@@ -85,22 +83,20 @@ it('writes the manifest of a round when it is sealed, with every field written o
             'tied' => [],
             'tied_seats' => 0,
             'roll_size' => 5,
-            'marks' => 4,
-            'ballots_cast' => 4,
-            'receipt_list_hash' => hash('sha256', implode("\n", $receipts)),
-            'receipt_hashes' => $receipts,
+            'votes_cast' => 4,
+            'vote_event_ids_hash' => hash('sha256', implode("\n", $eventIds)),
             'closed_at' => '2027-03-20T15:30:00Z',
             'audit_head_hash' => null,
         ]);
 });
 
-it('carries no member and no ballot id in the manifest', function () {
+it('carries no member and no single vote in the manifest', function () {
     [$round] = manifestRound();
     $body = ElectionManifest::query()->where('election_round_id', $round->id)->value('body');
 
     $identifiers = EinundzwanzigPleb::query()->get()
         ->flatMap(fn (EinundzwanzigPleb $pleb): array => [$pleb->pubkey, $pleb->npub])
-        ->merge(DB::table('election_ballot_choices')->pluck('id'))
+        ->merge(DB::table('election_votes')->pluck('event_id'))
         ->filter(fn (?string $identifier): bool => strlen((string) $identifier) >= 16);
 
     expect($identifiers)->not->toBeEmpty();
@@ -108,19 +104,6 @@ it('carries no member and no ballot id in the manifest', function () {
     foreach ($identifiers as $identifier) {
         expect($body)->not->toContain($identifier);
     }
-});
-
-it('counts the ballots cast from the receipts and the marks on their own', function () {
-    [$round] = manifestRound();
-    $paperVoter = electionVoter();
-
-    // A mark without a ballot — what a vote on paper will leave behind.
-    DB::table('election_marks')->insert(['election_round_id' => $round->id, 'einundzwanzig_pleb_id' => $paperVoter->id]);
-
-    $body = json_decode(app(RoundManifest::class)->body($round), true);
-
-    expect($body['marks'])->toBe(5)
-        ->and($body['ballots_cast'])->toBe(4);
 });
 
 it('writes one manifest however often a round is sealed', function () {
@@ -132,17 +115,17 @@ it('writes one manifest however often a round is sealed', function () {
     expect(ElectionManifest::query()->where('election_round_id', $round->id)->pluck('hash')->all())->toBe([$hash]);
 });
 
-it('leaves a round unsealed and its ballots untouched when the manifest cannot be written', function () {
+it('leaves a round unsealed and its votes untouched when the manifest cannot be written', function () {
     $voter = electionVoter();
     $round = openElectionRound();
     castElectionBallot($round, $voter);
-    $idBefore = DB::table('election_ballot_choices')->where('election_round_id', $round->id)->value('id');
+    $votesBefore = DB::table('election_votes')->where('election_round_id', $round->id)->get()->all();
 
     DB::statement("CREATE TRIGGER refuse_manifests BEFORE INSERT ON election_manifests BEGIN SELECT RAISE(ABORT, 'manifest refused'); END");
 
     expect(fn () => app(CloseRound::class)->handle($round))->toThrow(Exception::class, 'manifest refused')
         ->and($round->fresh()->closed_at)->toBeNull()
-        ->and(DB::table('election_ballot_choices')->where('election_round_id', $round->id)->value('id'))->toBe($idBefore);
+        ->and(DB::table('election_votes')->where('election_round_id', $round->id)->get()->all())->toEqual($votesBefore);
 });
 
 it('refuses to change or delete a manifest', function () {
@@ -164,7 +147,7 @@ it('verifies an untouched round with exit 0', function () {
         ->and($output)->toContain('OK round '.$round->id.' manifest '.$hash);
 });
 
-it('fails verification once a ballot row is altered after the close', function (Closure $tamper, string $field) {
+it('fails verification once a vote is altered after the close', function (Closure $tamper, string $field) {
     [$round, , $ids] = manifestRound();
 
     $tamper($round, $ids);
@@ -172,28 +155,24 @@ it('fails verification once a ballot row is altered after the close', function (
     [$status, $output] = verifyRound($round);
 
     expect($status)->toBe(1)
-        ->and($output)->toContain('MISMATCH: the ballot tables no longer give the manifest written at the close.')
+        ->and($output)->toContain('MISMATCH: the vote table no longer gives the manifest written at the close.')
         ->and($output)->toContain('Differing fields: ')
         ->and($output)->toContain($field);
 })->with([
     'a vote moved to another candidate' => [function (ElectionRound $round, array $ids): void {
-        $id = DB::table('election_ballot_choices')->where('election_round_id', $round->id)->where('election_candidate_id', $ids[2])->value('id');
-        DB::table('election_ballot_choices')->where('id', $id)->update(['election_candidate_id' => $ids[0]]);
+        DB::table('election_votes')->where('election_round_id', $round->id)->where('choices', json_encode([(string) $ids[1] => 'for', (string) $ids[2] => 'for']))
+            ->update(['choices' => json_encode([(string) $ids[0] => 'for', (string) $ids[1] => 'for'])]);
     }, 'counts'],
-    'a blank ballot turned into a vote' => [function (ElectionRound $round, array $ids): void {
-        DB::table('election_ballot_choices')->where('election_round_id', $round->id)->where('choice', 'blank')
-            ->update(['choice' => 'for', 'election_candidate_id' => $ids[2]]);
+    'a blank vote turned into a vote' => [function (ElectionRound $round, array $ids): void {
+        DB::table('election_votes')->where('election_round_id', $round->id)->where('choices', '{}')
+            ->update(['choices' => json_encode([(string) $ids[2] => 'for'])]);
     }, 'blank'],
-    'a ballot row deleted' => [function (ElectionRound $round, array $ids): void {
-        $id = DB::table('election_ballot_choices')->where('election_round_id', $round->id)->where('election_candidate_id', $ids[2])->value('id');
-        DB::table('election_ballot_choices')->where('id', $id)->delete();
-    }, 'counts'],
-    'a ballot row added' => [function (ElectionRound $round, array $ids): void {
-        DB::table('election_ballot_choices')->insert(['id' => bin2hex(random_bytes(16)), 'election_round_id' => $round->id, 'election_candidate_id' => $ids[2], 'choice' => 'for']);
-    }, 'counts'],
-    'a receipt swapped' => [function (ElectionRound $round): void {
-        DB::table('election_receipts')->where('election_round_id', $round->id)->limit(1)->update(['hash' => str_repeat('0', 64)]);
-    }, 'receipt_hashes'],
+    'a vote deleted' => [function (ElectionRound $round, array $ids): void {
+        DB::table('election_votes')->where('election_round_id', $round->id)->where('choices', json_encode([(string) $ids[0] => 'for']))->delete();
+    }, 'votes_cast'],
+    'a vote event id swapped' => [function (ElectionRound $round): void {
+        DB::table('election_votes')->where('election_round_id', $round->id)->limit(1)->update(['event_id' => str_repeat('0', 64)]);
+    }, 'vote_event_ids_hash'],
     'a roll entry added' => [function (ElectionRound $round): void {
         DB::table('election_roll_entries')->insert([
             'election_round_id' => $round->id,
@@ -208,7 +187,8 @@ it('fails verification once a ballot row is altered after the close', function (
 
 it('names the differing fields and none of their values', function () {
     [$round, , $ids] = manifestRound();
-    DB::table('election_ballot_choices')->where('election_round_id', $round->id)->where('election_candidate_id', $ids[2])->update(['election_candidate_id' => $ids[0]]);
+    DB::table('election_votes')->where('election_round_id', $round->id)->where('choices', json_encode([(string) $ids[0] => 'for']))
+        ->update(['choices' => json_encode([(string) $ids[2] => 'for'])]);
 
     [, $output] = verifyRound($round);
 
@@ -254,4 +234,85 @@ it('builds the same text from the same tables', function () {
         ->toBe(ElectionManifest::query()->where('election_round_id', $round->id)->value('body'))
         ->and(fn () => app(RoundManifest::class)->body(app(OpenRound::class)->handle(draftElectionRound())))
         ->toThrow(ElectionRoundStateException::class);
+});
+
+/**
+ * The stored vote of `$event`, updated past the application with `$change`
+ * applied to its decoded event.
+ */
+function tamperStoredVoteEvent(array $event, Closure $change): int
+{
+    $vote = DB::table('election_votes')->where('event_id', $event['id'])->sole();
+    DB::table('election_votes')->where('id', $vote->id)->update(['event' => json_encode($change(json_decode($vote->event, true)))]);
+
+    return $vote->id;
+}
+
+it('re-verifies every signed vote, recounts and finds nothing in an untouched round', function () {
+    [$round, $events] = manifestRound();
+
+    [$status, $output] = verifyRound($round);
+
+    expect($status)->toBe(0)
+        ->and($output)->not->toContain('FAIL')
+        ->and($output)->not->toContain('MISMATCH')
+        ->and(DB::table('election_votes')->where('election_round_id', $round->id)->count())->toBe(count($events));
+});
+
+it('names the vote whose stored choices no longer match its signed event, and no choice', function () {
+    [$round, $events, $ids] = manifestRound();
+    $vote = DB::table('election_votes')->where('event_id', $events[1]['id'])->sole();
+    DB::table('election_votes')->where('id', $vote->id)->update(['choices' => json_encode([(string) $ids[2] => 'for'])]);
+
+    [$status, $output] = verifyRound($round);
+
+    expect($status)->toBe(1)
+        ->and($output)->toContain('FAIL vote '.$vote->id.' event '.$events[1]['id'].': choices_differ')
+        ->and($output)->not->toContain('"for"')
+        ->and($output)->not->toMatch('/\bfor\b/');
+});
+
+it('names the vote whose signed event was altered after the close', function () {
+    [$round, $events] = manifestRound();
+    $voteId = tamperStoredVoteEvent($events[1], fn (array $event): array => [...$event, 'created_at' => $event['created_at'] + 1]);
+
+    [$status, $output] = verifyRound($round);
+
+    expect($status)->toBe(1)
+        ->and($output)->toContain('FAIL vote '.$voteId.' event '.$events[1]['id'].": invalid_signature\n")
+        ->and($output)->toContain('MISMATCH: the recount from the signed events differs from the manifest in: counts')
+        ->and($output)->toContain('votes_cast');
+});
+
+it('names every check a forged vote fails', function () {
+    [$round, $events, $ids] = manifestRound();
+    $voteId = tamperStoredVoteEvent($events[1], function (array $event) use ($ids): array {
+        $event['tags'][2][1] = (string) $ids[2];
+
+        return $event;
+    });
+
+    expect(verifyRound($round)[1])->toContain('FAIL vote '.$voteId.' event '.$events[1]['id'].': invalid_signature, choices_differ');
+});
+
+it('names a vote replayed from another round', function () {
+    [$round, $events] = manifestRound();
+    $voteId = tamperStoredVoteEvent($events[3], function (array $event): array {
+        $event['tags'][1][1] = (string) ($event['tags'][1][1] + 1);
+
+        return $event;
+    });
+
+    expect(verifyRound($round)[1])->toContain('FAIL vote '.$voteId.' event '.$events[3]['id'].': invalid_signature, wrong_round');
+});
+
+it('names a vote whose member no longer has the signing key', function () {
+    [$round, $events] = manifestRound();
+    $vote = DB::table('election_votes')->where('event_id', $events[0]['id'])->sole();
+    DB::table('einundzwanzig_plebs')->where('id', $vote->einundzwanzig_pleb_id)->update(['pubkey' => str_repeat('c', 64)]);
+
+    [$status, $output] = verifyRound($round);
+
+    expect($status)->toBe(1)
+        ->and($output)->toContain('FAIL vote '.$vote->id.' event '.$events[0]['id'].': foreign_signer');
 });

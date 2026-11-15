@@ -8,11 +8,11 @@ return new class extends Migration
 {
     /**
      * What a round looked like the moment it was sealed: the counting rule, the
-     * numbers per option, the size of the roll, the ballots cast and the sorted
-     * list of receipt hashes — as one canonical JSON text, and its SHA-256.
+     * numbers per option, the size of the roll, the votes cast and a hash over
+     * their sorted event ids — as one canonical JSON text, and its SHA-256.
      *
      * Written once by `CloseRound`, never changed. `php artisan election:verify`
-     * recomputes the text from the ballot tables and compares the hashes.
+     * recomputes the text from the vote table and compares the hashes.
      */
     public function up(): void
     {

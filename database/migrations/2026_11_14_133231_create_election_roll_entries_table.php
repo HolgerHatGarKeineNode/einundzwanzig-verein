@@ -14,8 +14,7 @@ return new class extends Migration
      * says why the member is entitled, `source` how the row got here (opening,
      * late payment, inherited by a run-off). Rows are only ever added.
      *
-     * Timestamps are fine on this table: who MAY vote is not secret. Who DID
-     * vote is, and that lives in `election_marks`.
+     * Who DID vote lives in `election_votes`.
      */
     public function up(): void
     {

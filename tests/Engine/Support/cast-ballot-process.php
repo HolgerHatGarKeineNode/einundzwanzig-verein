@@ -3,7 +3,7 @@
 /*
  * One cast in a process of its own, for tests/Engine/ConcurrentCastTest.php.
  *
- *   php cast-ballot-process.php <round id> <member id> <candidate id> <barrier key>
+ *   php cast-ballot-process.php <round id> <member id> <signed event json> <barrier key>
  *
  * Boots the application against the database of the engine suite, waits at
  * a PostgreSQL advisory lock the test holds, and casts as soon as the test
@@ -40,7 +40,7 @@ if (
     exit(2);
 }
 
-[, $roundId, $memberId, $candidateId, $barrier] = $argv;
+[, $roundId, $memberId, $eventJson, $barrier] = $argv;
 
 $round = ElectionRound::query()->findOrFail((int) $roundId);
 $member = EinundzwanzigPleb::query()->findOrFail((int) $memberId);
@@ -48,7 +48,7 @@ $member = EinundzwanzigPleb::query()->findOrFail((int) $memberId);
 DB::select('select pg_advisory_lock_shared(?)', [(int) $barrier]);
 
 try {
-    app(CastBallot::class)->handle($round, $member, [(int) $candidateId => 'for'], bin2hex(random_bytes(16)));
+    app(CastBallot::class)->handle($round, $member, json_decode($eventJson, true, flags: JSON_THROW_ON_ERROR));
     echo 'cast';
 } catch (ElectionBallotRefusedException $refusal) {
     echo $refusal->reason->name;

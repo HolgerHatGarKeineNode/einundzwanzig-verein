@@ -7,6 +7,8 @@ use App\Models\Election;
 use App\Models\ElectionRound;
 use App\Services\Election\CastBallot;
 use App\Services\Election\OpenRound;
+use App\Services\Election\VoteEvent;
+use App\Services\Nostr\EventSigning;
 use App\Support\Board;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
@@ -62,23 +64,53 @@ function openElectionRound(array $attributes = [], int $candidates = 2, ?Electio
     return app(OpenRound::class)->handle(draftElectionRound($attributes, $candidates, $election));
 }
 
-function electionReceiptCode(): string
+/**
+ * The throwaway secret key of `$member`, made up on first use: the member's
+ * pubkey is replaced by the matching one. Keyed by pubkey, so a database
+ * refreshed between tests cannot hand an old key to a new member.
+ */
+function electionSecretFor(EinundzwanzigPleb $member): string
 {
-    return bin2hex(random_bytes(16));
+    static $secrets = [];
+
+    if (! isset($secrets[$member->pubkey])) {
+        $secret = EventSigning::freshSecret();
+        $member->pubkey = (new Key)->getPublicKey($secret);
+        $member->save();
+        $secrets[$member->pubkey] = $secret;
+    }
+
+    return $secrets[$member->pubkey];
 }
 
 /**
- * Cast a ballot and return the receipt code used. A blank ballot by default.
+ * A vote event for `$selection`, signed by `$voter` now. `$overrides`
+ * replaces fields of the unsigned template before signing.
  *
  * @param  array<array-key, mixed>  $selection
+ * @param  array<string, mixed>  $overrides
+ * @return array{id: string, pubkey: string, created_at: int, kind: int, tags: array<int, array<int, string>>, content: string, sig: string}
  */
-function castElectionBallot(ElectionRound $round, EinundzwanzigPleb $voter, array $selection = []): string
+function signedElectionVote(ElectionRound $round, EinundzwanzigPleb $voter, array $selection = [], array $overrides = []): array
 {
-    $code = electionReceiptCode();
+    $template = [...VoteEvent::template($round, $selection, now()->getTimestamp()), ...$overrides];
 
-    app(CastBallot::class)->handle($round, $voter, $selection, $code);
+    return EventSigning::sign(electionSecretFor($voter), $template['kind'], $template['tags'], $template['content'], $template['created_at']);
+}
 
-    return $code;
+/**
+ * Sign and cast a vote and return the signed event. A blank vote by default.
+ *
+ * @param  array<array-key, mixed>  $selection
+ * @return array<string, mixed>
+ */
+function castElectionBallot(ElectionRound $round, EinundzwanzigPleb $voter, array $selection = []): array
+{
+    $event = signedElectionVote($round, $voter, $selection);
+
+    app(CastBallot::class)->handle($round, $voter, $event);
+
+    return $event;
 }
 
 /**
@@ -96,19 +128,11 @@ function electionRefusal(Closure $cast): ?ElectionBallotRefusal
 }
 
 /**
- * How many marks, ballot rows and receipts a round holds.
- *
- * @return array{marks: int, choices: int, receipts: int}
+ * How many votes a round holds.
  */
-function electionRowCounts(ElectionRound $round): array
+function electionVoteCount(ElectionRound $round): int
 {
-    $count = fn (string $table): int => DB::table($table)->where('election_round_id', $round->getKey())->count();
-
-    return [
-        'marks' => $count('election_marks'),
-        'choices' => $count('election_ballot_choices'),
-        'receipts' => $count('election_receipts'),
-    ];
+    return DB::table('election_votes')->where('election_round_id', $round->getKey())->count();
 }
 
 /**
