@@ -984,7 +984,8 @@ new class extends Component
 
         if ($next !== null) {
             $last = $all->filter(fn (ElectionRound $round): bool => $round->opened_at !== null && ($round->closed_at !== null || $round->annulled_at !== null))
-                ->sortByDesc(fn (ElectionRound $round): int => ($round->annulled_at ?? $round->closed_at)->getTimestamp())
+                // Latest finished first; within one second the round itself before a run-off annulled along with it, then the later created.
+                ->sort(fn (ElectionRound $a, ElectionRound $b): int => [($b->annulled_at ?? $b->closed_at)->getTimestamp(), $b->parent_round_id === null ? 1 : 0, $b->id] <=> [($a->annulled_at ?? $a->closed_at)->getTimestamp(), $a->parent_round_id === null ? 1 : 0, $a->id])
                 ->first();
 
             return $this->step(

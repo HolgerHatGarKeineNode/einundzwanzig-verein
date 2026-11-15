@@ -96,7 +96,7 @@
     </table>
 
     <p class="mt-3 text-sm leading-normal text-text-secondary">
-        {{ __(':count Stimmzettel abgegeben, davon :blank leer.', ['count' => $ballots, 'blank' => $result->blank]) }}
+        {{ trans_choice(':count Stimmzettel abgegeben, davon :blank Enthaltung (leer).|:count Stimmzettel abgegeben, davon :blank Enthaltungen (leer).', $result->blank, ['count' => $ballots, 'blank' => $result->blank]) }}
         @if ($voted)
             {{ __('Deine Stimme ist dabei.') }}
         @endif

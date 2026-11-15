@@ -368,7 +368,7 @@ it('shows the result only after the round is sealed, as counts without voters', 
 
     $page = ballotPage($voters[0])
         ->assertSee('Gewählt ist Alice Ambrosius.')
-        ->assertSee('3 Stimmzettel abgegeben, davon 1 leer.')
+        ->assertSee('3 Stimmzettel abgegeben, davon 1 Enthaltung (leer).')
         ->assertSee('Deine Stimme ist dabei.')
         ->assertSee('Zustand nach der Wahl')
         ->assertDontSee('Wählerin Xenia')

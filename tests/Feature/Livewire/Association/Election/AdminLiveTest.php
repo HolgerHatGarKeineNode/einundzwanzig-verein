@@ -764,7 +764,7 @@ it('says one vote, one voter and one blank ballot in the singular on the live li
     $annulled = openElectionRound(['title' => 'Vorsitz', 'position' => 1], election: $election);
     castElectionBallot($annulled, $first, [$annulled->candidates()->value('id') => 'for']);
     app(ElectionStewardship::class)->annul($annulled, $board, 'Falsche Liste');
-    $this->travel(1)->minutes(); // the share view shows the latest finished round; a shared second would tie
+    // No clock step: an annulment and a close in the same second must still name the later round.
 
     $sealed = openElectionRound(['title' => 'Kasse', 'position' => 2], election: $election);
     castElectionBallot($sealed, $second);

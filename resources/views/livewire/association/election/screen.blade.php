@@ -5,6 +5,7 @@ use App\Enums\ElectionOutcome;
 use App\Enums\ElectionRoundState;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
+use App\Models\ElectionRound;
 use App\Services\Election\RoundReport;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
@@ -53,6 +54,16 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
     }
 
     /**
+     * Sort key of a finished round: the moment it ended, then first-level rounds before run-offs, then creation order.
+     *
+     * @return array{0: int, 1: int, 2: int}
+     */
+    private function finishedOrder(ElectionRound $round): array
+    {
+        return [($round->annulled_at ?? $round->closed_at)->getTimestamp(), $round->parent_round_id === null ? 1 : 0, (int) $round->id];
+    }
+
+    /**
      * The round to show: the open one; else one whose time ran out; else the
      * one finished last; else the first that has not been opened yet.
      *
@@ -77,7 +88,8 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
             ?? $reports->first(fn (array $report): bool => $report['over_by_clock'])
             ?? $reports
                 ->filter(fn (array $report): bool => $report['round']->opened_at !== null && ($report['round']->closed_at !== null || $report['round']->annulled_at !== null))
-                ->sortByDesc(fn (array $report): int => ($report['round']->annulled_at ?? $report['round']->closed_at)->getTimestamp())
+                // Latest finished first; within one second the round itself before a run-off annulled along with it, then the later created.
+                ->sort(fn (array $a, array $b): int => $this->finishedOrder($b['round']) <=> $this->finishedOrder($a['round']))
                 ->first()
             ?? $reports->first(fn (array $report): bool => $report['state'] === ElectionRoundState::Draft);
 
