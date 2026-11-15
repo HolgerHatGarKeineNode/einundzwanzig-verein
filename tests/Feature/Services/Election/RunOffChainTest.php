@@ -308,7 +308,7 @@ it('opens a run-off at the end after an unrelated later round was sealed, and a 
     expect(app(OpenRound::class)->handle($secondRunOff)->opened_at)->not->toBeNull();
 });
 
-it('does not let a run-off of a later round block an earlier round', function () {
+it('does not let a run-off of a later round block an earlier round, but never elects its winner twice', function () {
     $election = Election::factory()->create();
     [$boardMember] = electionBoard(1);
     $voters = [electionVoter(), electionVoter()];
@@ -323,9 +323,12 @@ it('does not let a run-off of a later round block an earlier round', function ()
     $runOff = runOffChainVoteAndSeal(app(CreateRunOff::class)->handle($late, $boardMember), $voters, [$a, $a]);
     expect($runOff->position)->toBe(6);
 
-    runOffChainStand($early, $a);
-
+    runOffChainStand($early, $b);
     expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($early->fresh())))->toBe('opens');
+
+    $earlyTwo = draftElectionRound(['position' => 2, 'title' => 'Noch früher'], candidates: 1, election: $election);
+    runOffChainStand($earlyTwo, $a);
+    expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($earlyTwo->fresh())))->toBe('elected');
 });
 
 it('opens a run-off at the end before an intervening draft in which a tied candidate stands', function () {
@@ -346,4 +349,87 @@ it('opens a run-off at the end before an intervening draft in which a tied candi
     // The treasurer comes after the chair, so it waits for the run-off — not the other way round.
     expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('tie')
         ->and(runOffChainOutcome(fn () => app(OpenRound::class)->handle($runOff->fresh())))->toBe('opens');
+});
+
+/*
+ * A round under an annulled round has no result. Mutation that must turn
+ * this red: count every non-annulled round, whatever is annulled above it.
+ */
+it('lets the repeat of a chair open that was annulled while its run-off was still a draft', function () {
+    $election = Election::factory()->create();
+    [$boardMember] = electionBoard(1);
+    $voters = [electionVoter(), electionVoter()];
+
+    $chair = draftElectionRound(['position' => 1, 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 2, election: $election);
+    $treasurer = draftElectionRound(['position' => 2], candidates: 1, election: $election);
+    [$a, $b] = runOffChainMembers($chair);
+    runOffChainStand($treasurer, $a);
+
+    $chair = runOffChainVoteAndSeal($chair, $voters, [$a, $b]);
+    app(CreateRunOff::class)->handle($chair, $boardMember);
+
+    $stewardship = app(ElectionStewardship::class);
+    $chair = $stewardship->annul($chair, $boardMember, 'Falsche Liste');
+    $repeat = $stewardship->repeat($chair, $boardMember);
+
+    expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($repeat->fresh())))->toBe('opens');
+});
+
+it('ignores a sealed run-off below an annulled run-off', function () {
+    $election = Election::factory()->create();
+    [$boardMember] = electionBoard(1);
+    $voters = [electionVoter(), electionVoter()];
+
+    $chair = draftElectionRound(['position' => 1, 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 2, election: $election);
+    $treasurer = draftElectionRound(['position' => 2], candidates: 1, election: $election);
+    [$a, $b] = runOffChainMembers($chair);
+
+    $chair = runOffChainVoteAndSeal($chair, $voters, [$a, $b]);
+    $runOff = runOffChainVoteAndSeal(app(CreateRunOff::class)->handle($chair, $boardMember), $voters, [$a, $b]);
+    runOffChainVoteAndSeal(app(CreateRunOff::class)->handle($runOff, $boardMember), $voters, [$a, $a]);
+    app(ElectionStewardship::class)->annul($runOff, $boardMember, 'Falsche Liste');
+
+    // The tie of the chair is open again; A's win below the annulled run-off counts for nothing.
+    $newRunOff = app(CreateRunOff::class)->handle($chair->fresh(), $boardMember);
+    expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($newRunOff->fresh())))->toBe('opens');
+
+    runOffChainVote($newRunOff->fresh(), $voters[0], $a);
+    runOffChainVote($newRunOff->fresh(), $voters[1], $b);
+    app(CloseRound::class)->handle($newRunOff->fresh());
+    runOffChainStand($treasurer, $a);
+    expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('tie');
+});
+
+it('frees a later round once the blocking candidacy is withdrawn, in either round', function (string $where) {
+    $election = Election::factory()->create();
+
+    $chair = draftElectionRound(['position' => 1], candidates: 1, election: $election);
+    $treasurer = draftElectionRound(['position' => 2], candidates: 1, election: $election);
+    [$a] = runOffChainMembers($chair);
+    runOffChainStand($treasurer, $a);
+
+    expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('not sealed');
+
+    $blocking = $where === 'earlier' ? $chair : $treasurer;
+    $blocking->candidates()->where('einundzwanzig_pleb_id', $a)->update(['status' => ElectionCandidateStatus::Withdrawn]);
+
+    expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('opens');
+})->with(['earlier', 'in the round to open']);
+
+it('refuses a run-off of an earlier chair with a candidate elected meanwhile in a later round', function () {
+    $election = Election::factory()->create();
+    [$boardMember] = electionBoard(1);
+    $voters = collect(range(1, 6))->map(fn (): EinundzwanzigPleb => electionVoter())->all();
+
+    $chair = draftElectionRound(['position' => 1, 'counting_rule' => ElectionCountingRule::SingleMajority], candidates: 3, election: $election);
+    $treasurer = draftElectionRound(['position' => 2, 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 1, election: $election);
+    [$a, $b] = runOffChainMembers($chair);
+    runOffChainStand($treasurer, $a);
+
+    $chair = runOffChainVoteAndSeal($chair, $voters, [$a, $a, $a, $b, $b, runOffChainMembers($chair)[2]]);
+    runOffChainVoteAndSeal($treasurer, $voters, [$a]);
+    $runOff = app(CreateRunOff::class)->handle($chair, $boardMember);
+
+    // Nobody is elected twice, whatever the order of the contests.
+    expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($runOff->fresh())))->toBe('elected');
 });
