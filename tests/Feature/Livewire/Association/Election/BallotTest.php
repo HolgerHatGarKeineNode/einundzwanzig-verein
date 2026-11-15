@@ -309,6 +309,25 @@ it('tells a member whose sheet the board closed mid-review that their vote is no
     ballotPage($reviewer)->assertDontSee($line);
 });
 
+it('does not claim a missing vote when the member reached the review step and the vote still arrived', function () {
+    $round = namedDraftRound();
+    $member = electionVoter();
+    app(OpenRound::class)->handle($round);
+    $line = 'Der Wahlgang wurde geschlossen, bevor du abgegeben hast. Deine Stimme ist nicht dabei.';
+
+    $page = ballotPage($member);
+    $page->call('prepareBallot', $round->id, [candidateIdOf($round, 'Alice Ambrosius') => 'for']);
+    // The vote arrives from another device (or the answer to this page got lost).
+    castElectionBallot($round, $member, [candidateIdOf($round, 'Alice Ambrosius') => 'for']);
+
+    app(CloseRound::class)->handle($round);
+
+    $page->call('syncRounds')
+        ->assertSee('Gewählt ist Alice Ambrosius.')
+        ->assertSee('Deine Stimme ist dabei.')
+        ->assertDontSee($line);
+});
+
 it('notices on the poll when the board opens a round, and stays put while nothing changes', function () {
     $round = namedDraftRound();
     $member = electionVoter();

@@ -1188,14 +1188,14 @@ new class extends Component
                                                         <p role="status" class="mt-2 max-w-prose text-base leading-normal text-text-primary">
                                                             {{ __('Der Vorstand hat diesen Wahlgang geschlossen, bevor deine Stimme ankam. Sie ist nicht gezählt.') }}
                                                         </p>
-                                                    @elseif ($note === 'review' && $state === ElectionRoundState::Closed && $result !== null)
+                                                    @elseif ($note === 'review' && $state === ElectionRoundState::Closed && $result !== null && $standing['eventId'] === null)
                                                         {{-- The poll replaced the sheet the member was still checking. --}}
                                                         <p role="status" class="mt-2 max-w-prose text-base leading-normal text-text-primary">
                                                             {{ __('Der Wahlgang wurde geschlossen, bevor du abgegeben hast. Deine Stimme ist nicht dabei.') }}
                                                         </p>
                                                     @elseif ($state === ElectionRoundState::Closed && $result === null)
                                                         <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
-                                                            @if ($note === 'review')
+                                                            @if ($note === 'review' && $standing['eventId'] === null)
                                                                 <span role="status" class="text-text-primary">{{ __('Der Wahlgang wurde geschlossen, bevor du abgegeben hast. Deine Stimme ist nicht dabei.') }}</span>
                                                             @elseif ($standing['onRoll'])
                                                                 {{ __('Ohne deine Stimme geschlossen.') }}

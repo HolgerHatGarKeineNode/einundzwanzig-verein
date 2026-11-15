@@ -19,7 +19,7 @@
 @endphp
 
 <div class="mt-3 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-5">
-    <p class="max-w-prose text-base leading-normal text-text-primary">
+    <p class="max-w-prose wrap-anywhere text-base leading-normal text-text-primary">
         @if ($elected !== [])
             {{ trans_choice('Gewählt ist :names.|Gewählt sind :names.', count($elected), ['names' => implode(', ', $elected)]) }}
         @endif
