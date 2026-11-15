@@ -31,4 +31,9 @@ enum ElectionAuditAction: string
     case RoundAnnulled = 'round_annulled';
 
     case VoterEnrolledByHand = 'voter_enrolled_by_hand';
+
+    /** The meeting time or the call link changed after a round was opened. */
+    case ElectionMeetingUpdated = 'election_meeting_updated';
+
+    case RunOffCreated = 'run_off_created';
 }

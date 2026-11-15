@@ -122,6 +122,16 @@ class ElectionRound extends Model
     }
 
     /**
+     * The run-offs of this round.
+     *
+     * @return HasMany<ElectionRound, $this>
+     */
+    public function children(): HasMany
+    {
+        return $this->hasMany(self::class, 'parent_round_id');
+    }
+
+    /**
      * @return HasMany<ElectionCandidate, $this>
      */
     public function candidates(): HasMany

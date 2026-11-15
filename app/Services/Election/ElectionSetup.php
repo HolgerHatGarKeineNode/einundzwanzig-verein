@@ -95,6 +95,31 @@ class ElectionSetup
     }
 
     /**
+     * Change only the meeting time and the call link — also after a round has
+     * been opened, because the call room may move on the evening itself.
+     * Everything else of the election stays as `update()` left it.
+     *
+     * @throws AuthorizationException
+     */
+    public function updateMeeting(Election $election, EinundzwanzigPleb $actor, \DateTimeInterface|string|null $meetingAt, ?string $callUrl): Election
+    {
+        return DB::transaction(function () use ($election, $actor, $meetingAt, $callUrl): Election {
+            $election = Election::query()->lockForUpdate()->findOrFail($election->getKey());
+
+            $this->authorizeActor($actor, 'update', $election);
+
+            $election->forceFill([
+                'meeting_at' => $meetingAt ?: null,
+                'call_url' => filled($callUrl) ? trim($callUrl) : null,
+            ])->save();
+
+            $this->audit->append($election, ElectionAuditAction::ElectionMeetingUpdated, $actor);
+
+            return $election->load('rounds');
+        });
+    }
+
+    /**
      * @param  ElectionAttributes  $attributes
      * @return array<string, mixed>
      */
