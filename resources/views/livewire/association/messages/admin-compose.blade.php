@@ -128,7 +128,7 @@
                     <div class="mt-4 space-y-6" data-test="previews">
                         @foreach ($this->previews as $preview)
                             <figure wire:key="preview-{{ $loop->index }}" class="max-w-[65ch]">
-                                <figcaption class="text-sm text-text-tertiary">{{ __('An :name, von EINUNDZWANZIG', ['name' => $preview['name']]) }}</figcaption>
+                                <figcaption class="text-sm text-text-tertiary break-words">{{ __('An :name, von EINUNDZWANZIG', ['name' => $preview['name']]) }}</figcaption>
                                 <div class="mt-2 rounded-lg rounded-tl-none border border-border-default bg-bg-elevated px-4 py-3 text-base leading-7 break-words whitespace-pre-line text-text-primary">{{ $preview['text'] }}</div>
                             </figure>
                         @endforeach

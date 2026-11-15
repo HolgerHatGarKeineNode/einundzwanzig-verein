@@ -67,7 +67,7 @@
                             @php
                                 $detail = $this->openRun;
                                 $order = [\App\Enums\DmDeliveryStatus::Failed->value => 0, \App\Enums\DmDeliveryStatus::Claimed->value => 1, \App\Enums\DmDeliveryStatus::Pending->value => 2, \App\Enums\DmDeliveryStatus::NoInbox->value => 3, \App\Enums\DmDeliveryStatus::Sent->value => 4];
-                                $deliveries = $detail->deliveries->sortBy(fn ($delivery) => [$order[$delivery->status->value], $delivery->id]);
+                                $deliveries = $detail->deliveries->sortBy(fn ($delivery) => [$this->deliveryFailed($delivery) ? 0 : $order[$delivery->status->value], $delivery->id]);
                                 $notFannedOut = $detail->recipient_count - $detail->deliveries->count();
                             @endphp
                             <div id="run-detail-{{ $run->id }}" class="space-y-8 px-4 pb-8 pt-2 sm:px-6" data-test="run-detail">
@@ -99,15 +99,18 @@
                                     @if ($deliveries->isNotEmpty())
                                         <ul class="mt-3 divide-y divide-border-subtle border-y border-border-subtle" aria-label="{{ __('Empfänger') }}">
                                             @foreach ($deliveries as $delivery)
-                                                <li wire:key="delivery-{{ $delivery->id }}" class="grid gap-x-6 gap-y-1 py-3 sm:grid-cols-[minmax(0,1fr)_16rem_13rem]" data-test="delivery-{{ $delivery->id }}" data-status="{{ $delivery->status->value }}">
+                                                <li wire:key="delivery-{{ $delivery->id }}" class="grid gap-x-6 gap-y-1 py-3 sm:grid-cols-[minmax(0,1fr)_16rem_13rem]" data-test="delivery-{{ $delivery->id }}" data-status="{{ $delivery->status->value }}"@if ($delivery->isStuck(now())) data-stuck="true"@endif>
                                                     <span class="min-w-0 text-base text-text-primary break-words">{{ $this->nameOf($delivery->recipient) }}</span>
+                                                    @php
+                                                        $deliveryFailed = $this->deliveryFailed($delivery);
+                                                    @endphp
                                                     <span @class([
                                                         'flex items-center gap-2 text-sm',
-                                                        'text-danger' => $delivery->status === \App\Enums\DmDeliveryStatus::Failed,
+                                                        'text-danger' => $deliveryFailed,
                                                         'text-text-primary' => $delivery->status === \App\Enums\DmDeliveryStatus::Sent,
-                                                        'text-text-secondary' => ! in_array($delivery->status, [\App\Enums\DmDeliveryStatus::Failed, \App\Enums\DmDeliveryStatus::Sent], true),
+                                                        'text-text-secondary' => ! $deliveryFailed && $delivery->status !== \App\Enums\DmDeliveryStatus::Sent,
                                                     ])>
-                                                        @switch($delivery->status)
+                                                        @switch($deliveryFailed ? \App\Enums\DmDeliveryStatus::Failed : $delivery->status)
                                                             @case(\App\Enums\DmDeliveryStatus::Sent)
                                                                 <flux:icon.check-circle variant="mini" class="size-5 shrink-0 text-success" aria-hidden="true" />
                                                                 @break
@@ -120,7 +123,7 @@
                                                             @default
                                                                 <flux:icon.clock variant="mini" class="size-5 shrink-0 text-text-tertiary" aria-hidden="true" />
                                                         @endswitch
-                                                        {{ $delivery->status->label() }}
+                                                        {{ $this->deliveryLabel($delivery) }}
                                                     </span>
                                                     <span class="text-sm text-text-tertiary">
                                                         {{ $this->relaySummary($delivery) }}@if ($delivery->seen_at)<span class="block">{{ __('im Portal geöffnet') }}</span>@endif

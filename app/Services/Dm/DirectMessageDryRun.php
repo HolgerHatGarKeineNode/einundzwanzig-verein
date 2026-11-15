@@ -57,6 +57,12 @@ final class DirectMessageDryRun
                 ->map(fn (EinundzwanzigPleb $recipient): int => (int) $recipient->getKey())
                 ->values()
                 ->all(),
+            recipientIds: $recipients
+                ->map(fn (EinundzwanzigPleb $recipient): int => (int) $recipient->getKey())
+                ->unique()
+                ->sort()
+                ->values()
+                ->all(),
         );
     }
 

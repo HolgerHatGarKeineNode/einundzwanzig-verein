@@ -11,6 +11,7 @@ use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\MemberProposal;
 use App\Services\Dm\ComposeDirectMessage;
+use App\Services\Dm\DirectMessageAudienceChanged;
 use App\Services\Dm\DirectMessageAudience;
 use App\Services\Dm\DirectMessageDryRun;
 use App\Services\Dm\DirectMessagePause;
@@ -86,9 +87,10 @@ class extends Component
 
     /**
      * The last dry run: what it found and for which draft. Sending is only
-     * offered while the draft is still the one the dry run saw.
+     * offered while the draft is still the one the dry run saw, and a start
+     * freezes exactly `recipient_ids` or nothing.
      *
-     * @var array{signature: string, count: int, unreachable: list<string>, unreachable_count: int}|null
+     * @var array{signature: string, count: int, recipient_ids: list<int>, unreachable: list<string>, unreachable_count: int}|null
      */
     #[Locked]
     public ?array $dryRun = null;
@@ -156,9 +158,11 @@ class extends Component
     }
 
     /**
-     * Hand the run back to the fan-out. It queues only the deliveries that
-     * still have work left — `failed`, a claim of a worker that died, and
-     * whatever still waits — and never touches `sent` or `no_inbox`.
+     * Hand the run back to the fan-out. The count the board sees and is told
+     * is the failed work: `failed` and a claim of a worker that died (shown
+     * as failed, see DmDelivery::isStuck). The fan-out also queues `pending`
+     * deliveries again — they would go out anyway, and their claim turns the
+     * second job into a no-op. `sent` and `no_inbox` are never touched.
      */
     public function resendFailed(int $runId, DirectMessagePause $pause): void
     {
@@ -171,7 +175,7 @@ class extends Component
             return;
         }
 
-        $retry = $this->retryCountOf($run);
+        $retry = $run->deliveries()->failedOrStuck(now())->count();
 
         if ($retry === 0) {
             Flux::toast(__('In dieser Nachricht ist nichts fehlgeschlagen.'));
@@ -272,6 +276,7 @@ class extends Component
         $this->dryRun = [
             'signature' => $this->draftSignature(),
             'count' => $result->count,
+            'recipient_ids' => $result->recipientIds,
             'unreachable' => $unreachable,
             'unreachable_count' => count($result->unreachableIds),
         ];
@@ -298,15 +303,22 @@ class extends Component
             return;
         }
 
-        $start->toSelf($message, $actor);
+        if ($start->toSelf($message, $actor) === null) {
+            $message->delete();
+            Flux::toast(__('Der Versand ist pausiert. Setze ihn im Zeitplan fort, dann geht auch der Test raus.'), variant: 'danger');
+
+            return;
+        }
 
         unset($this->runs);
         Flux::toast(__('Test an dich gestartet. Er steht im Verlauf und kommt in deinem Nostr-Client an.'), variant: 'success');
     }
 
     /**
-     * Start the sending the board confirmed. The recipient list is frozen
-     * now; the dry run's count is what the board was shown.
+     * Start the sending the board confirmed. The frozen recipient list is
+     * the dry run's list: when the audience changed since (somebody joined,
+     * paid or left), nothing is started and the board is asked for a new
+     * dry run, so the number sent is always the number shown.
      */
     public function confirmSend(ComposeDirectMessage $compose, StartDirectMessageRun $start, DirectMessagePause $pause): void
     {
@@ -335,7 +347,17 @@ class extends Component
             return;
         }
 
-        $run = $start->handle($message, $this->composeAudience(), $this->composeElectionOrNull());
+        try {
+            $run = $start->handle($message, $this->composeAudience(), $this->composeElectionOrNull(), $this->dryRun['recipient_ids'] ?? []);
+        } catch (DirectMessageAudienceChanged $changed) {
+            // The text was written for this sending only.
+            $message->delete();
+            $this->dryRun = null;
+            Flux::modal('confirm-send')->close();
+            Flux::toast(trans_choice('Die Zielgruppe hat sich seit dem Probelauf geändert: jetzt ein Mitglied statt :confirmed. Es wurde nichts gesendet. Starte den Probelauf neu.|Die Zielgruppe hat sich seit dem Probelauf geändert: jetzt :count Mitglieder statt :confirmed. Es wurde nichts gesendet. Starte den Probelauf neu.', $changed->currentCount, ['count' => $changed->currentCount, 'confirmed' => $changed->confirmedCount]), variant: 'danger');
+
+            return;
+        }
 
         Flux::modal('confirm-send')->close();
 
@@ -513,8 +535,7 @@ class extends Component
             ->withCount([
                 'deliveries as sent_count' => fn ($query) => $query->where('status', DmDeliveryStatus::Sent->value),
                 'deliveries as no_inbox_count' => fn ($query) => $query->where('status', DmDeliveryStatus::NoInbox->value),
-                'deliveries as failed_count' => fn ($query) => $query->where('status', DmDeliveryStatus::Failed->value),
-                'deliveries as retry_count' => fn ($query) => $query->withWorkLeft(now())->where('status', '!=', DmDeliveryStatus::Pending->value),
+                'deliveries as failed_count' => fn ($query) => $query->failedOrStuck(now()),
                 'deliveries as seen_count' => fn ($query) => $query->whereNotNull('seen_at'),
             ])
             ->orderByDesc('id')
@@ -701,8 +722,10 @@ class extends Component
     }
 
     /**
-     * The four numbers of a run. Waiting covers deliveries in work and
-     * recipients the fan-out has not reached yet.
+     * The four numbers of a run. Failed includes stuck claims
+     * (DmDelivery::isStuck), and it is what a re-send picks up. Waiting
+     * covers deliveries in work and recipients the fan-out has not reached
+     * yet.
      *
      * @return array{sent: int, no_inbox: int, failed: int, waiting: int, seen: int, retry: int}
      */
@@ -718,7 +741,7 @@ class extends Component
             'failed' => $failed,
             'waiting' => max(0, $run->recipient_count - $sent - $noInbox - $failed),
             'seen' => (int) $run->seen_count,
-            'retry' => (int) $run->retry_count,
+            'retry' => $failed,
         ];
     }
 
@@ -751,6 +774,20 @@ class extends Component
         $accepted = $relays->where('status', RelayPublishStatus::Accepted)->count();
 
         return __(':accepted von :total Relays haben angenommen', ['accepted' => $accepted, 'total' => $relays->count()]);
+    }
+
+    /**
+     * The state of one delivery as the board reads it: a stuck claim is
+     * failed, not "being sent".
+     */
+    public function deliveryFailed(DmDelivery $delivery): bool
+    {
+        return $delivery->status === DmDeliveryStatus::Failed || $delivery->isStuck(now());
+    }
+
+    public function deliveryLabel(DmDelivery $delivery): string
+    {
+        return $delivery->isStuck(now()) ? __('Hängen geblieben, gilt als fehlgeschlagen') : $delivery->status->label();
     }
 
     public function nameOf(?EinundzwanzigPleb $member): string
@@ -872,11 +909,6 @@ class extends Component
         unset($this->composeElection, $this->audienceSentence, $this->audienceCount, $this->draftProblems, $this->previews);
     }
 
-    protected function retryCountOf(DmRun $run): int
-    {
-        return $run->deliveries()->withWorkLeft(now())->where('status', '!=', DmDeliveryStatus::Pending->value)->count();
-    }
-
     protected function defaultElection(): ?Election
     {
         return $this->elections->firstWhere('is_test', false) ?? $this->elections->first();
@@ -964,8 +996,12 @@ class extends Component
                     {{ __('Was der Verein als Nostr-Direktnachricht verschickt. Jede Nachricht steht zusätzlich im Posteingang des Mitglieds im Portal.') }}
                 </p>
             </div>
+            @php
+                // One primary action at a time: an open run with failures offers its re-send as the primary one.
+                $openRunHasFailures = $tab === 'history' && $openRunId !== null && ($this->runs->firstWhere('id', $openRunId)?->failed_count ?? 0) > 0;
+            @endphp
             @if ($tab !== 'compose')
-                <flux:button wire:click="showTab('compose')" icon="pencil-square" variant="primary" class="min-h-11" data-test="start-compose">
+                <flux:button wire:click="showTab('compose')" icon="pencil-square" :variant="$openRunHasFailures ? 'outline' : 'primary'" class="min-h-11" data-test="start-compose">
                     {{ __('Neue Nachricht') }}
                 </flux:button>
             @endif
@@ -984,7 +1020,7 @@ class extends Component
         @endif
 
         @php
-            $failedRuns = $this->runs->filter(fn ($run) => $run->retry_count > 0)->count();
+            $failedRuns = $this->runs->filter(fn ($run) => $run->failed_count > 0)->count();
             $upcomingCount = $this->upcoming->count();
             $tabs = [
                 'history' => [__('Verlauf'), $failedRuns > 0 ? trans_choice(':count mit Fehlern|:count mit Fehlern', $failedRuns) : null],
