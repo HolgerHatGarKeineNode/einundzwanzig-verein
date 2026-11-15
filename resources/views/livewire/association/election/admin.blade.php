@@ -1241,7 +1241,7 @@ new class extends Component
     $locked = $election !== null && $election->rounds->whereNotNull('opened_at')->isNotEmpty();
 @endphp
 
-<div class="relative w-full max-w-5xl mx-auto pb-20">
+<div class="election-ui relative w-full max-w-5xl mx-auto pb-20">
     @if ($isGuest)
         <div class="max-w-2xl">
             <flux:callout variant="warning" icon="exclamation-circle">
@@ -1488,7 +1488,7 @@ new class extends Component
                     @if ($pendingRoundAction === 'close' || $pendingRoundAction === 'annul')
                         <flux:field>
                             <flux:label>{{ __('Grund für das Protokoll') }}</flux:label>
-                            <flux:textarea wire:model="roundReason" rows="2" maxlength="1000" data-test="round-reason"
+                            <flux:textarea wire:model="roundReason" rows="2" maxlength="1000" data-test="round-reason" autofocus
                                            placeholder="{{ $pendingRoundAction === 'annul' ? __('z. B. falsche Kandidatenliste geöffnet') : __('z. B. alle Anwesenden haben abgestimmt') }}" />
                             <flux:error name="roundReason" />
                         </flux:field>
@@ -1497,7 +1497,7 @@ new class extends Component
                     @endif
                     <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <flux:modal.close>
-                            <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto">{{ __('Abbrechen') }}</flux:button>
+                            <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto" :autofocus="$pendingRoundAction !== 'close' && $pendingRoundAction !== 'annul'" data-test="cancel-round-action">{{ __('Abbrechen') }}</flux:button>
                         </flux:modal.close>
                         <flux:button type="submit" :variant="$pendingRoundAction === 'annul' ? 'danger' : 'primary'" class="min-h-11 w-full sm:w-auto" data-test="confirm-round-action">
                             {{ match ($pendingRoundAction) {

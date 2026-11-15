@@ -56,7 +56,7 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
      * The round to show: the open one; else one whose time ran out; else the
      * one finished last; else the first that has not been opened yet.
      *
-     * @return array{report: array<string, mixed>, number: int, total: int}|null
+     * @return array{report: array<string, mixed>, number: int|null, total: int}|null
      */
     #[Computed]
     public function current(): ?array
@@ -85,9 +85,15 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
             return null;
         }
 
-        $number = $reports->search(fn (array $candidate): bool => $candidate['round']->is($report['round']));
+        // The count is the agenda: rounds of their own that still stand. A run-off
+        // belongs to its round, an annulled round is void and its repeat takes
+        // its place, so "Wahlgang 2 von 4" holds however often the board annuls.
+        $agenda = $reports
+            ->filter(fn (array $candidate): bool => $candidate['round']->parent_round_id === null && $candidate['state'] !== ElectionRoundState::Annulled)
+            ->values();
+        $number = $agenda->search(fn (array $candidate): bool => $candidate['round']->is($report['round']));
 
-        return ['report' => $report, 'number' => $number + 1, 'total' => $reports->count()];
+        return ['report' => $report, 'number' => $number === false ? null : $number + 1, 'total' => $agenda->count()];
     }
 
     protected function clock(?CarbonInterface $moment = null): string
@@ -120,7 +126,7 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
 
 {{-- Type for a shared screen: sizes follow the viewport height, so the same page reads at 1280×720 and 1920×1080. --}}
 <div @if ($election !== null) wire:poll.3s @endif
-     class="flex min-h-screen flex-col px-[5vw] py-[4vh] [--s-meta:clamp(1rem,2.5vh,1.75rem)] [--s-body:clamp(1.25rem,3.4vh,2.5rem)] [--s-state:clamp(1.5rem,4.5vh,3.25rem)] [--s-title:clamp(2rem,6.6vh,4.75rem)] [--s-figure:clamp(5rem,22vh,15rem)]"
+     class="election-ui flex min-h-screen flex-col px-[5vw] py-[4vh] [--s-meta:clamp(1.5rem,2.6vh,2rem)] [--s-body:clamp(1.5rem,3.4vh,2.5rem)] [--s-row:clamp(1.5rem,2.8vh,2rem)] [--s-state:clamp(1.5rem,4.5vh,3.25rem)] [--s-title:clamp(2rem,6.6vh,4.75rem)] [--s-figure:clamp(5rem,22vh,15rem)]"
      data-test="share-screen">
     @if ($election === null)
         <main class="flex flex-1 flex-col justify-center">
@@ -141,8 +147,14 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
         @if ($round === null)
             <h1 class="text-[length:var(--s-title)] font-bold leading-tight">{{ __('Noch kein Wahlgang angelegt.') }}</h1>
         @else
-            <p class="text-[length:var(--s-meta)] text-text-secondary">
-                {{ $round->parent_round_id ? __('Stichwahl') : __('Wahlgang :number von :total', ['number' => $current['number'], 'total' => $current['total']]) }}
+            <p class="text-[length:var(--s-meta)] text-text-secondary" data-test="share-round-number">
+                @if ($round->parent_round_id)
+                    {{ __('Stichwahl') }}
+                @elseif ($current['number'] === null)
+                    {{ __('Annullierter Wahlgang, zählt nicht mit') }}
+                @else
+                    {{ __('Wahlgang :number von :total', ['number' => $current['number'], 'total' => $current['total']]) }}
+                @endif
             </p>
             <h1 class="mt-[1vh] text-[length:var(--s-title)] font-bold leading-[1.1] break-words" data-test="share-round-title">{{ $round->title }}</h1>
 
@@ -201,7 +213,7 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
                     $elected = collect($result['rows'])->where('elected', true)->pluck('name');
                 @endphp
                 <div class="mt-[4vh]" data-test="share-result">
-                    <p class="text-[length:var(--s-body)] font-bold" data-test="share-outcome">
+                    <p class="text-[length:var(--s-body)] font-bold break-words" data-test="share-outcome">
                         @switch($result['outcome'])
                             @case(ElectionOutcome::Complete)
                                 {{ trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $elected->count(), ['names' => $elected->join(', ', ' und ')]) }}
@@ -214,34 +226,42 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
                         @endswitch
                     </p>
 
-                    <ol class="mt-[3vh] space-y-[2vh]" data-test="share-rows">
+                    {{-- More than three rows go into two columns on a landscape screen; below 800px height the bars give way to the numbers they repeat, so six candidates still fit 1280×720 without scrolling. --}}
+                    @php $split = count($result['rows']) > 3; @endphp
+                    <ol @class([
+                            'mt-[3vh] space-y-[2vh]',
+                            'lg:grid lg:grid-flow-col lg:gap-x-[4vw] lg:gap-y-[1.5vh] lg:space-y-0 lg:[grid-template-rows:repeat(var(--rows),auto)]' => $split,
+                        ]) @if ($split) style="--rows: {{ (int) ceil(count($result['rows']) / 2) }}" @endif data-test="share-rows">
                         @foreach ($result['rows'] as $row)
                             @php $value = $isYesNo ? $row['yes'] : $row['for']; @endphp
-                            <li class="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-[2vw] gap-y-[0.8vh]">
-                                <span class="min-w-0 text-[length:var(--s-body)] font-bold break-words">{{ $row['name'] }}</span>
-                                <span class="text-right text-[length:var(--s-body)] tabular-nums">
+                            {{-- Wide: name, votes and verdict on one line, the bar below. Narrow: the verdict moves next to the bar. --}}
+                            <li @class([
+                                    'grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-[2vw] gap-y-[0.8vh] text-[length:var(--s-meta)] lg:grid-cols-[minmax(0,1fr)_auto_7.5em]',
+                                    '[--s-name:var(--s-body)]' => ! $split,
+                                    '[--s-name:var(--s-body)] lg:[--s-name:var(--s-row)]' => $split,
+                                ])>
+                                <span class="min-w-0 text-[length:var(--s-name)] font-bold break-words">{{ $row['name'] }}</span>
+                                <span class="text-right text-[length:var(--s-name)] tabular-nums">
                                     @if ($isYesNo)
                                         {{ __(':yes Ja, :no Nein', ['yes' => $row['yes'], 'no' => $row['no']]) }}
                                     @else
                                         {{ trans_choice('{0} 0 Stimmen|{1} 1 Stimme|[2,*] :count Stimmen', $row['for'], ['count' => $row['for']]) }}
                                     @endif
                                 </span>
-                                <span class="col-span-2 flex items-center gap-[1.5vw]">
-                                    <span class="h-[1.4vh] flex-1 bg-neutral-800" aria-hidden="true"><span @class(['block h-full', 'bg-text-primary' => $row['elected'], 'bg-warning' => $row['tied'], 'bg-neutral-500' => ! $row['elected'] && ! $row['tied']]) style="width: {{ round($value / $base * 100, 1) }}%"></span></span>
-                                    <span class="w-[9em] text-[length:var(--s-meta)] font-bold">
-                                        @if ($row['elected'])
-                                            <span class="inline-flex items-center gap-[0.3em] text-success"><flux:icon.check-circle variant="mini" class="size-[1.2em]" aria-hidden="true" />{{ __('gewählt') }}</span>
-                                        @elseif ($row['tied'])
-                                            <span class="inline-flex items-center gap-[0.3em] text-warning"><flux:icon.scale variant="mini" class="size-[1.2em]" aria-hidden="true" />{{ __('Gleichstand') }}</span>
-                                        @endif
-                                    </span>
+                                <span @class(['h-[1.4vh] self-center bg-neutral-800 lg:order-last lg:col-span-3', 'lg:[@media(max-height:799px)]:hidden' => $split]) aria-hidden="true"><span @class(['block h-full', 'bg-text-primary' => $row['elected'], 'bg-warning' => $row['tied'], 'bg-neutral-500' => ! $row['elected'] && ! $row['tied']]) style="width: {{ round($value / $base * 100, 1) }}%"></span></span>
+                                <span class="min-w-[7.5em] font-bold">
+                                    @if ($row['elected'])
+                                        <span class="inline-flex items-center gap-[0.3em] text-success"><flux:icon.check-circle variant="mini" class="size-[1.2em]" aria-hidden="true" />{{ __('gewählt') }}</span>
+                                    @elseif ($row['tied'])
+                                        <span class="inline-flex items-center gap-[0.3em] text-warning"><flux:icon.scale variant="mini" class="size-[1.2em]" aria-hidden="true" />{{ __('Gleichstand') }}</span>
+                                    @endif
                                 </span>
                             </li>
                         @endforeach
                     </ol>
 
                     <p class="mt-[3vh] text-[length:var(--s-meta)] text-text-secondary">
-                        {{ __(':cast von :roll haben abgestimmt, davon :blank mit Enthaltung.', ['cast' => $report['cast'], 'roll' => $report['roll'], 'blank' => $result['blank']]) }}
+                        {{ trans_choice('{1} :count von :roll hat abgestimmt,|[0,*] :count von :roll haben abgestimmt,', $report['cast'], ['roll' => $report['roll']]) }} {{ trans_choice('{0} davon keine Enthaltung (leer).|{1} davon 1 Enthaltung (leer).|[2,*] davon :count Enthaltungen (leer).', $result['blank']) }}
                     </p>
                 </div>
             @elseif ($report['state'] === ElectionRoundState::Draft && $report['candidates'] !== [])
@@ -257,7 +277,7 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
         @endif
     </main>
 
-    <footer class="text-[length:var(--s-meta)] text-text-tertiary">
+    <footer class="text-[length:var(--s-meta)] text-text-secondary">
         {{ __('Stand :time Uhr. Aktualisiert sich von selbst.', ['time' => $this->clock()]) }}
     </footer>
     @endif
