@@ -114,10 +114,10 @@ class OpenRound
      *  - level on votes in a tie there → refused, unless this round is the
      *    run-off of exactly that round, which is what a run-off is for, or a
      *    run-off of that round is sealed and not annulled: the tie is decided
-     *    there. That run-off is an earlier round itself — it opened only
-     *    once every round before it that shares a candidate was sealed —
-     *    so whoever it elects is caught by the second case, and a run-off
-     *    that ends level again blocks by this one.
+     *    there. A run-off of an earlier round counts as earlier itself,
+     *    whatever its position (it lands at the end once a later round was
+     *    opened), so whoever it elects is caught by the second case, and a
+     *    run-off that ends level again blocks by this one.
      *
      * Refusing instead of quietly dropping the candidate keeps the list of
      * candidates the election officer's to change. An annulled round has no
@@ -135,7 +135,8 @@ class OpenRound
             ->whereNull('annulled_at')
             ->where(function (Builder $query) use ($round): void {
                 $query->where('position', '<', $round->position)
-                    ->orWhere('id', $round->parent_round_id);
+                    ->orWhere('id', $round->parent_round_id)
+                    ->orWhereHas('parent', fn (Builder $parent): Builder => $parent->where('position', '<', $round->position));
             })
             ->with(['candidates', 'children'])
             ->get();
