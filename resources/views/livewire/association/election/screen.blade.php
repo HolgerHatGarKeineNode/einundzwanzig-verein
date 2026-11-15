@@ -147,7 +147,7 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
         </main>
     @else
     <header class="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-2 text-[length:var(--s-meta)] text-text-secondary">
-        <p class="font-bold text-text-primary">EINUNDZWANZIG <span class="font-normal text-text-secondary">{{ $election->name }}</span></p>
+        <p class="min-w-0 font-bold text-text-primary wrap-anywhere">EINUNDZWANZIG <span class="font-normal text-text-secondary">{{ $election->name }}</span></p>
         @if ($election->is_test)
             <p class="inline-flex items-center gap-2 font-bold text-warning" data-test="share-test-marker">
                 <flux:icon.beaker class="size-[1.2em]" aria-hidden="true" />{{ __('Probewahl') }}
@@ -223,51 +223,61 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
                 @php
                     $base = max(1, $report['cast']);
                     $elected = collect($result['rows'])->where('elected', true)->pluck('name');
+                    // A name may end in a full stop ("Erik E."); the sentence must not add a second one.
+                    $sentence = fn (string $text): string => preg_replace('/(?<=\S)\.\.(?=\s|$)/u', '.', $text);
                 @endphp
                 <div class="mt-[4vh]" data-test="share-result">
                     <p class="text-[length:var(--s-body)] font-bold break-words" data-test="share-outcome">
                         @switch($result['outcome'])
                             @case(ElectionOutcome::Complete)
-                                {{ trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $elected->count(), ['names' => $elected->join(', ', ' und ')]) }}
+                                {{ $sentence(trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $elected->count(), ['names' => $elected->join(', ', ' und ')])) }}
                                 @break
                             @case(ElectionOutcome::Tie)
                                 <span class="inline-flex items-center gap-[0.4em] text-warning"><flux:icon.scale class="size-[1.1em]" aria-hidden="true" />{{ __('Gleichstand. Darüber entscheidet eine Stichwahl.') }}</span>
                                 @break
                             @default
-                                <span class="inline-flex items-center gap-[0.4em] text-warning"><flux:icon.exclamation-triangle class="size-[1.1em]" aria-hidden="true" />{{ $elected->isEmpty() ? __('Niemand hat die nötige Mehrheit.') : trans_choice('{1} Gewählt ist :names. Nicht alle Sitze sind besetzt.|[2,*] Gewählt sind :names. Nicht alle Sitze sind besetzt.', $elected->count(), ['names' => $elected->join(', ', ' und ')]) }}</span>
+                                <span class="inline-flex items-center gap-[0.4em] text-warning"><flux:icon.exclamation-triangle class="size-[1.1em]" aria-hidden="true" />{{ $elected->isEmpty() ? __('Niemand hat die nötige Mehrheit.') : $sentence(trans_choice('{1} Gewählt ist :names. Nicht alle Sitze sind besetzt.|[2,*] Gewählt sind :names. Nicht alle Sitze sind besetzt.', $elected->count(), ['names' => $elected->join(', ', ' und ')])) }}</span>
                         @endswitch
                     </p>
 
-                    {{-- More than three rows go into two columns on a landscape screen; below 800px height the bars give way to the numbers they repeat, so six candidates still fit 1280×720 without scrolling. --}}
-                    @php $split = count($result['rows']) > 3; @endphp
+                    {{-- More than three rows are dense: below 800px height the bars give way to the numbers they repeat. On a landscape screen they go into two columns, unless a name is too long for half the width — a column holds about 38 characters per line at 1280×720, and a long name with long words then needs three lines. Such a list stays in one column, where the name gets the full width. Names are never cut. --}}
+                    @php
+                        $dense = count($result['rows']) > 3;
+                        $split = $dense && collect($result['rows'])->max(fn (array $row): int => mb_strlen($row['name'])) <= 40;
+                    @endphp
                     <ol @class([
-                            'mt-[3vh] space-y-[2vh]',
-                            'lg:grid lg:grid-flow-col lg:gap-x-[4vw] lg:gap-y-[1.5vh] lg:space-y-0 lg:[grid-template-rows:repeat(var(--rows),auto)]' => $split,
-                        ]) @if ($split) style="--rows: {{ (int) ceil(count($result['rows']) / 2) }}" @endif data-test="share-rows">
+                            'mt-[3vh]',
+                            'space-y-[2vh]' => ! $dense,
+                            'space-y-[1.5vh]' => $dense && ! $split,
+                            'lg:grid lg:grid-flow-col lg:grid-cols-2 lg:gap-x-[4vw] lg:gap-y-[1.5vh] lg:space-y-0 lg:[grid-template-rows:repeat(var(--rows),auto)]' => $split,
+                        ]) @if ($split) style="--rows: {{ (int) ceil(count($result['rows']) / 2) }}" @endif data-layout="{{ $split ? 'columns' : 'list' }}" data-test="share-rows">
                         @foreach ($result['rows'] as $row)
                             @php $value = $isYesNo ? $row['yes'] : $row['for']; @endphp
-                            {{-- Wide: name, votes and verdict on one line, the bar below. Narrow: the verdict moves next to the bar. --}}
+                            {{-- Wide, one column: name, votes and verdict on one line; the name takes what the figures leave and wraps there. Wide, two columns: the name owns its line and the figures follow below it, so every row has the same shape and a name gets the full column instead of a sliver. The bar runs below. Narrow: the verdict moves next to the bar. --}}
                             <li @class([
-                                    'grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-[2vw] gap-y-[0.8vh] text-[length:var(--s-meta)] lg:grid-cols-[minmax(0,1fr)_auto_7.5em]',
-                                    '[--s-name:var(--s-body)]' => ! $split,
-                                    '[--s-name:var(--s-body)] lg:[--s-name:var(--s-row)]' => $split,
-                                ])>
-                                <span class="min-w-0 text-[length:var(--s-name)] font-bold break-words">{{ $row['name'] }}</span>
-                                <span class="text-right text-[length:var(--s-name)] tabular-nums">
-                                    @if ($isYesNo)
-                                        {{ __(':yes Ja, :no Nein', ['yes' => $row['yes'], 'no' => $row['no']]) }}
-                                    @else
-                                        {{ trans_choice('{0} 0 Stimmen|{1} 1 Stimme|[2,*] :count Stimmen', $row['for'], ['count' => $row['for']]) }}
-                                    @endif
+                                    'grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-[2vw] gap-y-[0.8vh] text-[length:var(--s-meta)] lg:flex lg:flex-wrap',
+                                    '[--s-name:var(--s-body)]' => ! $dense,
+                                    '[--s-name:var(--s-body)] lg:[--s-name:var(--s-row)]' => $dense,
+                                ]) data-test="share-row">
+                                <span @class(['min-w-0 text-[length:var(--s-name)] font-bold break-words', 'lg:basis-full' => $split, 'lg:flex-[1_1_0%]' => ! $split]) data-test="share-row-name">{{ $row['name'] }}</span>
+                                <span @class(['contents lg:flex lg:items-baseline lg:gap-x-[2vw]', 'lg:ml-auto' => ! $split])>
+                                    <span @class(['text-right text-[length:var(--s-name)] tabular-nums whitespace-nowrap lg:min-w-[6em]', 'lg:text-left' => $split])>
+                                        @if ($isYesNo)
+                                            {{ __(':yes Ja, :no Nein', ['yes' => $row['yes'], 'no' => $row['no']]) }}
+                                        @else
+                                            {{ trans_choice('{0} 0 Stimmen|{1} 1 Stimme|[2,*] :count Stimmen', $row['for'], ['count' => $row['for']]) }}
+                                        @endif
+                                    </span>
+                                    {{-- Fixed widths keep votes and verdicts in columns from row to row; 8.25em holds „Gleichstand“ with its icon. The word, not the icon, gives the verdict its baseline: an svg's baseline is its bottom edge and would push the row 5px taller. --}}
+                                    <span class="order-1 min-w-[7.5em] font-bold lg:order-none lg:min-w-[8.25em]">
+                                        @if ($row['elected'])
+                                            <span class="inline-flex items-center gap-[0.3em] text-success"><flux:icon.check-circle variant="mini" class="size-[1.2em]" aria-hidden="true" /><span class="self-baseline">{{ __('gewählt') }}</span></span>
+                                        @elseif ($row['tied'])
+                                            <span class="inline-flex items-center gap-[0.3em] text-warning"><flux:icon.scale variant="mini" class="size-[1.2em]" aria-hidden="true" /><span class="self-baseline">{{ __('Gleichstand') }}</span></span>
+                                        @endif
+                                    </span>
                                 </span>
-                                <span @class(['h-[1.4vh] self-center bg-neutral-800 lg:order-last lg:col-span-3', 'lg:[@media(max-height:799px)]:hidden' => $split]) aria-hidden="true"><span @class(['block h-full', 'bg-text-primary' => $row['elected'], 'bg-warning' => $row['tied'], 'bg-neutral-500' => ! $row['elected'] && ! $row['tied']]) style="width: {{ round($value / $base * 100, 1) }}%"></span></span>
-                                <span class="min-w-[7.5em] font-bold">
-                                    @if ($row['elected'])
-                                        <span class="inline-flex items-center gap-[0.3em] text-success"><flux:icon.check-circle variant="mini" class="size-[1.2em]" aria-hidden="true" />{{ __('gewählt') }}</span>
-                                    @elseif ($row['tied'])
-                                        <span class="inline-flex items-center gap-[0.3em] text-warning"><flux:icon.scale variant="mini" class="size-[1.2em]" aria-hidden="true" />{{ __('Gleichstand') }}</span>
-                                    @endif
-                                </span>
+                                <span @class(['h-[1.4vh] self-center bg-neutral-800 lg:order-last lg:basis-full', 'lg:[@media(max-height:799px)]:hidden' => $dense]) aria-hidden="true"><span @class(['block h-full', 'bg-text-primary' => $row['elected'], 'bg-warning' => $row['tied'], 'bg-neutral-500' => ! $row['elected'] && ! $row['tied']]) style="width: {{ round($value / $base * 100, 1) }}%"></span></span>
                             </li>
                         @endforeach
                     </ol>

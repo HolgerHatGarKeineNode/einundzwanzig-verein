@@ -123,7 +123,7 @@ it('prepares the event to sign with a readable summary and the server clock', fu
         ->and($answer['event']['tags'])->toBe([['election', (string) $round->election_event_id], ['round', (string) $round->id], ['vote', (string) $alice, 'yes']])
         ->and($answer['event']['content'])->toBe("Meine Stimme bei „Vorstandswahl 2027“\nWahlgang: Präsidium\nJa: Alice Ambrosius\nEnthaltung: Bob Brenner");
 
-    expect($page->instance()->prepareBallot($round->id, [])['event']['content'])->toEndWith('Leerer Stimmzettel');
+    expect($page->instance()->prepareBallot($round->id, [])['event']['content'])->toEndWith("\nEnthaltung (leer)");
 });
 
 it('refuses to prepare a ballot that does not fit the rule', function () {
