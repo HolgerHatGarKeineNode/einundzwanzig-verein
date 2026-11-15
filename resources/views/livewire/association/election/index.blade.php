@@ -1,15 +1,26 @@
 <?php
 
+use App\Enums\ElectionBallotRefusal;
 use App\Enums\ElectionCandidateStatus;
+use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionFeeRule;
 use App\Enums\ElectionRoundState;
+use App\Exceptions\ElectionBallotRefusedException;
+use App\Exceptions\ElectionBallotWriteException;
+use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
+use App\Models\MemberProposal;
 use App\Services\Election\Candidacies;
+use App\Services\Election\CastBallot;
 use App\Services\Election\ElectoralRoll;
+use App\Services\Election\TallyResult;
+use App\Services\Election\TallyRound;
+use App\Services\Election\VoteEvent;
 use App\Support\NostrAuth;
+use Carbon\CarbonInterface;
 use Flux\Flux;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
@@ -23,6 +34,25 @@ use Livewire\Component;
 new class extends Component
 {
     private const STATEMENT_MAX = 2000;
+
+    /** Times are stored in UTC (app.timezone) and shown as members in Germany read them. */
+    public const DISPLAY_TIMEZONE = 'Europe/Berlin';
+
+    /**
+     * What the rounds looked like at the last render, so a poll that finds
+     * nothing new skips the render and leaves a half-filled ballot alone.
+     */
+    public string $fingerprint = '';
+
+    /**
+     * What happened to the member's ballot on this page, per round: 'now'
+     * when the cast went through, 'late' when a retry found the vote already
+     * there, 'closed' when the board closed the round before it arrived.
+     * Round ids only — never a choice.
+     *
+     * @var array<int, string>
+     */
+    public array $notes = [];
 
     /**
      * Which election is shown when more than one is visible (the board sees
@@ -97,15 +127,19 @@ new class extends Component
     }
 
     /**
-     * The chosen election, else the newest one that is not over, else the
-     * newest one.
+     * The chosen election; else the real one before any test election (the
+     * board reaches a test election through the switcher), the newest that
+     * is not over first.
      */
     #[Computed]
     public function election(): ?Election
     {
         $elections = $this->elections;
+        $real = $elections->reject(fn (Election $election): bool => $election->is_test);
 
         return $elections->firstWhere('id', $this->electionId)
+            ?? $real->first(fn (Election $election): bool => $this->phaseOf($election) !== 'result')
+            ?? $real->first()
             ?? $elections->first(fn (Election $election): bool => $this->phaseOf($election) !== 'result')
             ?? $elections->first();
     }
@@ -256,11 +290,16 @@ new class extends Component
             return null;
         }
 
+        if ($this->ballotRounds->isNotEmpty()) {
+            return 'ballot';
+        }
+
         if ($this->ineligibleBecause === 'fee') {
             return 'pay';
         }
 
-        return $this->openForCandidacy->isNotEmpty() ? 'candidacy' : null;
+        // A further candidacy for another office is offered, not asked for.
+        return $this->openForCandidacy->isNotEmpty() && $this->ownCandidacies->isEmpty() ? 'candidacy' : null;
     }
 
     /**
@@ -332,9 +371,377 @@ new class extends Component
         Flux::toast(__('Deine Kandidatur ist zurückgezogen.'));
     }
 
+    /**
+     * Every round of the election with its approved candidates, a run-off
+     * right after the round it belongs to.
+     *
+     * @return Collection<int, ElectionRound>
+     */
+    #[Computed]
+    public function allRounds(): Collection
+    {
+        if ($this->election === null) {
+            return collect();
+        }
+
+        $rounds = $this->election->rounds()
+            ->with(['candidates' => fn ($query) => $query
+                ->where('status', ElectionCandidateStatus::Approved)
+                ->with('pleb.profile')
+                ->orderBy('id')])
+            ->orderBy('position')
+            ->orderBy('id')
+            ->get();
+
+        $runOffs = $rounds->whereNotNull('parent_round_id')->groupBy('parent_round_id');
+
+        return $rounds->whereNull('parent_round_id')
+            ->flatMap(fn (ElectionRound $round): array => [$round, ...($runOffs->get($round->getKey())?->all() ?? [])])
+            ->values();
+    }
+
+    /**
+     * Per round that has been opened: its state now, whether the member is
+     * on its roll, and the id of the member's own vote event, if any.
+     *
+     * @return array<int, array{state: ElectionRoundState, onRoll: bool, eventId: string|null}>
+     */
+    #[Computed]
+    public function standing(): array
+    {
+        $viewer = $this->viewer();
+        $roll = app(ElectoralRoll::class);
+        $now = now();
+        $standing = [];
+
+        foreach ($this->allRounds as $round) {
+            $state = $round->stateAt($now);
+            $opened = $state !== ElectionRoundState::Draft;
+
+            $standing[$round->getKey()] = [
+                'state' => $state,
+                'onRoll' => $opened && $viewer !== null && $roll->contains($round, $viewer),
+                'eventId' => $opened && $viewer !== null ? $round->voteEventIdOf($viewer) : null,
+            ];
+        }
+
+        return $standing;
+    }
+
+    /**
+     * The open rounds the member can still vote in.
+     *
+     * @return Collection<int, ElectionRound>
+     */
+    #[Computed]
+    public function ballotRounds(): Collection
+    {
+        return $this->allRounds->filter(function (ElectionRound $round): bool {
+            $standing = $this->standing[$round->getKey()];
+
+            return $standing['state'] === ElectionRoundState::Open && $standing['onRoll'] && $standing['eventId'] === null;
+        })->values();
+    }
+
+    /**
+     * The count of every sealed round whose result may be shown, by round id.
+     *
+     * @return array<int, TallyResult>
+     */
+    #[Computed]
+    public function results(): array
+    {
+        $results = [];
+
+        foreach ($this->allRounds as $round) {
+            if (! $round->isSealed() || ($round->reveal_at !== null && $round->reveal_at->isFuture())) {
+                continue;
+            }
+
+            try {
+                $results[$round->getKey()] = app(TallyRound::class)->handle($round);
+            } catch (ElectionRoundStateException|\UnexpectedValueException) {
+                // Not countable: the round shows as closed without numbers.
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Who holds which office after the election: per round that members
+     * stood in, the names elected there or in its run-offs, and how many
+     * seats stay empty. Null until every round is closed.
+     *
+     * @return list<array{title: string, seats: int, names: list<string>, annulled: bool, open: int}>|null
+     */
+    #[Computed]
+    public function outcome(): ?array
+    {
+        if ($this->phase !== 'result') {
+            return null;
+        }
+
+        $rows = [];
+
+        foreach ($this->allRounds->whereNull('parent_round_id') as $round) {
+            $names = [];
+
+            foreach ($this->allRounds->filter(fn (ElectionRound $each): bool => $each->is($round) || $each->parent_round_id === $round->getKey()) as $each) {
+                foreach ($this->results[$each->getKey()]->elected ?? [] as $candidateId) {
+                    $names[] = $this->candidateName($each, $candidateId);
+                }
+            }
+
+            $rows[] = [
+                'title' => $round->title,
+                'seats' => $round->seats,
+                'names' => $names,
+                'annulled' => $round->annulled_at !== null,
+                'open' => max(0, $round->seats - count($names)),
+            ];
+        }
+
+        return $rows;
+    }
+
+    public function candidateName(ElectionRound $round, int $candidateId): string
+    {
+        return MemberProposal::authorNameOf($round->candidates->firstWhere('id', $candidateId)?->pleb);
+    }
+
+    /**
+     * A short, readable form of an event id: its first and last eight characters.
+     */
+    public function shortEventId(string $eventId): string
+    {
+        return substr($eventId, 0, 8).'…'.substr($eventId, -8);
+    }
+
+    public function displayTime(CarbonInterface $moment, string $format): string
+    {
+        return $moment->copy()->timezone(self::DISPLAY_TIMEZONE)->format($format);
+    }
+
+    /**
+     * The state the page was rendered from. A change in any of it re-renders.
+     */
+    protected function currentFingerprint(): string
+    {
+        return md5(json_encode([
+            $this->election?->getKey(),
+            $this->phase,
+            collect($this->standing)->map(fn (array $standing): array => [$standing['state']->value, $standing['onRoll'], $standing['eventId'] !== null])->all(),
+            array_keys($this->results),
+            $this->allRounds->map(fn (ElectionRound $round): array => [$round->getKey(), $round->candidates->count()])->all(),
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * Polled while the page is open: re-render only when the board opened or
+     * closed a round, or anything else on it changed.
+     */
+    public function syncRounds(): void
+    {
+        $this->clearCaches();
+        $fingerprint = $this->currentFingerprint();
+
+        if ($fingerprint === $this->fingerprint) {
+            $this->skipRender();
+
+            return;
+        }
+
+        $this->fingerprint = $fingerprint;
+    }
+
+    /**
+     * The open round the member may vote in, or a German reason why not.
+     */
+    protected function ballotRound(int $roundId): ElectionRound|string
+    {
+        $round = $this->allRounds->firstWhere('id', $roundId);
+        $standing = $round === null ? null : $this->standing[$round->getKey()];
+
+        return match (true) {
+            $standing === null, $standing['state'] !== ElectionRoundState::Open => __('Der Vorstand hat diesen Wahlgang inzwischen geschlossen. Deine Stimme ist nicht abgegeben.'),
+            ! $standing['onRoll'] => ElectionBallotRefusal::NotOnRoll->label(),
+            $standing['eventId'] !== null => ElectionBallotRefusal::AlreadyVoted->label(),
+            default => $round,
+        };
+    }
+
+    /**
+     * The unsigned vote event for `$selection` (candidate id => for|yes|no),
+     * with a readable German summary as content — that text is what the
+     * signer shows. `created_at` is the server's clock, so a member's device
+     * clock cannot push the vote outside the open period.
+     *
+     * @param  array<array-key, mixed>  $selection
+     * @return array{event?: array<string, mixed>, message?: string}
+     */
+    public function prepareBallot(int $roundId, array $selection): array
+    {
+        $this->skipRender();
+
+        $round = $this->ballotRound($roundId);
+
+        if (is_string($round)) {
+            return ['message' => $round];
+        }
+
+        try {
+            $round->counting_rule->ballotRows($selection, $round->candidates->modelKeys(), $round->seats);
+        } catch (ElectionBallotRefusedException $refusal) {
+            return ['message' => $refusal->reason->label()];
+        }
+
+        $event = VoteEvent::template($round, $selection, now()->getTimestamp());
+        $event['content'] = $this->summary($round, $selection);
+
+        return ['event' => $event];
+    }
+
+    /**
+     * @param  array<int, string>  $selection
+     */
+    protected function summary(ElectionRound $round, array $selection): string
+    {
+        $lines = [
+            __('Meine Stimme bei „:election“', ['election' => $this->election->name]),
+            __('Wahlgang: :round', ['round' => $round->title]),
+        ];
+
+        if ($selection === []) {
+            $lines[] = __('Leerer Stimmzettel');
+
+            return implode("\n", $lines);
+        }
+
+        foreach ($round->candidates as $candidate) {
+            $choice = $selection[$candidate->getKey()] ?? null;
+            $name = MemberProposal::authorNameOf($candidate->pleb);
+
+            if ($choice === null && $round->counting_rule === ElectionCountingRule::YesNoPerCandidate) {
+                $lines[] = __('Enthaltung: :name', ['name' => $name]);
+            } elseif ($choice !== null) {
+                $lines[] = match ($choice) {
+                    'yes' => __('Ja: :name', ['name' => $name]),
+                    'no' => __('Nein: :name', ['name' => $name]),
+                    default => __('Für: :name', ['name' => $name]),
+                };
+            }
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Take in the signed vote. Answers with a status the browser acts on:
+     * 'counted' (the page re-renders into "gezählt"), 'voted' (another vote
+     * of the member was already there), 'closed', or 'refused' with the
+     * German reason.
+     *
+     * @param  array<string, mixed>  $event
+     * @return array{status: string, message?: string}
+     */
+    public function castBallot(int $roundId, array $event): array
+    {
+        $round = $this->allRounds->firstWhere('id', $roundId);
+        $viewer = $this->viewer();
+
+        if ($round === null || $viewer === null) {
+            $this->skipRender();
+
+            return ['status' => 'refused', 'message' => ElectionBallotRefusal::RoundNotOpen->label()];
+        }
+
+        try {
+            app(CastBallot::class)->handle($round, $viewer, $event);
+        } catch (ElectionBallotRefusedException $refusal) {
+            return $this->afterRefusal($round, $viewer, $refusal->reason, $event['id'] ?? null);
+        } catch (ElectionBallotWriteException) {
+            $this->skipRender();
+
+            return ['status' => 'refused', 'message' => __('Deine Stimme konnte gerade nicht gespeichert werden. Bitte versuche es gleich noch einmal.')];
+        }
+
+        $this->notes[$roundId] = 'now';
+        $this->refreshAfterVote();
+
+        return ['status' => 'counted'];
+    }
+
+    /**
+     * @return array{status: string, message?: string}
+     */
+    protected function afterRefusal(ElectionRound $round, EinundzwanzigPleb $viewer, ElectionBallotRefusal $reason, mixed $eventId): array
+    {
+        if ($reason === ElectionBallotRefusal::AlreadyVoted) {
+            // A retry after a lost answer: the first attempt had arrived.
+            $arrived = is_string($eventId) && $round->voteEventIdOf($viewer) === $eventId;
+
+            if ($arrived) {
+                $this->notes[$round->getKey()] = 'late';
+            }
+
+            $this->refreshAfterVote();
+
+            return ['status' => $arrived ? 'counted' : 'voted'];
+        }
+
+        if ($reason === ElectionBallotRefusal::RoundNotOpen) {
+            $this->notes[$round->getKey()] = 'closed';
+            $this->refreshAfterVote();
+
+            return ['status' => 'closed', 'message' => __('Der Vorstand hat diesen Wahlgang inzwischen geschlossen. Deine Stimme ist nicht abgegeben.')];
+        }
+
+        $this->skipRender();
+
+        return ['status' => 'refused', 'message' => $reason->label()];
+    }
+
+    /**
+     * After a lost answer: did the vote with `$eventId` arrive? 'counted',
+     * 'voted' (a different vote of the member is there) or 'none'.
+     */
+    public function checkBallot(int $roundId, string $eventId): string
+    {
+        $round = $this->allRounds->firstWhere('id', $roundId);
+        $stored = $round === null || $this->viewer() === null ? null : $round->voteEventIdOf($this->viewer());
+
+        if ($stored === null) {
+            $this->skipRender();
+
+            return 'none';
+        }
+
+        if ($stored === $eventId) {
+            $this->notes[$roundId] = 'late';
+        }
+
+        $this->refreshAfterVote();
+
+        return $stored === $eventId ? 'counted' : 'voted';
+    }
+
+    protected function refreshAfterVote(): void
+    {
+        $this->clearCaches();
+        $this->fingerprint = $this->currentFingerprint();
+    }
+
+    public function rendering(): void
+    {
+        if ($this->fingerprint === '' && $this->isMember) {
+            $this->fingerprint = $this->currentFingerprint();
+        }
+    }
+
     protected function clearCaches(): void
     {
-        unset($this->rounds, $this->ownCandidacies, $this->withdrawableIds, $this->openForCandidacy, $this->primaryAction, $this->phase);
+        unset($this->rounds, $this->allRounds, $this->standing, $this->ballotRounds, $this->results, $this->outcome, $this->ownCandidacies, $this->withdrawableIds, $this->openForCandidacy, $this->primaryAction, $this->phase, $this->election, $this->elections);
     }
 };
 ?>
@@ -352,7 +759,7 @@ new class extends Component
 
 {{-- pb-32: the floating "Connect with Nostr" button of window.nostr.js sits
      at the bottom of the viewport; the last line must scroll clear of it. --}}
-<div class="mx-auto w-full max-w-5xl pb-32">
+<div class="mx-auto w-full max-w-5xl pb-32" @if ($this->election !== null) wire:poll.5s="syncRounds" @endif>
     @if (! $this->isMember)
         <div class="mx-auto max-w-2xl">
             <flux:callout variant="warning" icon="exclamation-circle">
@@ -429,7 +836,8 @@ new class extends Component
         @else
             <div class="grid gap-x-10 gap-y-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
                 {{-- Your standing: first on a phone, the right column on a desk. --}}
-                <aside class="space-y-6 lg:col-start-2 lg:row-start-1" aria-label="{{ __('Dein Stand') }}">
+                {{-- While a ballot is open the ballot comes first on a phone too. --}}
+                <aside @class(['space-y-6 lg:col-start-2 lg:row-start-1', 'order-last lg:order-none' => $this->ballotRounds->isNotEmpty()]) aria-label="{{ __('Dein Stand') }}">
                     <section aria-labelledby="eligibility" @class([
                         'rounded-lg border p-5',
                         'border-success/40 bg-bg-surface' => $this->isEntitled,
@@ -522,7 +930,9 @@ new class extends Component
                                         @case('announced')
                                             <p class="mt-1 text-sm text-text-secondary">
                                                 @if ($this->election->announced_at)
-                                                    {{ __('Angekündigt am :date', ['date' => $this->election->announced_at->timezone(config('app.timezone'))->format('d.m.Y')]) }}
+                                                    {{ __('Angekündigt am :date', ['date' => $this->displayTime($this->election->announced_at, 'd.m.Y')]) }}
+                                                @elseif ($isDone)
+                                                    {{ __('Übersprungen: Eine Testwahl wird nicht angekündigt') }}
                                                 @else
                                                     {{ __('Noch nicht angekündigt') }}
                                                 @endif
@@ -630,28 +1040,15 @@ new class extends Component
                                             @php $opensAt = $this->rounds->pluck('opens_at')->filter()->sort()->first(); @endphp
                                             <p class="mt-1 text-sm text-text-secondary">
                                                 @if ($opensAt)
-                                                    {{ __('Am :date um :time Uhr', ['date' => $opensAt->timezone(config('app.timezone'))->format('d.m.Y'), 'time' => $opensAt->timezone(config('app.timezone'))->format('H:i')]) }}
+                                                    {{ __('Am :date um :time Uhr', ['date' => $this->displayTime($opensAt, 'd.m.Y'), 'time' => $this->displayTime($opensAt, 'H:i')]) }}
                                                 @else
                                                     {{ __('Termin und Link zum Call kommen vom Vorstand') }}
                                                 @endif
                                             </p>
-                                            @if ($isCurrent)
+                                            @if ($isCurrent && $this->ballotRounds->isEmpty())
                                                 <p class="mt-3 max-w-prose text-base leading-normal text-text-primary">
-                                                    {{ __('Der Vorstand öffnet die Wahlgänge nacheinander im Call. Der Stimmzettel erscheint dann hier auf dieser Seite.') }}
+                                                    {{ __('Der Vorstand öffnet die Wahlgänge nacheinander im Call. Der Stimmzettel erscheint dann hier, ohne dass du die Seite neu lädst.') }}
                                                 </p>
-                                                <ul class="mt-4 divide-y divide-border-subtle rounded-lg border border-border-subtle bg-bg-surface">
-                                                    @foreach ($this->rounds as $round)
-                                                        @php $state = $round->stateAt(now()); @endphp
-                                                        <li wire:key="state-{{ $round->id }}" class="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-                                                            <span class="text-base text-text-primary">{{ $round->title }}</span>
-                                                            <flux:badge size="sm"
-                                                                        :color="match ($state) { ElectionRoundState::Open => 'green', ElectionRoundState::Closed, ElectionRoundState::Annulled => 'zinc', default => 'yellow' }"
-                                                                        :icon="match ($state) { ElectionRoundState::Open => 'play', ElectionRoundState::Closed => 'lock-closed', ElectionRoundState::Annulled => 'x-mark', default => 'clock' }">
-                                                                {{ match ($state) { ElectionRoundState::Open => __('Offen'), ElectionRoundState::Closed => __('Geschlossen'), ElectionRoundState::Annulled => __('Aufgehoben'), default => __('Wartet') } }}
-                                                            </flux:badge>
-                                                        </li>
-                                                    @endforeach
-                                                </ul>
                                             @endif
                                             @break
 
@@ -663,8 +1060,108 @@ new class extends Component
                                                     {{ __('Direkt nach dem letzten Wahlgang') }}
                                                 @endif
                                             </p>
+                                            @if ($isCurrent && $this->outcome !== null)
+                                                <section class="mt-4 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-5" aria-labelledby="after-election">
+                                                    <h4 id="after-election" class="text-lg font-bold text-text-primary">{{ __('Zustand nach der Wahl') }}</h4>
+                                                    <dl class="mt-3 divide-y divide-border-subtle">
+                                                        @foreach ($this->outcome as $office)
+                                                            <div wire:key="after-{{ $loop->index }}" class="grid gap-1 py-3 sm:grid-cols-[12rem_minmax(0,1fr)] sm:gap-4">
+                                                                <dt class="text-base text-text-secondary">{{ $office['title'] }}</dt>
+                                                                <dd class="text-base text-text-primary">
+                                                                    @if ($office['annulled'])
+                                                                        {{ __('Wahlgang aufgehoben, das Amt ist nicht neu besetzt') }}
+                                                                    @else
+                                                                        @if ($office['names'] !== [])
+                                                                            <span class="font-bold">{{ implode(', ', $office['names']) }}</span>
+                                                                        @endif
+                                                                        @if ($office['open'] > 0)
+                                                                            <span @class(['block' => $office['names'] !== [], 'text-text-secondary'])>
+                                                                                {{ trans_choice(':count Sitz bleibt unbesetzt|:count Sitze bleiben unbesetzt', $office['open'], ['count' => $office['open']]) }}
+                                                                            </span>
+                                                                        @endif
+                                                                    @endif
+                                                                </dd>
+                                                            </div>
+                                                        @endforeach
+                                                    </dl>
+                                                </section>
+                                            @endif
                                             @break
                                     @endswitch
+
+                                    {{-- The rounds live in whichever step is open: during the meeting and after it. --}}
+                                    @if ($isCurrent && in_array($key, ['meeting', 'result'], true) && $this->allRounds->isNotEmpty())
+                                        <ol class="mt-6 space-y-6" aria-label="{{ __('Wahlgänge') }}">
+                                            @foreach ($this->allRounds as $round)
+                                                @php
+                                                    $standing = $this->standing[$round->id];
+                                                    $state = $standing['state'];
+                                                    $result = $this->results[$round->id] ?? null;
+                                                    $note = $this->notes[$round->id] ?? null;
+                                                    $isBallot = $this->ballotRounds->contains('id', $round->id);
+                                                @endphp
+                                                <li wire:key="round-{{ $round->id }}-{{ $state->value }}-{{ $standing['eventId'] ? 'voted' : 'open' }}">
+                                                    <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+                                                        <h4 class="text-lg font-bold leading-snug text-text-primary">
+                                                            {{ $round->parent_round_id ? __('Stichwahl: :office', ['office' => $round->title]) : $round->title }}
+                                                            <span class="ml-1 text-base font-normal text-text-secondary">{{ trans_choice(':count Sitz|:count Sitze', $round->seats, ['count' => $round->seats]) }}</span>
+                                                        </h4>
+                                                        <flux:badge size="sm"
+                                                                    :color="match (true) { $result !== null => 'zinc', $state === ElectionRoundState::Open => 'green', $state === ElectionRoundState::Closed, $state === ElectionRoundState::Annulled => 'zinc', default => 'yellow' }"
+                                                                    :icon="match (true) { $result !== null => 'check', $state === ElectionRoundState::Open => 'play', $state === ElectionRoundState::Closed => 'lock-closed', $state === ElectionRoundState::Annulled => 'x-mark', default => 'clock' }">
+                                                            {{ match (true) { $result !== null => __('Ausgezählt'), $state === ElectionRoundState::Open => __('Offen'), $state === ElectionRoundState::Closed => __('Geschlossen'), $state === ElectionRoundState::Annulled => __('Aufgehoben'), default => __('Wartet') } }}
+                                                        </flux:badge>
+                                                    </div>
+
+                                                    @if ($isBallot)
+                                                        <x-election-ballot :round="$round" :election="$this->election" :pubkey="$this->viewerPubkey" />
+                                                    @elseif ($standing['eventId'] !== null && $result === null)
+                                                        <div role="status" class="mt-3 rounded-lg border border-success/50 bg-bg-surface p-4 sm:p-5">
+                                                            <p class="flex items-start gap-3 text-lg font-bold leading-snug text-text-primary">
+                                                                <flux:icon.check-circle class="mt-0.5 size-6 shrink-0 text-success" aria-hidden="true" />
+                                                                <span>
+                                                                    @if ($note === 'late')
+                                                                        {{ __('Deine Stimme war schon angekommen. Sie ist gezählt.') }}
+                                                                    @elseif ($note === 'now')
+                                                                        {{ __('Deine Stimme ist gezählt.') }}
+                                                                    @else
+                                                                        {{ __('Du hast in diesem Wahlgang schon gewählt. Deine Stimme ist gezählt.') }}
+                                                                    @endif
+                                                                </span>
+                                                            </p>
+                                                            <p class="mt-2 pl-9 text-sm leading-normal text-text-secondary">
+                                                                {{ __('Kennung deiner Stimme: :id', ['id' => $this->shortEventId($standing['eventId'])]) }}
+                                                            </p>
+                                                            <p class="mt-1 pl-9 text-sm leading-normal text-text-secondary">
+                                                                {{ $state === ElectionRoundState::Open ? __('Das Ergebnis steht hier, sobald der Vorstand den Wahlgang schließt.') : __('Der Wahlgang ist geschlossen. Das Ergebnis steht hier, sobald es ausgezählt ist.') }}
+                                                            </p>
+                                                        </div>
+                                                    @elseif ($state === ElectionRoundState::Open && ! $standing['onRoll'])
+                                                        <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
+                                                            {{ __('Du stehst für diesen Wahlgang nicht im Wählerverzeichnis. Ins Verzeichnis kommt, wer beim Öffnen des Wahlgangs wählen darf. Melde dich im Call beim Vorstand, wenn das nicht stimmt.') }}
+                                                        </p>
+                                                    @elseif ($note === 'closed')
+                                                        <p role="status" class="mt-2 max-w-prose text-base leading-normal text-text-primary">
+                                                            {{ __('Der Vorstand hat diesen Wahlgang geschlossen, bevor deine Stimme ankam. Sie ist nicht gezählt.') }}
+                                                        </p>
+                                                    @elseif ($state === ElectionRoundState::Closed && $result === null)
+                                                        <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
+                                                            @if ($standing['onRoll'])
+                                                                {{ __('Ohne deine Stimme geschlossen.') }}
+                                                            @endif
+                                                            {{ $round->isSealed() && $round->reveal_at ? __('Das Ergebnis steht hier ab :time Uhr.', ['time' => $this->displayTime($round->reveal_at, 'd.m.Y H:i')]) : __('Das Ergebnis steht hier, sobald es ausgezählt ist.') }}
+                                                        </p>
+                                                    @elseif ($state === ElectionRoundState::Annulled)
+                                                        <p class="mt-2 text-base text-text-secondary">{{ __('Der Vorstand hat diesen Wahlgang aufgehoben. Er zählt nicht.') }}</p>
+                                                    @endif
+
+                                                    @if ($result !== null)
+                                                        <x-election-round-result :round="$round" :result="$result" :ballots="$round->votes()->count()" :voted="$standing['eventId'] !== null" />
+                                                    @endif
+                                                </li>
+                                            @endforeach
+                                        </ol>
+                                    @endif
                                 </div>
                             </li>
                         @endforeach
