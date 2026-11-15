@@ -15,12 +15,12 @@ require_once __DIR__.'/helpers.php';
 
 /*
  * The count of a round as the application produces it: through the actions,
- * read through `sealedChoices()`.
+ * from the stored votes of a sealed round.
  *
  * Mutations that must turn this file red (patches in the plan folder):
- *  - M6b  the tally reads the ballot rows of every round, not of this one
- *  - M6d  `sealedChoices()` no longer refuses an unsealed round
- *  - M6e  the result carries a list of ballot rows next to the numbers
+ *  - M6b  the tally reads the votes of every round, not of this one
+ *  - M6d  `TallyRound` no longer refuses an unsealed round
+ *  - M6e  the result carries a list of votes next to the numbers
  *  - B1-E1 `OpenRound` no longer checks earlier rounds for elected candidates
  *  - B1-E2 an undecided tie of the parent round blocks its own run-off
  */
