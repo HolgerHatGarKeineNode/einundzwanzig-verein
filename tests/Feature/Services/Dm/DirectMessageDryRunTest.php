@@ -93,3 +93,46 @@ it('freezes the recipient list when a run starts; a member who qualifies later i
         ->toBe([$first->id, $second->id])
         ->and($late->id)->not->toBeIn(DmDelivery::query()->pluck('einundzwanzig_pleb_id')->all());
 });
+
+/*
+ * Design Q23 / P6 DoD: "zweiter Versand in der Sperrfrist legt 0 neue an".
+ * The same message to the same audience within the lock creates no second
+ * delivery; the members are stored as skipped. Mutation that must turn this
+ * red: let `DirectMessageRepeatLock::skippedIds()` return nothing.
+ */
+it('creates no delivery for a second sending of the same message to the same audience within the lock', function () {
+    $first = EinundzwanzigPleb::factory()->active()->create();
+    $second = EinundzwanzigPleb::factory()->active()->create();
+    $start = app(StartDirectMessageRun::class);
+    $same = fn (): DmMessage => DmMessage::factory()->create(['type' => DmMessageType::Individual, 'plaintext' => 'Morgen ist Wahl.', 'variables' => []]);
+
+    $run = $start->handle($same(), DmAudience::Members);
+    (new DispatchBulkDirectMessages($run->id))->handle();
+
+    $this->travel(23)->hours();
+    $dryRun = app(DirectMessageDryRun::class)->handle(DmMessageType::Individual, DmAudience::Members, plaintext: 'Morgen ist Wahl.');
+    $again = $start->handle($same(), DmAudience::Members, confirmedRecipientIds: $dryRun->recipientIds);
+    (new DispatchBulkDirectMessages($again->id))->handle();
+
+    expect([$dryRun->count, $dryRun->recipientIds, $dryRun->skippedIds])->toBe([0, [], [$first->id, $second->id]])
+        ->and($again->recipient_count)->toBe(0)
+        ->and($again->fresh()->skipped_ids)->toBe([$first->id, $second->id])
+        ->and(DmDelivery::query()->where('dm_run_id', $again->id)->count())->toBe(0)
+        ->and(DmDelivery::query()->count())->toBe(2);
+});
+
+it('sends again after the lock, with another text and to another audience', function () {
+    $member = EinundzwanzigPleb::factory()->active()->withPaidYear((int) now()->year)->create();
+    $election = Election::factory()->create();
+    $start = app(StartDirectMessageRun::class);
+    $message = fn (string $text = 'Morgen ist Wahl.'): DmMessage => DmMessage::factory()->create(['type' => DmMessageType::Individual, 'plaintext' => $text, 'variables' => []]);
+
+    $start->handle($message(), DmAudience::Members);
+
+    expect($start->handle($message('Übermorgen ist Wahl.'), DmAudience::Members)->recipient_ids)->toBe([$member->id])
+        ->and($start->handle($message(), DmAudience::EntitledVoters, $election)->recipient_ids)->toBe([$member->id]);
+
+    $this->travel(25)->hours();
+
+    expect($start->handle($message(), DmAudience::Members)->recipient_ids)->toBe([$member->id]);
+});

@@ -27,9 +27,15 @@ final class StartDirectMessageRun
     public function __construct(
         private readonly DirectMessageAudience $audience,
         private readonly DirectMessagePause $pause,
+        private readonly DirectMessageRepeatLock $repeatLock,
     ) {}
 
     /**
+     * Whoever got the same message for the same audience within the repeat
+     * lock (DirectMessageRepeatLock) is left out and stored as skipped, so a
+     * second click creates no second delivery. Scheduled rows are not locked:
+     * a plan may send the same reminder twice on purpose.
+     *
      * @param  list<int>|null  $confirmedRecipientIds  the members the board confirmed (DirectMessageDryRunResult::$recipientIds);
      *                                                 when given, the start freezes exactly these or nothing
      *
@@ -41,7 +47,7 @@ final class StartDirectMessageRun
             return null;
         }
 
-        $run = $this->freeze($message, $audience, $election, $confirmedRecipientIds);
+        $run = $this->freeze($message, $audience, $election, $confirmedRecipientIds, lockRepeats: true);
 
         DispatchBulkDirectMessages::dispatch($run->id);
 
@@ -105,9 +111,19 @@ final class StartDirectMessageRun
     /**
      * @param  list<int>|null  $confirmedRecipientIds
      */
-    private function freeze(DmMessage $message, DmAudience $audience, ?Election $election, ?array $confirmedRecipientIds = null): DmRun
+    private function freeze(DmMessage $message, DmAudience $audience, ?Election $election, ?array $confirmedRecipientIds = null, bool $lockRepeats = false): DmRun
     {
         $recipients = $this->audience->query($audience, $election)->select('einundzwanzig_plebs.id')->get();
+        $skippedIds = $lockRepeats ? $this->repeatLock->skippedIds(
+            $message->type,
+            (string) $message->plaintext,
+            $message->variables ?? [],
+            $audience,
+            $election,
+            $recipients->map(fn (EinundzwanzigPleb $recipient): int => (int) $recipient->getKey())->all(),
+            now(),
+        ) : [];
+        $recipients = $recipients->reject(fn (EinundzwanzigPleb $recipient): bool => in_array((int) $recipient->getKey(), $skippedIds, true))->values();
 
         if ($confirmedRecipientIds !== null) {
             $current = $recipients->map(fn (EinundzwanzigPleb $recipient): int => (int) $recipient->getKey())->unique()->sort()->values()->all();
@@ -122,6 +138,7 @@ final class StartDirectMessageRun
             $recipients,
             $audience,
             $audience->needsElection() ? $election : null,
+            $skippedIds,
         );
     }
 }

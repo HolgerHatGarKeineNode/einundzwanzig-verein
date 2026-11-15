@@ -14,6 +14,7 @@ use App\Services\Dm\ComposeDirectMessage;
 use App\Services\Dm\DirectMessageAudienceChanged;
 use App\Services\Dm\DirectMessageAudience;
 use App\Services\Dm\DirectMessageDryRun;
+use App\Services\Dm\DirectMessageRepeatLock;
 use App\Services\Dm\DirectMessagePause;
 use App\Services\Dm\DirectMessageText;
 use App\Services\Dm\DirectMessageTextInvalid;
@@ -90,7 +91,7 @@ class extends Component
      * offered while the draft is still the one the dry run saw, and a start
      * freezes exactly `recipient_ids` or nothing.
      *
-     * @var array{signature: string, count: int, recipient_ids: list<int>, unreachable: list<string>, unreachable_count: int}|null
+     * @var array{signature: string, count: int, recipient_ids: list<int>, unreachable: list<string>, unreachable_count: int, skipped: int, lock_hours: int}|null
      */
     #[Locked]
     public ?array $dryRun = null;
@@ -279,6 +280,8 @@ class extends Component
             'recipient_ids' => $result->recipientIds,
             'unreachable' => $unreachable,
             'unreachable_count' => count($result->unreachableIds),
+            'skipped' => count($result->skippedIds),
+            'lock_hours' => app(DirectMessageRepeatLock::class)->hours(),
         ];
     }
 
@@ -374,6 +377,14 @@ class extends Component
         $this->tab = 'history';
         $this->openRunId = $run->id;
         unset($this->runs, $this->openRun);
+
+        $skipped = count($run->skipped_ids ?? []);
+
+        if ($run->recipient_count === 0 && $skipped > 0) {
+            Flux::toast(trans_choice('Nichts gesendet: Ein Mitglied hat diese Nachricht in den letzten :hours Stunden schon bekommen und ist übersprungen.|Nichts gesendet: Alle :count Mitglieder haben diese Nachricht in den letzten :hours Stunden schon bekommen und sind übersprungen.', $skipped, ['count' => $skipped, 'hours' => app(DirectMessageRepeatLock::class)->hours()]), variant: 'warning');
+
+            return;
+        }
 
         Flux::toast(trans_choice('Gestartet: geht an ein Mitglied.|Gestartet: geht an :count Mitglieder.', $run->recipient_count, ['count' => $run->recipient_count]), variant: 'success');
     }
@@ -730,7 +741,10 @@ class extends Component
      * covers deliveries in work and recipients the fan-out has not reached
      * yet.
      *
-     * @return array{sent: int, no_inbox: int, failed: int, waiting: int, seen: int, retry: int}
+     * Skipped are the members the repeat lock left out (DirectMessageRepeatLock):
+     * they got no delivery in this run.
+     *
+     * @return array{sent: int, no_inbox: int, failed: int, waiting: int, seen: int, retry: int, skipped: int}
      */
     public function countsOf(DmRun $run): array
     {
@@ -745,11 +759,12 @@ class extends Component
             'waiting' => max(0, $run->recipient_count - $sent - $noInbox - $failed),
             'seen' => (int) $run->seen_count,
             'retry' => $failed,
+            'skipped' => count($run->skipped_ids ?? []),
         ];
     }
 
     /**
-     * @param  array{sent: int, no_inbox: int, failed: int, waiting: int, seen: int, retry: int}  $counts
+     * @param  array{sent: int, no_inbox: int, failed: int, waiting: int, seen: int, retry: int, skipped: int}  $counts
      */
     public function countsSentence(array $counts): string
     {
@@ -758,6 +773,7 @@ class extends Component
             $counts['no_inbox'] > 0 ? __(':count ohne Posteingang', ['count' => $counts['no_inbox']]) : null,
             $counts['failed'] > 0 ? __(':count fehlgeschlagen', ['count' => $counts['failed']]) : null,
             $counts['waiting'] > 0 ? __(':count warten', ['count' => $counts['waiting']]) : null,
+            ($counts['skipped'] ?? 0) > 0 ? __(':count übersprungen', ['count' => $counts['skipped']]) : null,
         ]);
 
         return $parts === [] ? __('Keine Empfänger') : implode(', ', $parts);

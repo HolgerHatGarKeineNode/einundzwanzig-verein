@@ -13,6 +13,7 @@ use App\Models\DmSchedule;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Services\Dm\DirectMessagePause;
+use App\Services\Dm\StartDirectMessageRun;
 use App\Support\NostrAuth;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Queue;
@@ -510,4 +511,40 @@ it('never claims more than the relays told: no state label says read or delivere
             ->not->toContain('read')
             ->not->toContain('delivered');
     }
+});
+
+/*
+ * Design Q23 on the page: the second sending of the same message to the same
+ * audience within the lock counts the members as skipped, creates no
+ * delivery, and the history says „übersprungen“.
+ */
+it('shows a repeated sending within the lock as skipped and creates no new delivery', function () {
+    Queue::fake();
+    messageCentreBoard(2);
+
+    $send = fn (): Testable => messageCentre()
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('audience', DmAudience::Members->value)
+        ->set('text', 'Hallo {name}, morgen ist Wahl.')
+        ->call('runDryRun');
+
+    $send()->call('confirmSend')->assertSet('tab', 'history');
+    $first = DmRun::query()->sole();
+    (new DispatchBulkDirectMessages($first->id))->handle();
+
+    $page = $send()
+        ->assertSee('Übersprungen: 3 Mitglieder, sie haben diese Nachricht für diese Zielgruppe in den letzten 24 Stunden schon bekommen.')
+        ->assertSee('Alle schon erreicht, nichts zu senden');
+
+    expect($page->get('dryRun')['count'])->toBe(0)
+        ->and(DmDelivery::query()->count())->toBe(3);
+
+    // A start that slips through anyway (an older page, a second board member) adds nobody.
+    $again = app(StartDirectMessageRun::class)->handle(tap($first->message->replicate())->save(), DmAudience::Members);
+    (new DispatchBulkDirectMessages($again->id))->handle();
+
+    expect(DmDelivery::query()->count())->toBe(3);
+
+    messageCentre()->call('showTab', 'history')->assertSee('3 übersprungen');
 });

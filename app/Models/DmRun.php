@@ -25,6 +25,7 @@ class DmRun extends Model
         'election_event_id',
         'recipient_ids',
         'recipient_count',
+        'skipped_ids',
         'fanned_out_at',
     ];
 
@@ -37,6 +38,7 @@ class DmRun extends Model
             'audience' => DmAudience::class,
             'recipient_ids' => 'array',
             'recipient_count' => 'integer',
+            'skipped_ids' => 'array',
             'fanned_out_at' => 'datetime',
         ];
     }

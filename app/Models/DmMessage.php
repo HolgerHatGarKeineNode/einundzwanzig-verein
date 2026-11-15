@@ -64,8 +64,9 @@ class DmMessage extends Model
      * say who it was meant for; both stay null for a test to one member.
      *
      * @param  iterable<int, EinundzwanzigPleb>  $recipients
+     * @param  list<int>  $skippedIds  members left out by the repeat lock (App\Services\Dm\DirectMessageRepeatLock)
      */
-    public function freezeRun(iterable $recipients, ?DmAudience $audience = null, ?Election $election = null): DmRun
+    public function freezeRun(iterable $recipients, ?DmAudience $audience = null, ?Election $election = null, array $skippedIds = []): DmRun
     {
         $ids = [];
 
@@ -81,6 +82,7 @@ class DmMessage extends Model
             'election_event_id' => $election?->getKey(),
             'recipient_ids' => $ids,
             'recipient_count' => count($ids),
+            'skipped_ids' => $skippedIds === [] ? null : $skippedIds,
         ]);
     }
 }

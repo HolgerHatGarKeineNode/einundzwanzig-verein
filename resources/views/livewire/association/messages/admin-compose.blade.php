@@ -159,6 +159,11 @@
                                     {{ trans_choice('Einer davon hat keinen Nostr-Posteingang und liest die Nachricht nur im Portal.|:count davon haben keinen Nostr-Posteingang und lesen die Nachricht nur im Portal.', $dryRun['unreachable_count'], ['count' => $dryRun['unreachable_count']]) }}
                                 @endif
                             </p>
+                            @if (($dryRun['skipped'] ?? 0) > 0)
+                                <p class="mt-2 text-base text-text-secondary" data-test="skipped">
+                                    {{ trans_choice('Übersprungen: ein Mitglied, es hat diese Nachricht für diese Zielgruppe in den letzten :hours Stunden schon bekommen.|Übersprungen: :count Mitglieder, sie haben diese Nachricht für diese Zielgruppe in den letzten :hours Stunden schon bekommen.', $dryRun['skipped'], ['count' => $dryRun['skipped'], 'hours' => $dryRun['lock_hours']]) }}
+                                </p>
+                            @endif
                             @if ($dryRun['unreachable'] !== [])
                                 <p class="mt-2 text-sm text-text-secondary break-words" data-test="unreachable">
                                     {{ implode(', ', $dryRun['unreachable']) }}@if ($dryRun['unreachable_count'] > count($dryRun['unreachable'])){{ __(' und :count weitere', ['count' => $dryRun['unreachable_count'] - count($dryRun['unreachable'])]) }}@endif
@@ -184,7 +189,7 @@
                             <flux:button type="button" variant="primary" icon="paper-airplane" class="min-h-11 w-full sm:w-auto" data-test="open-confirm">{{ $sendLabel }}</flux:button>
                         </flux:modal.trigger>
                     @else
-                        <flux:button type="button" variant="primary" icon="paper-airplane" class="min-h-11 w-full sm:w-auto" disabled data-test="open-confirm-disabled">{{ __('Erst Probelauf, dann senden') }}</flux:button>
+                        <flux:button type="button" variant="primary" icon="paper-airplane" class="min-h-11 w-full sm:w-auto" disabled data-test="open-confirm-disabled">{{ $current && ($dryRun['skipped'] ?? 0) > 0 ? __('Alle schon erreicht, nichts zu senden') : __('Erst Probelauf, dann senden') }}</flux:button>
                     @endif
                 </div>
             </div>
