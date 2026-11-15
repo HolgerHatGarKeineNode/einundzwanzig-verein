@@ -149,6 +149,18 @@ class ElectionRound extends Model
     }
 
     /**
+     * The id of the event `$pleb` voted with in this round, or null if they
+     * have not voted. Only ever shown to that member, as proof their vote
+     * arrived; it says nothing about what they chose.
+     */
+    public function voteEventIdOf(EinundzwanzigPleb $pleb): ?string
+    {
+        $eventId = $this->votes()->where('einundzwanzig_pleb_id', $pleb->getKey())->value('event_id');
+
+        return is_string($eventId) ? $eventId : null;
+    }
+
+    /**
      * What this round is at `$now`.
      *
      * Derived on every read instead of stored, so that no job has to close a

@@ -186,3 +186,28 @@
         color: #F87171;
     }
 }
+
+/* ----------------------------------------
+   Stimmzettel: das Kreuz wird gezogen, wenn das Kaestchen angekreuzt wird.
+   Die einzige Bewegung des Bogens, und sie antwortet auf die Hand.
+----------------------------------------- */
+.ballot-mark path {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    transition: stroke-dashoffset 120ms ease-out;
+}
+
+.ballot-mark path + path {
+    transition-delay: 90ms;
+}
+
+.peer:checked + .ballot-mark path {
+    stroke-dashoffset: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ballot-mark path,
+    .ballot-mark path + path {
+        transition: none;
+    }
+}

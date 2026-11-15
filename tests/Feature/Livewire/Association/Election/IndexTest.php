@@ -24,12 +24,14 @@ function electionPage(EinundzwanzigPleb $viewer): Testable
     return Livewire::test('association.election.index');
 }
 
-/**
- * How many elements carry the primary button variant in the rendered page.
- */
-function primaryButtons(Testable $page): int
-{
-    return preg_match_all('/<(?:a|button)\b[^>]*class="[^"]*bg-orange-primary[^"]*"/', $page->html());
+if (! function_exists('primaryButtons')) {
+    /**
+     * How many elements carry the primary button variant in the rendered page.
+     */
+    function primaryButtons(Testable $page): int
+    {
+        return preg_match_all('/<(?:a|button)\b[^>]*class="[^"]*bg-orange-primary[^"]*"/', $page->html());
+    }
 }
 
 it('says plainly that no election is announced', function () {
@@ -245,12 +247,14 @@ it('moves to the meeting once a round is opened and offers no candidacy any more
     app(OpenRound::class)->handle($round);
 
     $page = electionPage($member)
-        ->assertSee('Der Stimmzettel erscheint dann hier')
+        ->assertSee('Stimmzettel')
         ->assertSee('Offen')
         ->assertDontSee('Kandidatur einreichen');
 
+    // The ballot's "Prüfen" is the one primary action; "Signieren und
+    // abgeben" waits hidden in the review step of the same ballot.
     expect($page->instance()->phase)->toBe('meeting')
-        ->and(primaryButtons($page))->toBe(0);
+        ->and($page->instance()->primaryAction)->toBe('ballot');
 });
 
 it('shows outsiders the members-only notice', function () {

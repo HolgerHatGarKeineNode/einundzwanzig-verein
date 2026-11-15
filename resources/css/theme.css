@@ -68,6 +68,15 @@
     --color-info:    #60A5FA;   /* kuehles Blau, max. Distanz zur warmen Marke */
 
     /* =====================================================================
+       Stimmzettel (Entscheidung E13): der einzige helle Bogen im Portal.
+       Kuehles Papier statt Creme; Tinte ist das Zinc-900 der Skala.
+       ===================================================================== */
+    --color-paper: #EDEFF2;       /* Bogen */
+    --color-paper-rule: #C4C8CF;  /* Trennlinie zwischen Zeilen (dekorativ) */
+    --color-ink: #18181B;         /* Text, Kaestchen, Kreuz — 15,6:1 auf paper */
+    --color-ink-soft: #52525B;    /* Hinweistext — 6,7:1 auf paper */
+
+    /* =====================================================================
        Legacy-Aliase — auf die neue Skala umgebogen, damit der Marken-
        wechsel (#F7931A) sich ueberall auswirkt, ohne jede Datei zu edit-
        ieren. Bestandscode nutzt orange-primary, orange-light, green-* und purple-accent.
