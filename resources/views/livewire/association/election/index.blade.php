@@ -1173,7 +1173,7 @@ new class extends Component
                                                 <li wire:key="round-{{ $round->id }}-{{ $state->value }}-{{ $standing['eventId'] ? 'voted' : 'open' }}">
                                                     <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
                                                         <h4 class="text-lg font-bold leading-snug text-text-primary">
-                                                            {{ $round->parent_round_id ? __('Stichwahl: :office', ['office' => $round->title]) : $round->title }}
+                                                            {{ $round->title }}
                                                             <span class="ml-1 text-base font-normal text-text-secondary">{{ trans_choice(':count Sitz|:count Sitze', $round->seats, ['count' => $round->seats]) }}</span>
                                                         </h4>
                                                         <flux:badge size="sm"

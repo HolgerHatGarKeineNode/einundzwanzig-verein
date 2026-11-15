@@ -736,6 +736,13 @@ it('names the annulled round, not its run-off, as the last one on the card and t
     $level(app(CreateRunOff::class)->handle($chair, $board));
     $this->travel(5)->minutes();
 
+    // The cascade crosses a second boundary right after the chair is stamped.
+    ElectionRound::saved(function (ElectionRound $round) use ($chair): void {
+        if ($round->is($chair) && $round->wasChanged('annulled_at')) {
+            $this->travel(1)->seconds();
+        }
+    });
+
     livePage()
         ->call('startRoundAction', $chair->id, 'annul')->set('roundReason', 'Falsche Liste')->call('confirmRoundAction')
         ->assertHasNoErrors()
