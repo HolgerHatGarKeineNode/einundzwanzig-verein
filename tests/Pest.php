@@ -11,11 +11,13 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use Mdanter\Ecc\Crypto\Signature\SchnorrSignature;
+use ParagonIE\CipherSweet\CipherSweet;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use swentel\nostr\Event\Event;
 use swentel\nostr\Key\Key;
 use swentel\nostr\Sign\Sign;
 use Tests\Engine\EngineTestCase;
+use Tests\Support\CheapBlindIndexCrypto;
 use Tests\Support\RelayTripwire;
 use Tests\TestCase;
 
@@ -156,15 +158,51 @@ pest()->tia()
 |
 | tests/Feature/HttpStrayRequestTest.php proves all of this by effect.
 |
+| The layouts render @googlefonts, and spatie/laravel-google-fonts downloads
+| the CSS on the first render unless storage/app/public/fonts (ignored by
+| git) already holds it. Its fallback (a plain <link> to Google) is switched
+| on by `! env('APP_DEBUG')`, so with a local .env that sets APP_DEBUG=true a
+| fresh checkout threw the refused download as a 500 on every full-page test:
+| 28 red tests in a new worktree, green in one that had cached the fonts.
+| The fallback is pinned on here, as it is in production, so the outcome no
+| longer depends on .env or on what an earlier run left on disk.
+|
 */
 
 pest()->beforeEach(function (): void {
+    config(['google-fonts.fallback' => true]);
     Http::preventStrayRequests();
 
     app()->rebinding(
         HttpClientFactory::class,
         fn ($app, HttpClientFactory $factory) => $factory->preventStrayRequests(),
     );
+})->in('Feature');
+
+/*
+|--------------------------------------------------------------------------
+| Blind index cost
+|--------------------------------------------------------------------------
+|
+| Every saved member computes the slow blind index of its e-mail, Argon2id at
+| 64 MiB (about 35 ms), whether or not it has an address. Tests\Support\
+| CheapBlindIndexCrypto runs the same construction at libsodium's minimum
+| cost, the way phpunit.xml sets BCRYPT_ROUNDS=4. The engine is rebuilt for
+| each test, and the model's cached encrypted row with it, so no test holds
+| an engine of another test's container.
+|
+| tests/Engine is left out on purpose: the suite against the real database
+| engine keeps the production backend.
+|
+*/
+
+pest()->beforeEach(function (): void {
+    config([
+        'ciphersweet.backend' => 'custom',
+        'ciphersweet.backends.custom' => CheapBlindIndexCrypto::class,
+    ]);
+    app()->forgetInstance(CipherSweet::class);
+    EinundzwanzigPleb::$cipherSweetEncryptedRow = null;
 })->in('Feature');
 
 /*
