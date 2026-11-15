@@ -253,6 +253,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
             ElectionAuditAction::VoterEnrolledByHand => __('Von Hand ins Verzeichnis nachgetragen'),
             ElectionAuditAction::ElectionMeetingUpdated => __('Termin oder Call-Link geändert'),
             ElectionAuditAction::RunOffCreated => __('Stichwahl angelegt'),
+            ElectionAuditAction::RoundRepeated => __('Wahlgang zur Wiederholung angelegt'),
         };
     }
 

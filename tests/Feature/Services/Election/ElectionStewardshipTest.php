@@ -2,7 +2,9 @@
 
 use App\Enums\ElectionAuditAction;
 use App\Enums\ElectionCandidateStatus;
+use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionRoundState;
+use App\Exceptions\ElectionActionRefusedException;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
@@ -183,6 +185,59 @@ it('refuses a member who left the board after the page was loaded, at the moment
         ->and($opened->fresh()->closed_at)->toBeNull()
         ->and(ElectionAuditEntry::query()->where('actor_pleb_id', $board[0]->id)->count())->toBe(0);
 })->with(['open', 'closeEarly', 'annul', 'delete', 'announce']);
+
+/*
+ * Mutation that must turn this red: drop the `authorizeActor()` call from
+ * `ElectionStewardship::repeat()`.
+ */
+it('repeats an annulled round once, for the board at the moment of the act only, and writes nothing when refused', function () {
+    $board = electionBoard(2);
+    $draft = draftElectionRound(['title' => 'Vorsitz', 'counting_rule' => ElectionCountingRule::MostVotes, 'seats' => 2], candidates: 3);
+    $draft->candidates()->orderBy('id')->first()->forceFill(['status' => ElectionCandidateStatus::Withdrawn])->save();
+    $round = stewardship()->annul(stewardship()->open($draft, $board[0]), $board[0], 'Falsche Liste');
+    $rounds = ElectionRound::query()->count();
+
+    config(['einundzwanzig.config.current_board' => [$board[1]->npub]]);
+    Board::flush();
+
+    expect(fn () => stewardship()->repeat($round, $board[0]))->toThrow(AuthorizationException::class)
+        ->and(fn () => stewardship()->repeat($round, electionVoter()))->toThrow(AuthorizationException::class)
+        ->and(ElectionRound::query()->count())->toBe($rounds)
+        ->and(auditActionsOf($round->election))->toBe(['round_opened', 'round_annulled']);
+
+    $repeat = stewardship()->repeat($round, $board[1]);
+
+    expect($repeat->stateAt(now()))->toBe(ElectionRoundState::Draft)
+        ->and($repeat->title)->toBe('Vorsitz (Wiederholung)')
+        ->and($repeat->position)->toBe($round->position + 1)
+        ->and($repeat->parent_round_id)->toBeNull()
+        ->and($repeat->counting_rule)->toBe(ElectionCountingRule::MostVotes)
+        ->and($repeat->seats)->toBe(2)
+        ->and($repeat->candidates()->where('status', ElectionCandidateStatus::Approved)->pluck('einundzwanzig_pleb_id')->sort()->values()->all())
+        ->toBe($round->candidates()->where('status', ElectionCandidateStatus::Approved)->pluck('einundzwanzig_pleb_id')->sort()->values()->all())
+        ->and($repeat->candidates()->count())->toBe(2)
+        ->and(auditActionsOf($round->election))->toBe(['round_opened', 'round_annulled', 'round_repeated'])
+        ->and(ElectionAuditEntry::query()->where('action', ElectionAuditAction::RoundRepeated)->sole()->only('election_round_id', 'actor_pleb_id'))
+        ->toBe(['election_round_id' => $round->id, 'actor_pleb_id' => $board[1]->id])
+        ->and(fn () => stewardship()->repeat($round, $board[1]))->toThrow(ElectionActionRefusedException::class)
+        ->and(fn () => stewardship()->repeat($repeat, $board[1]))->toThrow(ElectionActionRefusedException::class)
+        ->and(ElectionRound::query()->count())->toBe($rounds + 1);
+
+    // A repeat that is annulled in turn is repeated under the same title.
+    $again = stewardship()->repeat(stewardship()->annul(stewardship()->open($repeat, $board[1]), $board[1], 'Wieder falsch'), $board[1]);
+
+    expect($again->title)->toBe('Vorsitz (Wiederholung)');
+});
+
+it('leaves an annulled run-off to a new run-off instead of a repeat', function () {
+    $boardMember = electionBoard(1)[0];
+    $parent = stewardship()->open(draftElectionRound(['counting_rule' => ElectionCountingRule::MostVotes]), $boardMember);
+    stewardship()->closeEarly($parent, $boardMember, 'Fertig');
+    $runOff = stewardship()->annul(stewardship()->open(draftElectionRound(['parent_round_id' => $parent->id], election: $parent->election), $boardMember), $boardMember, 'Falsch');
+
+    expect(stewardship()->awaitsRepeat($runOff))->toBeFalse()
+        ->and(fn () => stewardship()->repeat($runOff, $boardMember))->toThrow(ElectionActionRefusedException::class);
+});
 
 it('keeps a candidacy decision and the opening apart from the rows of the ballot', function () {
     $boardMember = electionBoard(1)[0];
