@@ -283,6 +283,51 @@ it('says so when the board closed the round before the vote arrived', function (
         ->toBe(['message' => 'Der Vorstand hat diesen Wahlgang inzwischen geschlossen. Deine Stimme ist nicht abgegeben.']);
 });
 
+it('tells a member whose sheet the board closed mid-review that their vote is not in', function () {
+    $round = namedDraftRound();
+    $reviewer = electionVoter();
+    $bystander = electionVoter();
+    $voter = electionVoter();
+    app(OpenRound::class)->handle($round);
+    castElectionBallot($round, $voter, [candidateIdOf($round, 'Alice Ambrosius') => 'for']);
+    $line = 'Der Wahlgang wurde geschlossen, bevor du abgegeben hast. Deine Stimme ist nicht dabei.';
+
+    $page = ballotPage($reviewer);
+    $page->call('prepareBallot', $round->id, []);
+    $idle = ballotPage($bystander);
+
+    app(CloseRound::class)->handle($round);
+
+    $page->call('syncRounds')
+        ->assertSee($line)
+        ->assertSee('Gewählt ist Alice Ambrosius.')
+        ->assertDontSee('Deine Stimme ist dabei.');
+    $idle->call('syncRounds')
+        ->assertSee('Gewählt ist Alice Ambrosius.')
+        ->assertDontSee($line);
+    // Session-only: a fresh page load does not know about the review.
+    ballotPage($reviewer)->assertDontSee($line);
+});
+
+it('does not claim a missing vote when the member reached the review step and the vote still arrived', function () {
+    $round = namedDraftRound();
+    $member = electionVoter();
+    app(OpenRound::class)->handle($round);
+    $line = 'Der Wahlgang wurde geschlossen, bevor du abgegeben hast. Deine Stimme ist nicht dabei.';
+
+    $page = ballotPage($member);
+    $page->call('prepareBallot', $round->id, [candidateIdOf($round, 'Alice Ambrosius') => 'for']);
+    // The vote arrives from another device (or the answer to this page got lost).
+    castElectionBallot($round, $member, [candidateIdOf($round, 'Alice Ambrosius') => 'for']);
+
+    app(CloseRound::class)->handle($round);
+
+    $page->call('syncRounds')
+        ->assertSee('Gewählt ist Alice Ambrosius.')
+        ->assertSee('Deine Stimme ist dabei.')
+        ->assertDontSee($line);
+});
+
 it('notices on the poll when the board opens a round, and stays put while nothing changes', function () {
     $round = namedDraftRound();
     $member = electionVoter();
@@ -418,7 +463,12 @@ it('shows the meeting date in Europe/Berlin once the election is announced', fun
     namedDraftRound(election: $election);
     $voter = electionVoter();
 
-    ballotPage($voter)->assertDontSee('Am 04.03.2027 um 19:00 Uhr');
+    // A member never sees an unannounced real election. The board does see an
+    // unannounced test election — and still no date on it.
+    $rehearsal = Election::factory()->test()->create(['name' => 'Probewahl', 'meeting_at' => '2027-03-04 18:00:00', 'announced_at' => null]);
+    NostrAuth::login(electionBoard(1)[0]->pubkey);
+    $boardPage = Livewire::test('association.election.index')->assertDontSee('Am 04.03.2027 um 19:00 Uhr');
+    expect($boardPage->instance()->election->is($rehearsal))->toBeTrue();
 
     $election->forceFill(['announced_at' => now()])->save(); // announced_at is not mass assignable
 
@@ -445,6 +495,9 @@ it('shows the call link only on the Berlin meeting day or while a round is open'
     $this->travelTo('2027-03-04 23:00:00'); // midnight, the 5th in Berlin
     ballotPage($voter)
         ->assertSeeHtml('href="https://meet.example.org/einundzwanzig" target="_blank" rel="noopener noreferrer"');
+
+    $this->travelTo('2027-03-05 23:30:00'); // 00:30 on the 6th in Berlin, the day after
+    ballotPage($voter)->assertDontSee('https://meet.example.org/einundzwanzig');
 
     $this->travelTo('2027-03-02 12:00:00'); // two days early, but the board opened a round
     app(OpenRound::class)->handle($round);

@@ -19,7 +19,7 @@
 @endphp
 
 <div class="mt-3 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-5">
-    <p class="max-w-prose text-base leading-normal text-text-primary">
+    <p class="max-w-prose wrap-anywhere text-base leading-normal text-text-primary">
         @if ($elected !== [])
             {{ trans_choice('Gewählt ist :names.|Gewählt sind :names.', count($elected), ['names' => implode(', ', $elected)]) }}
         @endif
@@ -59,7 +59,7 @@
                 @endphp
                 <tr wire:key="result-{{ $round->id }}-{{ $candidate->id }}">
                     <th scope="row" class="py-3 pr-4 text-left font-normal">
-                        <span @class(['break-words', 'font-bold text-text-primary' => $isElected, 'text-text-primary' => ! $isElected])>{{ MemberProposal::authorNameOf($candidate->pleb) }}</span>
+                        <span @class(['wrap-anywhere', 'font-bold text-text-primary' => $isElected, 'text-text-primary' => ! $isElected])>{{ MemberProposal::authorNameOf($candidate->pleb) }}</span>
                         @if ($isElected)
                             <span class="ml-1 inline-flex items-center gap-1 whitespace-nowrap text-sm text-success">
                                 <flux:icon.check variant="micro" aria-hidden="true" />{{ __('gewählt') }}
