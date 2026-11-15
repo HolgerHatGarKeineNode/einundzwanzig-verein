@@ -1183,6 +1183,7 @@ class MembershipService
              * over that pubkey, and the relay rows say where the member
              * reads. A delivery still waiting is refused by SendDirectMessage
              * for an erased recipient, so nothing is rebuilt afterwards.
+             * `seen_at` is when the person read it in the portal inbox.
              */
             $deliveries = DmDelivery::query()->where('einundzwanzig_pleb_id', $pleb->id);
 
@@ -1194,6 +1195,7 @@ class MembershipService
                 'rumor_created_at' => null,
                 'wrap' => null,
                 'error' => null,
+                'seen_at' => null,
             ]);
 
             // Images the member embedded in project descriptions are theirs.

@@ -31,6 +31,7 @@ class DmDelivery extends Model
         'attempts',
         'claimed_at',
         'sent_at',
+        'seen_at',
         'error',
     ];
 
@@ -46,6 +47,7 @@ class DmDelivery extends Model
             'attempts' => 'integer',
             'claimed_at' => 'datetime',
             'sent_at' => 'datetime',
+            'seen_at' => 'datetime',
         ];
     }
 
