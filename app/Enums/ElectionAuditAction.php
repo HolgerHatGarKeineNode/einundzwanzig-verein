@@ -36,4 +36,7 @@ enum ElectionAuditAction: string
     case ElectionMeetingUpdated = 'election_meeting_updated';
 
     case RunOffCreated = 'run_off_created';
+
+    /** An annulled round was set up again as a new draft; the line names the annulled round. */
+    case RoundRepeated = 'round_repeated';
 }

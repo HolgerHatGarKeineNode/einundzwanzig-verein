@@ -86,6 +86,10 @@ class CreateRunOff
 
             $this->authorizeActor($actor, 'update', $election);
 
+            if ($round->annulled_at !== null) {
+                throw new ElectionActionRefusedException('An annulled round needs no run-off.');
+            }
+
             if ($round->children()->whereNull('annulled_at')->exists()) {
                 throw new ElectionActionRefusedException('This round has a run-off already.');
             }

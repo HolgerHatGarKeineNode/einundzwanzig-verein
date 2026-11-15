@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionOutcome;
 use App\Exceptions\ElectionRoundStateException;
@@ -7,6 +8,7 @@ use App\Models\Election;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
 use App\Services\Election\CloseRound;
+use App\Services\Election\CreateRunOff;
 use App\Services\Election\OpenRound;
 use App\Services\Election\TallyRound;
 use Illuminate\Support\Carbon;
@@ -230,3 +232,80 @@ it('treats the round of a run-off as earlier whatever its position', function ()
     expect(fn () => app(OpenRound::class)->handle($runOff))
         ->toThrow(ElectionRoundStateException::class, 'A candidate of this round has been elected in an earlier round of the election.');
 });
+
+it('takes a tie as decided once a run-off of it is sealed, and as undecided while it ends level again', function (string $runOffResult) {
+    $election = Election::factory()->create();
+    $voters = [electionVoter(), electionVoter()];
+    $parent = app(OpenRound::class)->handle(draftElectionRound(['position' => 1, 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 2, election: $election));
+    [$first, $second] = $parent->candidates()->orderBy('id')->get()->all();
+    castElectionBallot($parent, $voters[0], [$first->id => 'for']);
+    castElectionBallot($parent, $voters[1], [$second->id => 'for']);
+    app(CloseRound::class)->handle($parent);
+
+    $later = draftElectionRound(['position' => 3], candidates: 1, election: $election);
+    standAgain($later, $first, $second);
+
+    $runOff = draftElectionRound(['position' => 2, 'parent_round_id' => $parent->id, 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 0, election: $election);
+    standAgain($runOff, $first, $second);
+    $runOff = app(OpenRound::class)->handle($runOff);
+    [$runOffFirst, $runOffSecond] = $runOff->candidates()->orderBy('id')->get()->all();
+    castElectionBallot($runOff, $voters[0], [$runOffFirst->id => 'for']);
+    castElectionBallot($runOff, $voters[1], [($runOffResult === 'level again' ? $runOffSecond : $runOffFirst)->id => 'for']);
+    app(CloseRound::class)->handle($runOff);
+
+    if ($runOffResult === 'level again') {
+        expect(fn () => app(OpenRound::class)->handle($later))
+            ->toThrow(ElectionRoundStateException::class, 'A candidate of this round is level in an undecided tie of an earlier round of the election.');
+
+        return;
+    }
+
+    // The run-off elected the first; the second, defeated there, may stand.
+    expect(fn () => app(OpenRound::class)->handle($later))
+        ->toThrow(ElectionRoundStateException::class, 'A candidate of this round has been elected in an earlier round of the election.');
+
+    $later->candidates()->where('einundzwanzig_pleb_id', $first->einundzwanzig_pleb_id)->delete();
+
+    expect(app(OpenRound::class)->handle($later)->opened_at)->not->toBeNull();
+})->with(['decided', 'level again']);
+
+it('checks the result of a run-off placed at the end before a later draft with its candidate opens', function (string $runOffResult, string $refusal) {
+    $election = Election::factory()->create();
+    [$boardMember] = electionBoard(1);
+    $voters = [electionVoter(), electionVoter()];
+
+    $chair = draftElectionRound(['position' => 1, 'title' => 'Vorsitz', 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 2, election: $election);
+    $assessor = draftElectionRound(['position' => 2, 'title' => 'Beisitz'], candidates: 1, election: $election);
+    $treasurer = draftElectionRound(['position' => 3, 'title' => 'Kasse'], candidates: 1, election: $election);
+
+    $chair = app(OpenRound::class)->handle($chair);
+    [$first, $second] = $chair->candidates()->orderBy('id')->get()->all();
+    castElectionBallot($chair, $voters[0], [$first->id => 'for']);
+    castElectionBallot($chair, $voters[1], [$second->id => 'for']);
+    app(CloseRound::class)->handle($chair);
+
+    // A later round opens before the run-off exists, so the run-off lands at the end.
+    app(CloseRound::class)->handle(app(OpenRound::class)->handle($assessor));
+    $runOff = app(CreateRunOff::class)->handle($chair, $boardMember);
+    expect($runOff->position)->toBeGreaterThan($treasurer->fresh()->position);
+
+    $runOff = app(OpenRound::class)->handle($runOff);
+    [$runOffFirst, $runOffSecond] = $runOff->candidates()->orderBy('id')->get()->all();
+    castElectionBallot($runOff, $voters[0], [$runOffSecond->id => 'for']);
+    castElectionBallot($runOff, $voters[1], [($runOffResult === 'level again' ? $runOffFirst : $runOffSecond)->id => 'for']);
+    app(CloseRound::class)->handle($runOff);
+
+    // The run-off's second candidate stands for the treasurer afterwards.
+    ElectionCandidate::factory()->create([
+        'election_round_id' => $treasurer->id,
+        'einundzwanzig_pleb_id' => $second->einundzwanzig_pleb_id,
+        'status' => ElectionCandidateStatus::Approved,
+    ]);
+
+    expect(fn () => app(OpenRound::class)->handle($treasurer->fresh()))
+        ->toThrow(ElectionRoundStateException::class, $refusal);
+    expect($treasurer->fresh()->opened_at)->toBeNull();
+})->with([
+    'elected in the run-off' => ['elected', 'A candidate of this round has been elected in an earlier round of the election.'],
+    'level again' => ['level again', 'A candidate of this round is level in an undecided tie of an earlier round of the election.'],
+]);

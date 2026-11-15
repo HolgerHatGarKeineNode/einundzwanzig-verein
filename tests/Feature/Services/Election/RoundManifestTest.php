@@ -3,9 +3,12 @@
 use App\Enums\ElectionCountingRule;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
+use App\Models\ElectionAuditEntry;
 use App\Models\ElectionManifest;
 use App\Models\ElectionRound;
 use App\Services\Election\CloseRound;
+use App\Services\Election\ElectionAuditLog;
+use App\Services\Election\ElectionStewardship;
 use App\Services\Election\OpenRound;
 use App\Services\Election\RoundManifest;
 use Illuminate\Support\Carbon;
@@ -86,8 +89,28 @@ it('writes the manifest of a round when it is sealed, with every field written o
             'votes_cast' => 4,
             'vote_event_ids_hash' => hash('sha256', implode("\n", $eventIds)),
             'closed_at' => '2027-03-20T15:30:00Z',
-            'audit_head_hash' => null,
+            // Sealed without a line in the audit log: its head is the genesis hash.
+            'audit_head_hash' => ElectionAuditLog::GENESIS,
         ]);
+});
+
+it('ties the manifest to the head of the audit log at the seal, and election:verify still agrees', function () {
+    [$board] = electionBoard(1);
+    $voter = electionVoter();
+    $round = app(ElectionStewardship::class)->open(draftElectionRound(), $board);
+    castElectionBallot($round, $voter, [$round->candidates()->orderBy('id')->value('id') => 'for']);
+
+    $headBeforeSeal = app(ElectionAuditLog::class)->headHash($round->election);
+    app(ElectionStewardship::class)->closeEarly($round, $board, 'Alle haben abgestimmt');
+
+    $lines = ElectionAuditEntry::query()->where('election_event_id', $round->election_event_id)->orderBy('sequence')->get();
+    $stored = json_decode(ElectionManifest::query()->where('election_round_id', $round->id)->value('body'), true);
+
+    expect($lines->pluck('action')->map->value->all())->toBe(['round_opened', 'round_closed_early'])
+        ->and($stored['audit_head_hash'])->toBe($headBeforeSeal)
+        ->and($stored['audit_head_hash'])->toBe($lines[0]->hash)
+        ->and($stored['audit_head_hash'])->not->toBe(ElectionAuditLog::GENESIS)
+        ->and(verifyRound($round)[0])->toBe(0);
 });
 
 it('carries no member and no single vote in the manifest', function () {
@@ -230,7 +253,7 @@ it('has nothing to verify for an unknown, open or annulled round', function () {
 it('builds the same text from the same tables', function () {
     [$round] = manifestRound();
 
-    expect(app(RoundManifest::class)->body($round))
+    expect(app(RoundManifest::class)->body($round, ElectionAuditLog::GENESIS))
         ->toBe(ElectionManifest::query()->where('election_round_id', $round->id)->value('body'))
         ->and(fn () => app(RoundManifest::class)->body(app(OpenRound::class)->handle(draftElectionRound())))
         ->toThrow(ElectionRoundStateException::class);

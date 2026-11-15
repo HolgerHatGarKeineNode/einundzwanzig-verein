@@ -8,7 +8,7 @@ use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
-use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -101,64 +101,155 @@ class OpenRound
     }
 
     /**
-     * Whoever is elected in a round of the election does not stand in the
-     * rounds after it.
+     * Whoever is elected in a round of the election, or is still level in an
+     * undecided tie there, does not stand in a later round.
      *
-     * "After" is the order of `position`; the round a run-off belongs to
-     * counts as earlier whatever its position. For every earlier round that
-     * shares a candidate with this one, the earlier result has to be known:
+     * The unit is the run-off chain, the contest: a first-level round together
+     * with every run-off below it, at any depth. A contest takes the place of
+     * its first-level round — its order is that round's `position`, wherever
+     * its run-offs landed (`CreateRunOff` puts one right after its round or at
+     * the end) — and its result is the one of its deepest sealed round, since
+     * a run-off decides the round it belongs to. Annulled rounds have no
+     * result and count for nothing.
      *
-     *  - not sealed yet (a draft, open, or merely over by the clock) → refused,
-     *    nobody can say yet whether that candidate is elected there;
-     *  - elected there → refused;
-     *  - level on votes in an undecided tie there → refused, unless this round
-     *    is the run-off of exactly that round, which is what a run-off is for.
+     * Opening a round checks every other contest that comes before its own
+     * and shares a candidate with it:
+     *
+     *  - elected in any sealed round of that contest → refused;
+     *  - level in the tie of the contest's decisive result → refused, the tie
+     *    is not decided yet;
+     *  - standing in a round of that contest that is not sealed (a draft,
+     *    open, or merely over by the clock) → refused, nobody can say yet
+     *    whether that candidate is elected there.
+     *
+     * A run-off is checked as its contest is: by the order of its first-level
+     * round. Its own chain is the reason it exists, so the tie it is there to
+     * resolve does not block it; whoever is elected in one of its own earlier
+     * rounds still does.
+     *
+     * Three further rules: a round under an annulled round has no result and
+     * never counts; nobody is elected twice, so a candidate elected in any
+     * other contest is refused whatever its order; and an unsealed round
+     * only counts candidacies that are not withdrawn or rejected, so
+     * withdrawing a candidacy frees the round it blocked.
      *
      * Refusing instead of quietly dropping the candidate keeps the list of
-     * candidates the election officer's to change. An annulled round has no
-     * result and elects nobody.
+     * candidates the election officer's to change.
      *
      * @throws ElectionRoundStateException
      */
     protected function assertNobodyStandsAgainAfterBeingElected(ElectionRound $round): void
     {
-        $standing = $round->candidates()->pluck('einundzwanzig_pleb_id')->map(fn (mixed $id): int => (int) $id)->all();
+        $standing = $round->candidates()
+            ->whereNotIn('status', [ElectionCandidateStatus::Withdrawn, ElectionCandidateStatus::Rejected])
+            ->pluck('einundzwanzig_pleb_id')->map(fn (mixed $id): int => (int) $id)->all();
 
-        $earlier = ElectionRound::query()
+        $rounds = ElectionRound::query()
             ->where('election_event_id', $round->election_event_id)
-            ->whereKeyNot($round->getKey())
-            ->whereNull('annulled_at')
-            ->where(function (Builder $query) use ($round): void {
-                $query->where('position', '<', $round->position)
-                    ->orWhere('id', $round->parent_round_id);
-            })
             ->with('candidates')
-            ->get();
+            ->get()
+            ->keyBy(fn (ElectionRound $other): int => (int) $other->getKey());
 
-        foreach ($earlier as $other) {
-            $shared = $other->candidates
-                ->filter(fn (ElectionCandidate $candidate): bool => in_array((int) $candidate->einundzwanzig_pleb_id, $standing, true))
-                ->map(fn (ElectionCandidate $candidate): int => (int) $candidate->getKey())
-                ->values()
-                ->all();
+        $chain = $this->chainOf($round, $rounds);
+        $root = $chain[0];
 
-            if ($shared === []) {
-                continue;
-            }
-
-            if (! $other->isSealed()) {
-                throw new ElectionRoundStateException('A candidate of this round also stands in an earlier round of the election that is not sealed yet.');
-            }
-
-            $result = $this->tally->handle($other);
-
-            if (array_intersect($shared, $result->elected) !== []) {
+        foreach (array_slice($chain, 0, -1) as $ancestor) {
+            if ($ancestor->isSealed() && array_intersect($this->sharedCandidates($ancestor, $standing), $this->tally->handle($ancestor)->elected) !== []) {
                 throw new ElectionRoundStateException('A candidate of this round has been elected in an earlier round of the election.');
             }
+        }
 
-            if ((int) $other->getKey() !== (int) $round->parent_round_id && array_intersect($shared, $result->tied) !== []) {
-                throw new ElectionRoundStateException('A candidate of this round is level in an undecided tie of an earlier round of the election.');
+        // A round under an annulled round has no result: it never counts.
+        $living = $rounds->filter(fn (ElectionRound $other): bool => collect($this->chainOf($other, $rounds))
+            ->every(fn (ElectionRound $link): bool => $link->annulled_at === null));
+
+        $otherContests = $living
+            ->groupBy(fn (ElectionRound $other): int => (int) $this->chainOf($other, $rounds)[0]->getKey())
+            ->reject(fn (Collection $contest, int $rootId): bool => $rootId === (int) $root->getKey());
+
+        // Nobody is elected twice, whatever the order of the contests.
+        foreach ($otherContests->flatten(1)->filter(fn (ElectionRound $other): bool => $other->isSealed()) as $other) {
+            if (array_intersect($this->sharedCandidates($other, $standing), $this->tally->handle($other)->elected) !== []) {
+                throw new ElectionRoundStateException('A candidate of this round has been elected in an earlier round of the election.');
             }
         }
+
+        $contests = $otherContests
+            ->filter(fn (Collection $contest, int $rootId): bool => $rounds[$rootId]->position < $root->position)
+            ->sortKeysUsing(fn (int $left, int $right): int => $rounds[$left]->position <=> $rounds[$right]->position);
+
+        foreach ($contests as $contest) {
+            $this->assertContestDecidedFor($contest, $standing, $rounds);
+        }
+    }
+
+    /**
+     * @param  Collection<int, ElectionRound>  $contest  the rounds of one chain that are not annulled
+     * @param  list<int>  $standing  the member ids standing in the round to open
+     * @param  Collection<int, ElectionRound>  $rounds  every round of the election, by id
+     *
+     * @throws ElectionRoundStateException
+     */
+    protected function assertContestDecidedFor(Collection $contest, array $standing, Collection $rounds): void
+    {
+        $sharing = $contest->filter(fn (ElectionRound $other): bool => $this->sharedCandidates($other, $standing) !== []);
+
+        if ($sharing->isEmpty()) {
+            return;
+        }
+
+        foreach ($sharing->filter(fn (ElectionRound $other): bool => $other->isSealed()) as $other) {
+            if (array_intersect($this->sharedCandidates($other, $standing), $this->tally->handle($other)->elected) !== []) {
+                throw new ElectionRoundStateException('A candidate of this round has been elected in an earlier round of the election.');
+            }
+        }
+
+        $decisive = $contest
+            ->filter(fn (ElectionRound $other): bool => $other->isSealed())
+            ->sortByDesc(fn (ElectionRound $other): int => count($this->chainOf($other, $rounds)))
+            ->first();
+
+        if ($decisive !== null && array_intersect($this->sharedCandidates($decisive, $standing), $this->tally->handle($decisive)->tied) !== []) {
+            throw new ElectionRoundStateException('A candidate of this round is level in an undecided tie of an earlier round of the election.');
+        }
+
+        // An unsealed round only counts the candidacies still standing there.
+        if ($sharing->contains(fn (ElectionRound $other): bool => ! $other->isSealed() && $this->sharedCandidates($other, $standing, standingOnly: true) !== [])) {
+            throw new ElectionRoundStateException('A candidate of this round also stands in an earlier round of the election that is not sealed yet.');
+        }
+    }
+
+    /**
+     * `$round` and the rounds above it, the first-level round first.
+     *
+     * @param  Collection<int, ElectionRound>  $rounds  every round of the election, by id
+     * @return non-empty-list<ElectionRound>
+     */
+    protected function chainOf(ElectionRound $round, Collection $rounds): array
+    {
+        $chain = [$round];
+
+        while ($chain[0]->parent_round_id !== null && $rounds->has((int) $chain[0]->parent_round_id) && count($chain) <= $rounds->count()) {
+            array_unshift($chain, $rounds[(int) $chain[0]->parent_round_id]);
+        }
+
+        return $chain;
+    }
+
+    /**
+     * The candidate ids of `$round` that belong to members standing in the round to open.
+     *
+     * @param  list<int>  $standing
+     * @param  bool  $standingOnly  leave out withdrawn and rejected candidacies
+     * @return list<int>
+     */
+    protected function sharedCandidates(ElectionRound $round, array $standing, bool $standingOnly = false): array
+    {
+        return $round->candidates
+            ->filter(fn (ElectionCandidate $candidate): bool => in_array((int) $candidate->einundzwanzig_pleb_id, $standing, true))
+            ->reject(fn (ElectionCandidate $candidate): bool => $standingOnly && in_array($candidate->status, [ElectionCandidateStatus::Withdrawn, ElectionCandidateStatus::Rejected], true))
+            ->map(fn (ElectionCandidate $candidate): int => (int) $candidate->getKey())
+            ->values()
+            ->all();
     }
 }

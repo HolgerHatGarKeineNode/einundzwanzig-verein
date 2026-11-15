@@ -2,6 +2,8 @@
 @php
     $reports = $this->roundReports;
     $titles = $reports->mapWithKeys(fn ($report) => [$report['round']->id => $report['round']->title]);
+    // Only one round takes ballots at a time: while one is open, no other is opened.
+    $openReport = $reports->first(fn ($report) => $report['state'] === \App\Enums\ElectionRoundState::Open);
     $number = 0;
 @endphp
 
@@ -150,22 +152,35 @@
                             @endif
 
                             <div class="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                                {{-- The run-off itself is set up from the next-step card, the one place it is offered. --}}
                                 @if ($report['run_off'] && ! $report['has_run_off'])
-                                    <flux:button wire:click="createRunOff({{ $round->id }})" icon="arrow-path" variant="outline" class="min-h-11 w-full sm:w-auto" data-test="run-off-{{ $round->id }}">{{ __('Stichwahl anlegen') }}</flux:button>
                                     <p class="text-sm text-text-secondary sm:mr-4">{{ trans_choice('{1} Zwischen :names, um einen Sitz.|[2,*] Zwischen :names, um :count Sitze.', $report['run_off']['seats'], ['names' => implode(', ', $report['run_off']['candidates']), 'count' => $report['run_off']['seats']]) }}</p>
                                 @endif
                                 <flux:button wire:click="startRoundAction({{ $round->id }}, 'annul')" variant="ghost" class="min-h-11 w-full text-danger! sm:w-auto" data-test="annul-round-{{ $round->id }}">{{ __('Wahlgang annullieren') }}</flux:button>
                             </div>
                         @elseif ($report['state'] === \App\Enums\ElectionRoundState::Annulled)
                             <p class="mt-4 text-base text-text-primary">
-                                {{ __(':cast Stimmen abgegeben, nicht ausgezählt.', ['cast' => $report['cast']]) }}
+                                @if ($round->opened_at === null)
+                                    {{ __('Nicht geöffnet, annulliert.') }}
+                                @else
+                                    {{ __(':cast Stimmen abgegeben, nicht ausgezählt.', ['cast' => $report['cast']]) }}
+                                @endif
                                 @if ($report['reason'])
                                     {{ __('Grund: :reason', ['reason' => $report['reason']]) }}
                                 @endif
                             </p>
+                            @if ($this->canRepeat($round))
+                                <div class="mt-5">
+                                    <flux:button wire:key="repeat-round-{{ $round->id }}" wire:click="startRoundAction({{ $round->id }}, 'repeat')" icon="arrow-path" variant="outline" class="min-h-11 w-full sm:w-auto" data-test="repeat-round-{{ $round->id }}">{{ __('Wahlgang wiederholen') }}</flux:button>
+                                </div>
+                            @endif
+                        @elseif ($openReport !== null)
+                            <p class="mt-4 text-sm text-text-secondary" data-test="open-round-waits-{{ $round->id }}">
+                                {{ __('Öffnen geht, sobald „:round“ geschlossen ist.', ['round' => $openReport['round']->title]) }}
+                            </p>
                         @else
                             <div class="mt-5">
-                                <flux:button wire:click="startRoundAction({{ $round->id }}, 'open')" icon="play" variant="outline" class="min-h-11 w-full sm:w-auto" data-test="open-round-{{ $round->id }}">{{ __('Wahlgang öffnen') }}</flux:button>
+                                <flux:button wire:key="open-round-{{ $round->id }}" wire:click="startRoundAction({{ $round->id }}, 'open')" icon="play" variant="outline" class="min-h-11 w-full sm:w-auto" data-test="open-round-{{ $round->id }}">{{ __('Wahlgang öffnen') }}</flux:button>
                             </div>
                         @endif
                     </div>

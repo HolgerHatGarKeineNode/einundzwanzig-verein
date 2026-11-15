@@ -3,10 +3,14 @@
 namespace App\Services\Election;
 
 use App\Enums\ElectionAuditAction;
+use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionRoundState;
+use App\Exceptions\ElectionActionRefusedException;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
+use App\Models\ElectionAuditEntry;
+use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
 use App\Services\Election\Concerns\AuthorizesElectionActor;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -159,8 +163,125 @@ class ElectionStewardship
 
             $this->audit->append($round->election, ElectionAuditAction::RoundAnnulled, $actor, round: $round, details: ['reason' => $reason]);
 
+            // A run-off decides the round it belongs to; without that round it has
+            // nothing to decide. Every run-off below goes with it, whatever its state.
+            $this->annulRunOffsOf($round, $actor);
+
             return $round;
         });
+    }
+
+    /**
+     * Annul every run-off below `$round` that is not annulled yet, deepest last,
+     * each with its own audit line naming the round that took it along.
+     */
+    protected function annulRunOffsOf(ElectionRound $round, EinundzwanzigPleb $actor): void
+    {
+        $runOffs = $round->children()->whereNull('annulled_at')->lockForUpdate()->get();
+
+        foreach ($runOffs as $runOff) {
+            $runOff->annulled_at = now();
+            $runOff->save();
+
+            $this->audit->append($round->election, ElectionAuditAction::RoundAnnulled, $actor, round: $runOff, details: [
+                'reason' => __('Mit „:title“ annulliert', ['title' => $round->title]),
+            ]);
+
+            $this->annulRunOffsOf($runOff, $actor);
+        }
+    }
+
+    /**
+     * Set up an annulled round again as a new draft: same title with
+     * "(Wiederholung)", same seats, counting rule and mode, and the
+     * candidates that were approved in it. It is opened like any other round.
+     *
+     * Placed right after the annulled round when every later round is still
+     * a draft, so it is voted on next; otherwise at the end — positions of
+     * opened rounds are frozen. The audit line names the annulled round,
+     * which is how `awaitsRepeat()` knows it has been repeated.
+     *
+     * @throws AuthorizationException
+     * @throws ElectionActionRefusedException when the round does not await a repeat
+     */
+    public function repeat(ElectionRound $round, EinundzwanzigPleb $actor): ElectionRound
+    {
+        return DB::transaction(function () use ($round, $actor): ElectionRound {
+            $round = $this->lockedRound($round);
+            $election = $round->election;
+
+            $this->authorizeActor($actor, 'update', $election);
+
+            if (! $this->awaitsRepeat($round)) {
+                throw new ElectionActionRefusedException('Only an annulled round that has not been repeated can be repeated.');
+            }
+
+            $later = ElectionRound::query()
+                ->where('election_event_id', $election->getKey())
+                ->where('position', '>', $round->position)
+                ->orderByDesc('position')
+                ->get();
+
+            if ($later->every(fn (ElectionRound $other): bool => $other->opened_at === null)) {
+                // Highest first, so no two rounds ever share a position.
+                $later->each(fn (ElectionRound $other) => $other->forceFill(['position' => $other->position + 1])->save());
+                $position = $round->position + 1;
+            } else {
+                $position = (int) $later->max('position') + 1;
+            }
+
+            $repeat = ElectionRound::query()->create([
+                'election_event_id' => $election->getKey(),
+                'position' => $position,
+                'title' => self::repeatTitle($round->title),
+                'mode' => $round->mode,
+                'counting_rule' => $round->counting_rule,
+                'seats' => $round->seats,
+            ]);
+
+            $round->candidates()
+                ->where('status', ElectionCandidateStatus::Approved)
+                ->orderBy('id')
+                ->get()
+                ->each(fn (ElectionCandidate $candidate) => ElectionCandidate::query()->create([
+                    'election_round_id' => $repeat->getKey(),
+                    'einundzwanzig_pleb_id' => $candidate->einundzwanzig_pleb_id,
+                    'status' => ElectionCandidateStatus::Approved,
+                    'statement' => $candidate->statement,
+                ]));
+
+            $this->audit->append($election, ElectionAuditAction::RoundRepeated, $actor, round: $round);
+
+            return $repeat;
+        });
+    }
+
+    /**
+     * Is `$round` annulled and not yet set up again? Only a round of its
+     * own: an annulled run-off is set up anew by `CreateRunOff`, which
+     * counts annulled run-offs as none.
+     */
+    public function awaitsRepeat(ElectionRound $round): bool
+    {
+        if ($round->annulled_at === null || $round->parent_round_id !== null) {
+            return false;
+        }
+
+        return ! ElectionAuditEntry::query()
+            ->where('election_round_id', $round->getKey())
+            ->where('action', ElectionAuditAction::RoundRepeated->value)
+            ->exists();
+    }
+
+    /**
+     * The title of the repeat of a round titled `$title` — one suffix, also
+     * when a repeat is repeated.
+     */
+    public static function repeatTitle(string $title): string
+    {
+        $suffix = ' ('.__('Wiederholung').')';
+
+        return str_ends_with($title, $suffix) ? $title : $title.$suffix;
     }
 
     protected function seal(ElectionRound $round, EinundzwanzigPleb $actor, ElectionAuditAction $action, ?string $reason): ElectionRound
