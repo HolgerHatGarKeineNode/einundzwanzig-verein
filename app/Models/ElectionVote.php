@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * Who voted how is known to whoever reads the database — the board — and to
  * nobody else: no page shows a vote next to a member, only counts
- * (`tests/Feature/Election/VoteVisibilityTest.php`). Written by `CastBallot`.
+ * (`tests/Feature/ElectionVoteVisibilityTest.php`). Written by `CastBallot`.
  */
 class ElectionVote extends Model
 {
