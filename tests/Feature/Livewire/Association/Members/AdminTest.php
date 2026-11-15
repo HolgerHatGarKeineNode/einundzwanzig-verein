@@ -3,6 +3,8 @@
 use App\Auth\NostrUser;
 use App\Enums\AssociationStatus;
 use App\Models\EinundzwanzigPleb;
+use App\Models\Election;
+use App\Models\ElectionRound;
 use App\Models\PaymentEvent;
 use App\Models\Profile;
 use App\Services\MembershipService;
@@ -461,3 +463,66 @@ it('cannot promote an erased member through acceptPleb', function () {
 
     expect($erased->fresh()->association_status)->toBe(AssociationStatus::PASSIVE);
 });
+
+/*
+ * Security finding B (plan E5): from the announcement until the election is
+ * finished, a single board member raises no membership category here — the
+ * roll rests on it. Nothing changes while no real election runs. Mutation
+ * that must turn this red: drop the `Election::lockingMemberStatus()` guard.
+ */
+function pendingActiveApplicant(): EinundzwanzigPleb
+{
+    return EinundzwanzigPleb::factory()->create([
+        'association_status' => AssociationStatus::PASSIVE,
+        'application_for' => AssociationStatus::ACTIVE->value,
+        'application_text' => 'Ich moechte aktiv mitarbeiten.',
+    ]);
+}
+
+it('refuses a status change while a real election is announced and not finished, and points to its roll', function () {
+    EinundzwanzigPleb::factory()->create(['pubkey' => ALLOWED_ADMIN_PUBKEY]);
+    $election = Election::factory()->announced()->create(['name' => 'Vorstandswahl 2026']);
+    ElectionRound::factory()->create(['election_event_id' => $election->id]);
+    $applicant = pendingActiveApplicant();
+
+    NostrAuth::login(ALLOWED_ADMIN_PUBKEY);
+
+    Livewire::test('association.members.admin')
+        ->call('accept', $applicant->id)
+        ->call('acceptPleb')
+        ->assertHasNoErrors()
+        ->assertSet('confirmAcceptId', null)
+        ->assertDispatched('toast-show', fn (string $event, array $params): bool => ($params['dataset']['variant'] ?? null) === 'danger'
+            && str_contains($params['slots']['text'], 'Die Wahl „Vorstandswahl 2026“ ist angekündigt und noch nicht abgeschlossen.')
+            && str_contains($params['slots']['text'], 'unter „Wählerverzeichnis“'));
+
+    $fresh = $applicant->fresh();
+
+    expect($fresh->association_status)->toBe(AssociationStatus::PASSIVE)
+        ->and($fresh->application_for)->toBe(AssociationStatus::ACTIVE->value);
+});
+
+it('changes a status as before when the election is a test, not announced, or finished', function (string $state) {
+    EinundzwanzigPleb::factory()->create(['pubkey' => ALLOWED_ADMIN_PUBKEY]);
+    $election = match ($state) {
+        'test' => Election::factory()->test()->announced()->create(),
+        'not announced' => Election::factory()->create(),
+        'finished' => Election::factory()->announced()->create(),
+    };
+    $round = ElectionRound::factory()->create(['election_event_id' => $election->id]);
+
+    if ($state === 'finished') {
+        $round->forceFill(['annulled_at' => now()])->save();
+    }
+
+    $applicant = pendingActiveApplicant();
+
+    NostrAuth::login(ALLOWED_ADMIN_PUBKEY);
+
+    Livewire::test('association.members.admin')
+        ->call('accept', $applicant->id)
+        ->call('acceptPleb')
+        ->assertHasNoErrors();
+
+    expect($applicant->fresh()->association_status)->toBe(AssociationStatus::ACTIVE);
+})->with(['test', 'not announced', 'finished']);

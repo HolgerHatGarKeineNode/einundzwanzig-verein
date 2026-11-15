@@ -101,6 +101,24 @@ class Election extends Model
     }
 
     /**
+     * The real election that freezes member categories right now, if any:
+     * announced and not finished (a round neither sealed nor annulled is
+     * left). From the announcement on, a single board member changes no
+     * membership category on the members page — the roll rests on it; what
+     * the Wahlleitung decides goes through the election's roll, with a
+     * reason in its audit log. A test election freezes nothing.
+     */
+    public static function lockingMemberStatus(): ?self
+    {
+        return self::query()
+            ->where('is_test', false)
+            ->whereNotNull('announced_at')
+            ->whereHas('rounds', fn ($rounds) => $rounds->whereNull('closed_at')->whereNull('annulled_at'))
+            ->orderByDesc('announced_at')
+            ->first();
+    }
+
+    /**
      * @return HasMany<ElectionRound, $this>
      */
     public function rounds(): HasMany
