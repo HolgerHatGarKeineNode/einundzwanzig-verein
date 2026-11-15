@@ -110,6 +110,10 @@ Route::livewire('/association/news', 'association.news')->name('association.news
 
 Route::livewire('/association/election', 'association.election.index')->name('association.election');
 
+Route::livewire('/association/messages', 'association.messages')->name('association.messages');
+
+Route::livewire('/association/messages/admin', 'association.messages.admin')->name('association.messages.admin');
+
 Route::livewire('/association/project-support', 'association.project-support.index')->name('association.projectSupport');
 Route::livewire('/association/project-support/create', 'association.project-support.form.create')->name('association.projectSupport.create');
 Route::livewire('/association/project-support/{projectProposal:slug}', 'association.project-support.show')->name('association.projectSupport.item');

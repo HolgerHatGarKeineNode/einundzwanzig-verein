@@ -262,3 +262,39 @@ it('sends an expired claim whose redelivery was swallowed by the pause once the 
         ->and($relay->published())->toHaveCount(1)
         ->and(DB::table('jobs')->count())->toBe(0);
 });
+
+it('never starts a row of a test election, and still starts the real election next to it', function () {
+    Queue::fake();
+    EinundzwanzigPleb::factory()->active()->create();
+    $trial = DmSchedule::factory()->create([
+        'election_event_id' => Election::factory()->test()->create()->id,
+        'send_at' => now()->subMinute(),
+    ]);
+    $real = DmSchedule::factory()->create(['send_at' => now()->subMinute()]);
+
+    expect(sendDue())->toBe(0)
+        ->and($trial->fresh()->dm_run_id)->toBeNull()
+        ->and($real->fresh()->dm_run_id)->not->toBeNull()
+        ->and(DmRun::query()->count())->toBe(1);
+});
+
+it('stores the audience and, where the audience needs one, the election on the run', function () {
+    Queue::fake();
+    $election = Election::factory()->create();
+    EinundzwanzigPleb::factory()->active()->create();
+    $start = app(StartDirectMessageRun::class);
+
+    $manual = $start->handle(DmMessage::factory()->create(), DmAudience::EntitledVoters, $election);
+    $everyone = $start->handle(DmMessage::factory()->create(), DmAudience::Members, $election);
+    $scheduled = $start->forSchedule(DmSchedule::factory()->create([
+        'election_event_id' => $election->id,
+        'audience' => DmAudience::FeeOutstanding,
+    ]));
+
+    expect($manual->fresh()->audience)->toBe(DmAudience::EntitledVoters)
+        ->and($manual->fresh()->election_event_id)->toBe($election->id)
+        ->and($everyone->fresh()->audience)->toBe(DmAudience::Members)
+        ->and($everyone->fresh()->election_event_id)->toBeNull()
+        ->and($scheduled->fresh()->audience)->toBe(DmAudience::FeeOutstanding)
+        ->and($scheduled->fresh()->election_event_id)->toBe($election->id);
+});

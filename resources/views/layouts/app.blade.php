@@ -2,6 +2,10 @@
     $currentRoute = request()->route()->getName();
     $isCurrentRouteClass = 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100';
     $isNotCurrentRouteClass = 'text-gray-600 dark:text-gray-400';
+    $inboxMember = \App\Support\NostrAuth::user()?->getPleb();
+    $unreadMessages = $inboxMember instanceof \App\Models\EinundzwanzigPleb
+        ? app(\App\Services\Dm\DirectMessageInbox::class)->unreadCount($inboxMember)
+        : 0;
 @endphp
 
     <!DOCTYPE html>
@@ -58,6 +62,12 @@
                 <flux:navlist.item icon="hand-raised" :href="route('association.election')"
                                    :current="request()->routeIs('association.election')"
                                    wire:navigate>{{ __('Wahl') }}</flux:navlist.item>
+                {{-- association.messages updates the badge in place when a message is opened. --}}
+                <flux:navlist.item icon="envelope" :href="route('association.messages')"
+                                   :current="request()->routeIs('association.messages')"
+                                   :badge="$unreadMessages > 0 ? (string) $unreadMessages : null"
+                                   data-inbox-link
+                                   wire:navigate>{{ __('Nachrichten') }}</flux:navlist.item>
             </flux:navlist.group>
 
             <flux:navlist.group heading="Admin" class="grid">
@@ -68,6 +78,9 @@
                     <flux:navlist.item icon="check-badge" :href="route('association.election.admin')"
                                        :current="request()->routeIs('association.election.admin')"
                                        wire:navigate>{{ __('Wahl leiten') }}</flux:navlist.item>
+                    <flux:navlist.item icon="paper-airplane" :href="route('association.messages.admin')"
+                                       :current="request()->routeIs('association.messages.admin')"
+                                       wire:navigate>{{ __('Nachrichten senden') }}</flux:navlist.item>
                 @endif
             </flux:navlist.group>
         </flux:navlist>

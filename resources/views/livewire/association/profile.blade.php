@@ -317,7 +317,7 @@ new class extends Component {
     {
         if (!$paymentEvent->btc_pay_invoice) {
             $this->invoiceStatusVariant = 'info';
-            $this->invoiceStatusMessage = 'Noch keine Rechnung gestartet. Klicke auf „Pay“, um eine neue Invoice zu erstellen.';
+            $this->invoiceStatusMessage = 'Noch keine Rechnung gestartet. Klicke auf „Sats bezahlen“, um eine neue Rechnung zu erstellen.';
             $this->invoiceStatus = null;
             $this->invoiceStatusLabel = 'Bereit für neue Rechnung';
             $this->invoiceExpiresAt = null;
@@ -1164,12 +1164,12 @@ new class extends Component {
                                         <flux:button
                                             wire:click="pay('{{ date('Y') }}:{{ $currentPubkey }}')"
                                             variant="primary"
-                                            class="text-xl px-8 py-3">
+                                            class="min-h-12 px-8 text-xl">
                                             <i class="fa-sharp-duotone fa-solid fa-bolt-lightning mr-2"></i>
-                                            Pay {{ $amountToPay }} Sats
+                                            {{ __(':amount Sats bezahlen', ['amount' => $amountToPay]) }}
                                         </flux:button>
                                     @else
-                                        <flux:button disabled variant="primary" color="green" class="text-xl px-8 py-3">
+                                        <flux:button disabled variant="primary" color="green" class="min-h-12 px-8 text-xl">
                                             <i class="fa-sharp-duotone fa-solid fa-check-circle mr-2"></i>
                                             Aktuelles Jahr bezahlt
                                         </flux:button>
@@ -1235,8 +1235,8 @@ new class extends Component {
                                                         <flux:button
                                                             href="{{ app(\App\Services\BtcPayClient::class)->receiptUrl($payment->btc_pay_invoice) }}"
                                                             target="_blank"
-                                                            size="xs"
-                                                            variant="subtle">
+                                                            variant="subtle"
+                                                            class="min-h-11">
                                                             Quittung
                                                         </flux:button>
                                                     @endif
@@ -1274,7 +1274,7 @@ new class extends Component {
                                                         href="{{ app(\App\Services\BtcPayClient::class)->receiptUrl($payment->btc_pay_invoice) }}"
                                                         target="_blank"
                                                         variant="subtle"
-                                                        class="w-full text-sm">
+                                                        class="min-h-11 w-full text-sm">
                                                         Quittung anzeigen
                                                     </flux:button>
                                                 @endif

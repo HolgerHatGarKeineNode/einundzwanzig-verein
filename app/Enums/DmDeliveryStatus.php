@@ -27,6 +27,21 @@ enum DmDeliveryStatus: string
     case NoInbox = 'no_inbox';
 
     /**
+     * What the board reads. A server knows what relays answered, not what a
+     * person saw, so no label claims more than that.
+     */
+    public function label(): string
+    {
+        return match ($this) {
+            self::Pending => __('Wartet auf Versand'),
+            self::Claimed => __('Wird gerade gesendet'),
+            self::Sent => __('An Relays übergeben'),
+            self::Failed => __('Kein Relay hat angenommen'),
+            self::NoInbox => __('Kein Posteingang, nur im Portal'),
+        };
+    }
+
+    /**
      * May SendDirectMessage claim a delivery in this state?
      */
     public function isClaimable(): bool

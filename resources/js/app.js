@@ -7,6 +7,7 @@ import nostrZap from "./nostrZap.js";
 import projectChatRoom from "./projectChatRoom.js";
 import projectChatFeed from "./projectChatFeed.js";
 import nostrLogout from "./nostrLogout.js";
+import electionBallot from "./electionBallot.js";
 
 /*
  * Die Markdown-Werkzeugleiste (<markdown-toolbar>), ein Web Component von
@@ -54,5 +55,6 @@ Alpine.data('projectChatFeed', projectChatFeed);
 // Abmelden raeumt den Klartext-Cache des Chats vom Geraet. Leicht und ohne
 // Import des SDK — der Knopf steht auf jeder Seite (siehe nostrLogout.js).
 Alpine.data('nostrLogout', nostrLogout);
+Alpine.data('electionBallot', electionBallot);
 
 Livewire.start();

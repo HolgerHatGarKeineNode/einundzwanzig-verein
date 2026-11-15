@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\DmAudience;
 use App\Enums\DmMessageType;
 use Database\Factories\DmMessageFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -59,9 +60,12 @@ class DmMessage extends Model
      * audience query happened to return, and it must not name anyone once a
      * member has been erased.
      *
+     * The audience and election are stored with the run so the history can
+     * say who it was meant for; both stay null for a test to one member.
+     *
      * @param  iterable<int, EinundzwanzigPleb>  $recipients
      */
-    public function freezeRun(iterable $recipients): DmRun
+    public function freezeRun(iterable $recipients, ?DmAudience $audience = null, ?Election $election = null): DmRun
     {
         $ids = [];
 
@@ -73,6 +77,8 @@ class DmMessage extends Model
         sort($ids);
 
         return $this->runs()->create([
+            'audience' => $audience,
+            'election_event_id' => $election?->getKey(),
             'recipient_ids' => $ids,
             'recipient_count' => count($ids),
         ]);
