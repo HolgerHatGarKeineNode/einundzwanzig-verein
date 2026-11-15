@@ -55,6 +55,9 @@
                 <flux:navlist.item icon="light-bulb" :href="route('association.proposals.index')"
                                    :current="request()->routeIs('association.proposals.*')"
                                    wire:navigate>{{ __('Vorschläge') }}</flux:navlist.item>
+                <flux:navlist.item icon="hand-raised" :href="route('association.election')"
+                                   :current="request()->routeIs('association.election')"
+                                   wire:navigate>{{ __('Wahl') }}</flux:navlist.item>
             </flux:navlist.group>
 
             <flux:navlist.group heading="Admin" class="grid">
