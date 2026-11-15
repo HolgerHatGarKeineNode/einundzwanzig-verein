@@ -13,6 +13,8 @@ use App\Services\Election\ElectionStewardship;
 use App\Services\Election\OpenRound;
 use App\Services\Election\RoundManifest;
 use App\Services\MembershipService;
+use App\Services\Nostr\EventSigning;
+use App\Services\Nostr\EventVerification;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -340,6 +342,29 @@ it('names a vote whose member no longer has the signing key', function () {
 
     expect($status)->toBe(1)
         ->and($output)->toContain('FAIL vote '.$vote->id.' event '.$events[0]['id'].': foreign_signer');
+});
+
+/*
+ * Jury run 1 (j1d): the cast path refuses a vote without its random nonce
+ * (VoteEvent::failures, MissingNonce), but nothing showed that
+ * `election:verify` re-applies that check to what is stored. Here a stored
+ * vote is replaced past the application by an event that is validly signed
+ * by the same member and lacks only the nonce: the signature holds, so
+ * missing_nonce must be the one failure named.
+ */
+it('names a validly signed stored vote that carries no nonce', function () {
+    [$round, $events] = manifestRound();
+    $vote = DB::table('election_votes')->where('event_id', $events[1]['id'])->sole();
+    $member = EinundzwanzigPleb::query()->findOrFail($vote->einundzwanzig_pleb_id);
+    $tags = array_values(array_filter($events[1]['tags'], fn (array $tag): bool => $tag[0] !== 'nonce'));
+    $unsalted = EventSigning::sign(electionSecretFor($member), $events[1]['kind'], $tags, $events[1]['content'], $events[1]['created_at']);
+    DB::table('election_votes')->where('id', $vote->id)->update(['event_id' => $unsalted['id'], 'event' => json_encode($unsalted)]);
+
+    [$status, $output] = verifyRound($round);
+
+    expect(EventVerification::isAuthentic($unsalted))->toBeTrue()
+        ->and($status)->toBe(1)
+        ->and($output)->toContain('FAIL vote '.$vote->id.' event '.$unsalted['id'].": missing_nonce\n");
 });
 
 /*

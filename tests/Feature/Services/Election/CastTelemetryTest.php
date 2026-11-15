@@ -8,6 +8,7 @@ use App\Models\SecurityAttempt;
 use App\Services\Election\CastBallot;
 use App\Services\Election\OpenRound;
 use App\Services\SecurityMonitor;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
@@ -206,6 +207,28 @@ it('keeps choice, signature and pubkey out of the messages of a failed and of a 
             ->not->toContain($voter->pubkey)
             ->not->toMatch('/\b(for|tampered)\b/');
     }
+});
+
+/*
+ * Mutation that must turn this red: switch off
+ * `database.connections.sqlite.mask_bindings_in_exception_messages`
+ * (B2-telemetry-exception-message). CastBallot re-throws a refused insert
+ * without its cause, so the test above cannot see the flag; this one asks the
+ * connection itself, which every other write of a ballot row goes through.
+ */
+it('keeps bound values out of the message of a failed query on the ballot table', function () {
+    $message = null;
+
+    try {
+        // Unquoted on purpose: SQLite reads an unknown "quoted" name as a
+        // string literal and would not fail at all.
+        DB::select('select * from election_votes where no_such_column = ?', ['ballot-secret-j1d']);
+    } catch (QueryException $exception) {
+        $message = $exception->getMessage();
+    }
+
+    expect($message)->toContain('no_such_column')->toContain('SQL: select * from election_votes')
+        ->not->toContain('ballot-secret-j1d');
 });
 
 /*

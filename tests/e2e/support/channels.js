@@ -83,6 +83,15 @@ export const test = base.extend({
                     allowed.push({ channel, pattern, reason })
                 },
 
+                /**
+                 * Record a finding a spec saw itself, e.g. a WebSocket it answered
+                 * through routeWebSocket(), which never reaches the 'websocket'
+                 * channel above.
+                 */
+                record(channel, detail) {
+                    record(channel, detail)
+                },
+
                 /** Everything recorded so far that no allow() covers. */
                 findings() {
                     return recorded.filter((finding) => ! isAllowed(finding))

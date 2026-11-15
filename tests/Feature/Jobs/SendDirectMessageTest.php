@@ -336,9 +336,54 @@ it('writes no relay answer when the member is erased during the first publish', 
 
     SendDirectMessage::dispatchSync($delivery->id);
 
+    // The relay took the wrap before the erasure was seen: it is out there.
     expect($relay->publishes)->toBe(1);
-    expectNothingStoredFor($delivery);
+    expectNothingStoredFor($delivery, DmDeliveryStatus::Sent);
 });
+
+/*
+ * The state an erasure during the publish leaves is what the relays did up
+ * to then: `not_sent` would claim no relay was tried, `failed` that none took
+ * the wrap. Mutation: finish such a delivery as `failed` whatever the
+ * relays answered → the two "took it" cases turn red.
+ */
+it('ends a delivery erased during the publish as sent only when a relay took the wrap', function (array $answers, int $erasedAt, DmDeliveryStatus $status) {
+    [$member] = dmRecipient(['wss://one.example/', 'wss://two.example/', 'wss://three.example/']);
+    $delivery = dmDelivery($member);
+
+    $relay = new class($member, $answers, $erasedAt) implements RelayTransport
+    {
+        public int $publishes = 0;
+
+        /** @param list<RelayPublishResult> $answers */
+        public function __construct(private EinundzwanzigPleb $member, private array $answers, private int $erasedAt) {}
+
+        public function publish(string $relayUrl, array $event): RelayPublishResult
+        {
+            if (++$this->publishes === $this->erasedAt) {
+                app(MembershipService::class)->erasePersonalData($this->member);
+            }
+
+            return $this->answers[$this->publishes - 1];
+        }
+
+        public function fetch(string $relayUrl, array $filter): RelayFetchResult
+        {
+            return RelayFetchResult::complete([]);
+        }
+    };
+    app()->instance(RelayTransport::class, $relay);
+
+    SendDirectMessage::dispatchSync($delivery->id);
+
+    // The job stops at the erasure: the third relay is never dialled.
+    expect($relay->publishes)->toBe($erasedAt);
+    expectNothingStoredFor($delivery, $status);
+})->with([
+    'the first took it, erased during the second' => [[RelayPublishResult::accepted(), RelayPublishResult::rejected('blocked')], 2, DmDeliveryStatus::Sent],
+    'the second took it as the erasure landed' => [[RelayPublishResult::rejected('blocked'), RelayPublishResult::accepted()], 2, DmDeliveryStatus::Sent],
+    'none took it, erased during the second' => [[RelayPublishResult::rejected('blocked'), RelayPublishResult::failed('timeout')], 2, DmDeliveryStatus::Failed],
+]);
 
 it('writes no wrap when the member is erased while the wrap is being built', function () {
     $relay = FakeRelayTransport::bind();
