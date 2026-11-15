@@ -133,7 +133,7 @@
         </div>
         <div class="mt-4 flex flex-wrap gap-3">
             <flux:button variant="primary" icon="finger-print" class="min-h-11 w-full sm:w-auto"
-                         x-show="step === 'review' || step === 'signing'" x-on:click="sign()" x-bind:disabled="step !== 'review'">
+                         x-ref="signButton" x-show="step === 'review' || step === 'signing'" x-on:click="sign()" x-bind:disabled="step !== 'review'">
                 {{ __('Signieren und abgeben') }}
             </flux:button>
             <flux:button variant="primary" icon="arrow-path" class="min-h-11 w-full sm:w-auto"
@@ -160,6 +160,6 @@
 
     {{-- No signer on this device: the German help, before any vendor dialog. --}}
     <div x-show="needsSigner" x-cloak class="mt-3">
-        <x-election-signer-help :id="'ballot-signer-help-'.$round->id" connect="sign(true)" />
+        <x-election-signer-help :id="'ballot-signer-help-'.$round->id" x-ref="signerHelp" connect="sign(true)" />
     </div>
 </div>

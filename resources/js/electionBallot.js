@@ -129,6 +129,13 @@ export default ({ roundId, pubkey, rule, max, messages }) => ({
         this.signAttempt++
         this.step = 'review'
         this.error = message
+        // The sign button is disabled while the signer is asked, which drops
+        // the focus to BODY. Once it is enabled again, it is the way to retry.
+        this.$nextTick(() => {
+            if (!document.activeElement || document.activeElement === document.body) {
+                this.$refs.signButton?.focus()
+            }
+        })
     },
 
     /**
@@ -143,6 +150,8 @@ export default ({ roundId, pubkey, rule, max, messages }) => ({
         if ((!force && signerKind() === 'none') || !window.nostr || typeof window.nostr.signEvent !== 'function') {
             this.needsSigner = true
             this.fail(messages.noSigner)
+            // After x-show has revealed it: the help is what to read next.
+            this.$nextTick(() => this.$refs.signerHelp?.focus())
             return
         }
 
