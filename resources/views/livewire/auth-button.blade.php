@@ -57,7 +57,7 @@ new class extends Component
 }
 ?>
 
-<div x-data="nostrLogin" data-nostr-challenge="{{ $nostrChallenge ?? '' }}">
+<div x-data="nostrLogin" data-nostr-challenge="{{ $nostrChallenge ?? '' }}" data-nostr-login-url="{{ \App\Support\NostrAuth::loginUrl() ?? '' }}">
     @if($isLoggedIn)
         {{-- Vor dem Absenden den Klartext-Cache des Chats vom Geraet raeumen.
              Der Handler laedt dafuer NICHTS nach; ohne Chat auf der Seite ist es

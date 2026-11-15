@@ -40,6 +40,20 @@ export default () => ({
         return null;
     },
 
+    /**
+     * The app origin the server expects in the login event's `u` tag
+     * (NostrAuth::loginUrl(), rendered by the auth-button component).
+     * Falls back to the page origin, which matches whenever APP_URL does.
+     */
+    resolveLoginUrl() {
+        const fromDataset = this.$root?.dataset?.nostrLoginUrl;
+        if (typeof fromDataset === 'string' && fromDataset !== '') {
+            return fromDataset;
+        }
+
+        return window.location.origin;
+    },
+
     async openNostrLogin() {
         this.nostrLoginInProgress = true;
 
@@ -59,10 +73,14 @@ export default () => ({
 
             const pubkey = await window.nostr.getPublicKey();
 
+            // The `u` tag binds the event to this app. Kind 22242 with a
+            // `challenge` tag is also NIP-42 relay AUTH; the server refuses
+            // any login event without `u` or with a `relay` tag, so an
+            // answer given to a relay can never be replayed here as a login.
             const event = {
                 kind: 22242,
                 created_at: Math.floor(Date.now() / 1000),
-                tags: [['challenge', challenge]],
+                tags: [['challenge', challenge], ['u', this.resolveLoginUrl()]],
                 content: '',
             };
 
