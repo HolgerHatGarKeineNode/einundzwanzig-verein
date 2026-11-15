@@ -536,3 +536,61 @@ it('shows the signed event in a stack trace only as SensitiveParameterValue', fu
         ->and(electionTraceArguments($refusal))->toContain('[ballot] => SensitiveParameterValue')
         ->not->toContain($event['sig']);
 });
+
+/*
+ * Jury run 1, H1: without a random component the event id on the receipt
+ * hashed back to the ballot in 0.06 s — every other field is guessable. The
+ * browser adds a `nonce` tag of at least 128 bits before signing; a vote
+ * without one is not taken in.
+ */
+
+it('refuses a vote signed without a random nonce tag', function () {
+    $voter = electionVoter();
+    $round = openElectionRound();
+    $template = VoteEvent::template($round, [], now()->getTimestamp());
+    $event = EventSigning::sign(electionSecretFor($voter), $template['kind'], $template['tags'], $template['content'], $template['created_at']);
+
+    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $voter, $event)))
+        ->toBe(ElectionBallotRefusal::MissingNonce)
+        ->and(ElectionBallotRefusal::MissingNonce->label())->toBe('Deiner Stimme fehlt der Zufallswert, der sie unkenntlich macht. Bitte lade die Seite neu und signiere noch einmal.')
+        ->and(electionVoteCount($round))->toBe(0);
+});
+
+it('refuses a nonce tag that is too short, not lowercase hex, doubled or malformed', function (Closure $nonceTags) {
+    $voter = electionVoter();
+    $round = openElectionRound();
+    $event = signedElectionVote($round, $voter, overrides: ['tags' => [...VoteEvent::template($round, [], 0)['tags'], ...$nonceTags()]]);
+
+    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $voter, $event)))
+        ->toBe(ElectionBallotRefusal::MissingNonce)
+        ->and(electionVoteCount($round))->toBe(0);
+})->with([
+    '124 bits' => [fn () => [['nonce', str_repeat('a', 31)]]],
+    'upper case' => [fn () => [['nonce', strtoupper(bin2hex(random_bytes(16)))]]],
+    'not hex' => [fn () => [['nonce', str_repeat('g', 32)]]],
+    'longer than 256 bits' => [fn () => [['nonce', str_repeat('a', 66)]]],
+    'two nonce tags' => [fn () => [['nonce', bin2hex(random_bytes(16))], ['nonce', bin2hex(random_bytes(16))]]],
+    'a third element' => [fn () => [['nonce', bin2hex(random_bytes(16)), 'extra']]],
+]);
+
+it('takes in a vote with a nonce of 128 or 256 bits and keeps the nonce in the stored event', function (int $bytes) {
+    $voter = electionVoter();
+    $round = openElectionRound();
+    $nonce = bin2hex(random_bytes($bytes));
+    $event = signedElectionVote($round, $voter, overrides: ['tags' => [...VoteEvent::template($round, [], 0)['tags'], ['nonce', $nonce]]]);
+
+    expect(electionRefusal(fn () => app(CastBallot::class)->handle($round, $voter, $event)))->toBeNull()
+        ->and(DB::table('election_votes')->where('event_id', $event['id'])->value('event'))->toContain('["nonce","'.$nonce.'"]');
+})->with(['128 bits' => 16, '256 bits' => 32]);
+
+it('gives the same ballot signed in the same second a different receipt each time', function () {
+    $voter = electionVoter();
+    $round = openElectionRound(['counting_rule' => ElectionCountingRule::MostVotes, 'seats' => 2], candidates: 3);
+    $candidate = $round->candidates()->orderBy('id')->value('id');
+
+    $first = signedElectionVote($round, $voter, [$candidate => 'for']);
+    $second = signedElectionVote($round, $voter, [$candidate => 'for'], ['created_at' => $first['created_at']]);
+
+    expect($second['created_at'])->toBe($first['created_at'])
+        ->and($second['id'])->not->toBe($first['id']);
+});

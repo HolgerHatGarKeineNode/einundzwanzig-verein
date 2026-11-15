@@ -20,6 +20,18 @@ function withTimeout(promise, ms) {
     ])
 }
 
+/**
+ * 256 random bits as lowercase hex for the vote event's `nonce` tag. Without
+ * it the event id on the receipt could be brute-forced back to the ballot
+ * (app/Services/Election/VoteEvent.php). Drawn here, never by the server.
+ */
+function voteNonce() {
+    const bytes = new Uint8Array(32)
+    crypto.getRandomValues(bytes)
+
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
 export default ({ roundId, pubkey, rule, max, messages }) => ({
     // fill | review | signing | sending | checking | lost
     step: 'fill',
@@ -128,7 +140,7 @@ export default ({ roundId, pubkey, rule, max, messages }) => ({
             }
 
             // Extensions may hand back proxies Livewire cannot serialise.
-            signed = JSON.parse(JSON.stringify(await window.nostr.signEvent({ ...this.template, tags: this.template.tags.map((tag) => [...tag]) })))
+            signed = JSON.parse(JSON.stringify(await window.nostr.signEvent({ ...this.template, tags: [...this.template.tags.map((tag) => [...tag]), ['nonce', voteNonce()]] })))
         } catch (error) {
             this.fail(messages.cancelled)
             return
