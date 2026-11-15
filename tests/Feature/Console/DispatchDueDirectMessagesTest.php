@@ -32,6 +32,7 @@ require_once __DIR__.'/../Jobs/DirectMessageHelpers.php';
  * Mutations that must turn this file red (patches in the plan folder):
  *  - P3B2-due-off-by-one   the due check also selects rows one second ahead
  *  - P3B2-pause-fan-out    the fan-out ignores the pause
+ *  - P3B2-resume-pending-only  resume() re-queues runs with pending deliveries only
  */
 
 beforeEach(fn () => armDirectMessages());
@@ -199,4 +200,65 @@ it('keeps the pause in the database, so a cleared cache does not lift it', funct
     app(DirectMessagePause::class)->resume();
 
     expect(app(DirectMessagePause::class)->isPaused())->toBeFalse();
+});
+
+/*
+ * The database queue: a job that returns is deleted there, so a send the
+ * pause swallowed is only retried if resume() finds its run. Mutation
+ * P3B2-resume-pending-only → both red.
+ */
+function workDatabaseQueue(): void
+{
+    Artisan::call('queue:work', ['connection' => 'database', '--stop-when-empty' => true, '--sleep' => 0, '--quiet' => true]);
+}
+
+it('sends a failed delivery whose queued retry was swallowed by the pause once the pause is lifted', function () {
+    $relay = FakeRelayTransport::bind();
+    config()->set('queue.default', 'database');
+    [$member] = dmRecipient();
+    $relay->thenFail('timeout')->thenAccept();
+
+    DispatchBulkDirectMessages::dispatch(DmMessage::factory()->create()->freezeRun([$member])->id);
+    workDatabaseQueue();
+    $delivery = DmDelivery::query()->sole();
+
+    expect($delivery->status)->toBe(DmDeliveryStatus::Failed)
+        ->and(DB::table('jobs')->count())->toBe(1);
+
+    app(DirectMessagePause::class)->pause();
+    $this->travel(61)->seconds();
+    workDatabaseQueue();
+
+    expect(DB::table('jobs')->count())->toBe(0)
+        ->and($delivery->fresh()->status)->toBe(DmDeliveryStatus::Failed);
+
+    app(DirectMessagePause::class)->resume();
+    workDatabaseQueue();
+
+    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::Sent)
+        ->and($relay->published())->toHaveCount(2)
+        ->and(DB::table('jobs')->count())->toBe(0);
+});
+
+it('sends an expired claim whose redelivery was swallowed by the pause once the pause is lifted', function () {
+    $relay = FakeRelayTransport::bind();
+    config()->set('queue.default', 'database');
+    [$member] = dmRecipient();
+    $delivery = dmDelivery($member);
+    $delivery->run->forceFill(['fanned_out_at' => now()->subMinutes(5)])->save();
+    $delivery->forceFill(['status' => DmDeliveryStatus::Claimed, 'claimed_at' => now()->subMinutes(5), 'attempts' => 1])->save();
+
+    app(DirectMessagePause::class)->pause();
+    SendDirectMessage::dispatch($delivery->id);
+    workDatabaseQueue();
+
+    expect(DB::table('jobs')->count())->toBe(0)
+        ->and($delivery->fresh()->status)->toBe(DmDeliveryStatus::Claimed);
+
+    app(DirectMessagePause::class)->resume();
+    workDatabaseQueue();
+
+    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::Sent)
+        ->and($relay->published())->toHaveCount(1)
+        ->and(DB::table('jobs')->count())->toBe(0);
 });

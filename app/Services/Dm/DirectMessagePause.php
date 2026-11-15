@@ -2,7 +2,6 @@
 
 namespace App\Services\Dm;
 
-use App\Enums\DmDeliveryStatus;
 use App\Jobs\Dm\DispatchBulkDirectMessages;
 use App\Models\DmRun;
 use Illuminate\Support\Facades\DB;
@@ -44,16 +43,21 @@ final class DirectMessagePause
 
     /**
      * Lift the pause and queue the fan-out again for every run that has not
-     * been fanned out or still has deliveries waiting.
+     * been fanned out or still has work left by the fan-out's own definition
+     * (DmDelivery::scopeWithWorkLeft): a send swallowed by the pause may have
+     * been the retry of a `failed` delivery or the redelivery of an expired
+     * claim, not only a `pending` one.
      */
     public function resume(): void
     {
-        DB::table(self::TABLE)->update(['paused_at' => null, 'updated_at' => now()]);
+        $now = now();
+
+        DB::table(self::TABLE)->update(['paused_at' => null, 'updated_at' => $now]);
 
         DmRun::query()
             ->where(fn ($query) => $query
                 ->whereNull('fanned_out_at')
-                ->orWhereHas('deliveries', fn ($deliveries) => $deliveries->where('status', DmDeliveryStatus::Pending->value)))
+                ->orWhereHas('deliveries', fn ($deliveries) => $deliveries->withWorkLeft($now)))
             ->orderBy('id')
             ->pluck('id')
             ->each(fn (int $runId) => DispatchBulkDirectMessages::dispatch($runId));

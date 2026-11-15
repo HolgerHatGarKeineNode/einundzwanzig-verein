@@ -82,11 +82,7 @@ class DispatchBulkDirectMessages implements ShouldQueue
 
         DmDelivery::query()
             ->where('dm_run_id', $run->id)
-            ->where(fn ($query) => $query
-                ->whereIn('status', [DmDeliveryStatus::Pending->value, DmDeliveryStatus::Failed->value])
-                ->orWhere(fn ($query) => $query
-                    ->where('status', DmDeliveryStatus::Claimed->value)
-                    ->where('claimed_at', '<', $now->copy()->subSeconds(SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS))))
+            ->withWorkLeft($now)
             ->orderBy('id')
             ->pluck('id')
             ->each(fn (int $deliveryId) => SendDirectMessage::dispatch($deliveryId));
