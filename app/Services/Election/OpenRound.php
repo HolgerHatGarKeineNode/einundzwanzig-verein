@@ -111,8 +111,13 @@ class OpenRound
      *  - not sealed yet (a draft, open, or merely over by the clock) → refused,
      *    nobody can say yet whether that candidate is elected there;
      *  - elected there → refused;
-     *  - level on votes in an undecided tie there → refused, unless this round
-     *    is the run-off of exactly that round, which is what a run-off is for.
+     *  - level on votes in a tie there → refused, unless this round is the
+     *    run-off of exactly that round, which is what a run-off is for, or a
+     *    run-off of that round is sealed and not annulled: the tie is decided
+     *    there. That run-off is an earlier round itself — it opened only
+     *    once every round before it that shares a candidate was sealed —
+     *    so whoever it elects is caught by the second case, and a run-off
+     *    that ends level again blocks by this one.
      *
      * Refusing instead of quietly dropping the candidate keeps the list of
      * candidates the election officer's to change. An annulled round has no
@@ -132,7 +137,7 @@ class OpenRound
                 $query->where('position', '<', $round->position)
                     ->orWhere('id', $round->parent_round_id);
             })
-            ->with('candidates')
+            ->with(['candidates', 'children'])
             ->get();
 
         foreach ($earlier as $other) {
@@ -156,7 +161,9 @@ class OpenRound
                 throw new ElectionRoundStateException('A candidate of this round has been elected in an earlier round of the election.');
             }
 
-            if ((int) $other->getKey() !== (int) $round->parent_round_id && array_intersect($shared, $result->tied) !== []) {
+            $decidedByRunOff = $other->children->contains(fn (ElectionRound $runOff): bool => $runOff->isSealed());
+
+            if ((int) $other->getKey() !== (int) $round->parent_round_id && ! $decidedByRunOff && array_intersect($shared, $result->tied) !== []) {
                 throw new ElectionRoundStateException('A candidate of this round is level in an undecided tie of an earlier round of the election.');
             }
         }

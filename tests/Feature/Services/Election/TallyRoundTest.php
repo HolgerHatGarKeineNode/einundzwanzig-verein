@@ -230,3 +230,39 @@ it('treats the round of a run-off as earlier whatever its position', function ()
     expect(fn () => app(OpenRound::class)->handle($runOff))
         ->toThrow(ElectionRoundStateException::class, 'A candidate of this round has been elected in an earlier round of the election.');
 });
+
+it('takes a tie as decided once a run-off of it is sealed, and as undecided while it ends level again', function (string $runOffResult) {
+    $election = Election::factory()->create();
+    $voters = [electionVoter(), electionVoter()];
+    $parent = app(OpenRound::class)->handle(draftElectionRound(['position' => 1, 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 2, election: $election));
+    [$first, $second] = $parent->candidates()->orderBy('id')->get()->all();
+    castElectionBallot($parent, $voters[0], [$first->id => 'for']);
+    castElectionBallot($parent, $voters[1], [$second->id => 'for']);
+    app(CloseRound::class)->handle($parent);
+
+    $later = draftElectionRound(['position' => 3], candidates: 1, election: $election);
+    standAgain($later, $first, $second);
+
+    $runOff = draftElectionRound(['position' => 2, 'parent_round_id' => $parent->id, 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 0, election: $election);
+    standAgain($runOff, $first, $second);
+    $runOff = app(OpenRound::class)->handle($runOff);
+    [$runOffFirst, $runOffSecond] = $runOff->candidates()->orderBy('id')->get()->all();
+    castElectionBallot($runOff, $voters[0], [$runOffFirst->id => 'for']);
+    castElectionBallot($runOff, $voters[1], [($runOffResult === 'level again' ? $runOffSecond : $runOffFirst)->id => 'for']);
+    app(CloseRound::class)->handle($runOff);
+
+    if ($runOffResult === 'level again') {
+        expect(fn () => app(OpenRound::class)->handle($later))
+            ->toThrow(ElectionRoundStateException::class, 'A candidate of this round is level in an undecided tie of an earlier round of the election.');
+
+        return;
+    }
+
+    // The run-off elected the first; the second, defeated there, may stand.
+    expect(fn () => app(OpenRound::class)->handle($later))
+        ->toThrow(ElectionRoundStateException::class, 'A candidate of this round has been elected in an earlier round of the election.');
+
+    $later->candidates()->where('einundzwanzig_pleb_id', $first->einundzwanzig_pleb_id)->delete();
+
+    expect(app(OpenRound::class)->handle($later)->opened_at)->not->toBeNull();
+})->with(['decided', 'level again']);
