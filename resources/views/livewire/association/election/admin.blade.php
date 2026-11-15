@@ -16,10 +16,13 @@ use App\Models\ElectionRollEntry;
 use App\Models\ElectionRound;
 use App\Models\MemberProposal;
 use App\Services\Election\Candidacies;
+use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionSetup;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\ElectoralRoll;
 use App\Services\Election\EnrolByHand;
+use App\Services\Election\PurgeTestElection;
+use App\Services\Election\RoundReport;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Flux\Flux;
@@ -29,6 +32,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
+use Livewire\Attributes\On;
 use Livewire\Component;
 
 /**
@@ -45,7 +49,9 @@ use Livewire\Component;
  */
 new class extends Component
 {
-    private const SECTIONS = ['settings', 'candidacies', 'roll'];
+    private const SECTIONS = ['settings', 'candidacies', 'roll', 'live'];
+
+    private const DEFAULT_CLOSE_REASON = 'Abstimmung in der Sitzung beendet.';
 
     private const MAX_ROUNDS = 6;
 
@@ -78,6 +84,15 @@ new class extends Component
     public ?int $enrolMemberId = null;
 
     public string $enrolReason = '';
+
+    #[Locked]
+    public ?int $pendingRoundId = null;
+
+    /** 'open', 'close' or 'annul' — what the round modal confirms. */
+    #[Locked]
+    public ?string $pendingRoundAction = null;
+
+    public string $roundReason = '';
 
     public function mount(): void
     {
@@ -167,9 +182,7 @@ new class extends Component
         $feeRule = ElectionFeeRule::from($data['fee_rule']);
         $attributes = [
             'name' => $data['name'],
-            'meeting_at' => filled($data['meeting_date'])
-                ? Carbon::createFromFormat('Y-m-d H:i', $data['meeting_date'].' '.($data['meeting_time'] ?: '19:00'))
-                : null,
+            'meeting_at' => $this->meetingAtOf($data),
             'call_url' => $data['call_url'] ?? null,
             'fee_rule' => $feeRule,
             'fee_year' => $feeRule->needsFeeYear() ? (int) $data['fee_year'] : null,
@@ -338,6 +351,185 @@ new class extends Component
         $this->enrolReason = '';
         unset($this->rollEntries, $this->enrolCandidates, $this->elections, $this->selectedElection);
         Flux::toast(__(':name ist im Verzeichnis von „:round“ nachgetragen.', ['name' => MemberProposal::authorNameOf($member), 'round' => $round->title]), variant: 'success');
+    }
+
+    /**
+     * Only the meeting time and the call link — the one change allowed after
+     * a round has been opened.
+     */
+    public function saveMeeting(ElectionSetup $setup): void
+    {
+        $actor = $this->actor();
+
+        $rules = array_intersect_key($this->formRules(), array_flip(['form.meeting_date', 'form.meeting_time', 'form.call_url']));
+        $data = $this->validate($rules, $this->formMessages())['form'];
+
+        $election = $setup->updateMeeting($this->requireSelected(), $actor, $this->meetingAtOf($data), $data['call_url'] ?? null);
+
+        $this->refreshElection($election);
+        Flux::toast(__('Termin und Link von „:name“ gespeichert.', ['name' => $election->name]), variant: 'success');
+    }
+
+    /**
+     * Ask before a round is opened, ended or annulled. Ending and annulling
+     * take a reason, which goes into the audit log.
+     */
+    public function startRoundAction(int $roundId, string $kind): void
+    {
+        $this->actor();
+
+        $round = ElectionRound::query()->findOrFail($roundId);
+
+        if ((int) $round->election_event_id !== $this->selectedElectionId) {
+            $this->select($round->election);
+        }
+
+        $this->pendingRoundId = (int) $round->id;
+        $this->pendingRoundAction = in_array($kind, ['open', 'close', 'annul'], true) ? $kind : 'open';
+        $this->roundReason = $this->pendingRoundAction === 'close' ? __(self::DEFAULT_CLOSE_REASON) : '';
+        $this->section = 'live';
+        $this->resetErrorBag('roundReason');
+
+        Flux::modal('round-action')->show();
+    }
+
+    public function confirmRoundAction(ElectionStewardship $stewardship): void
+    {
+        $actor = $this->actor();
+
+        $round = ElectionRound::query()->findOrFail($this->pendingRoundId ?? abort(404));
+        $action = $this->pendingRoundAction ?? 'open';
+
+        if ($action !== 'open') {
+            $this->validate(
+                ['roundReason' => ['required', 'string', 'min:3', 'max:1000']],
+                [
+                    'roundReason.required' => __('Nenne einen Grund. Er steht im Protokoll der Wahl.'),
+                    'roundReason.min' => __('Nenne einen Grund mit mindestens drei Zeichen.'),
+                    'roundReason.max' => __('Der Grund darf höchstens 1000 Zeichen lang sein.'),
+                ],
+            );
+        }
+
+        try {
+            match ($action) {
+                'close' => $stewardship->closeEarly($round, $actor, trim($this->roundReason)),
+                'annul' => $stewardship->annul($round, $actor, trim($this->roundReason)),
+                default => $stewardship->open($round, $actor),
+            };
+        } catch (ElectionRoundStateException $exception) {
+            $this->addError('roundReason', $this->refusalText($action, $exception));
+
+            return;
+        }
+
+        Flux::modal('round-action')->close();
+        $this->pendingRoundId = null;
+        $this->pendingRoundAction = null;
+        $this->roundReason = '';
+        $this->refreshElection($round->election);
+
+        Flux::toast(match ($action) {
+            'close' => __('„:round“ ist geschlossen und ausgezählt.', ['round' => $round->title]),
+            'annul' => __('„:round“ ist annulliert.', ['round' => $round->title]),
+            default => __('„:round“ ist offen. Die Wahlberechtigten können jetzt abstimmen.', ['round' => $round->title]),
+        }, variant: $action === 'annul' ? 'warning' : 'success');
+    }
+
+    /**
+     * Seal a round whose 60 minutes ran out before anybody closed it.
+     */
+    public function sealRound(int $roundId, ElectionStewardship $stewardship): void
+    {
+        $actor = $this->actor();
+        $round = ElectionRound::query()->findOrFail($roundId);
+
+        try {
+            $stewardship->close($round, $actor);
+        } catch (ElectionRoundStateException) {
+            Flux::toast(__('„:round“ nimmt noch Stimmen an. Schließt ihn über „Wahlgang schließen“.', ['round' => $round->title]), variant: 'danger');
+
+            return;
+        }
+
+        $this->section = 'live';
+        $this->refreshElection($round->election);
+        Flux::toast(__('„:round“ ist ausgezählt.', ['round' => $round->title]), variant: 'success');
+    }
+
+    public function createRunOff(int $roundId, CreateRunOff $runOffs): void
+    {
+        $actor = $this->actor();
+        $round = ElectionRound::query()->findOrFail($roundId);
+
+        try {
+            $runOff = $runOffs->handle($round, $actor);
+        } catch (ElectionActionRefusedException|ElectionRoundStateException) {
+            Flux::toast(__('Für „:round“ gibt es keine Stichwahl anzulegen.', ['round' => $round->title]), variant: 'danger');
+
+            return;
+        }
+
+        $this->section = 'live';
+        $this->refreshElection($round->election);
+        Flux::toast(__('„:round“ ist angelegt. Öffnet sie, wenn alle bereit sind.', ['round' => $runOff->title]), variant: 'success');
+    }
+
+    /**
+     * Delete a test election with every row of it — rounds, votes, roll,
+     * audit lines. Refused for a real election.
+     */
+    public function purgeTestElection(PurgeTestElection $purge): void
+    {
+        $this->actor();
+        $election = $this->requireSelected();
+
+        try {
+            $purge->handle((int) $election->id);
+        } catch (ElectionActionRefusedException) {
+            Flux::toast(__('Nur eine Probewahl lässt sich vollständig löschen.'), variant: 'danger');
+
+            return;
+        }
+
+        Flux::modal('purge-election')->close();
+        $this->selectedElectionId = null;
+        $this->form = [];
+        unset($this->elections, $this->selectedElection);
+
+        $next = $this->elections->first();
+
+        if ($next !== null) {
+            $this->select($next);
+        }
+
+        Flux::toast(__('Die Probewahl „:name“ ist mit allen Stimmen und Protokollzeilen gelöscht.', ['name' => $election->name]));
+    }
+
+    /**
+     * Another board member, or the turnout poll, saw a round change.
+     */
+    #[On('election-round-changed')]
+    public function refreshRounds(): void
+    {
+        $this->actor();
+
+        unset($this->elections, $this->selectedElection, $this->roundReports, $this->openedRounds, $this->rollRound);
+    }
+
+    /**
+     * The rounds of the selected election with state, turnout and result.
+     *
+     * @return Collection<int, array<string, mixed>>
+     */
+    #[Computed]
+    public function roundReports(): Collection
+    {
+        $this->actor();
+
+        $election = $this->selectedElection;
+
+        return $election === null ? collect() : app(RoundReport::class)->forElection($election);
     }
 
     public function updatedSection(): void
@@ -538,7 +730,7 @@ new class extends Component
             [__('Entwurf'), __('angelegt :date', ['date' => $this->shortDate($election->created_at)])],
             [__('Angekündigt'), $election->announced_at === null ? __('noch nicht') : $this->shortDate($election->announced_at)],
             [__('Kandidatur'), __('bis zur Sitzung')],
-            [__('Sitzung live'), $election->meeting_at === null ? __('Termin fehlt') : $this->shortDate($election->meeting_at).', '.$election->meeting_at->format('H:i')],
+            [__('Sitzung live'), $election->meeting_at === null ? __('Termin fehlt') : $this->shortDate($election->meeting_at).', '.$this->clock($election->meeting_at)],
             [__('Ergebnis'), __('nach der Sitzung')],
         ];
 
@@ -554,10 +746,15 @@ new class extends Component
     }
 
     /**
-     * The one next step of an election: what to do, why, and the action that
-     * does it — `null` when the step lies outside this page.
+     * The one next step of an election: what to do, why, and what does it —
+     * a section to show (`action`), a Livewire call (`click`) or a page
+     * (`href`); all null when the step lies outside this page.
      *
-     * @return array{text: string, hint: string|null, action: string|null, label: string|null}
+     * In the meeting it walks the board through the evening: open a round,
+     * close it, show the result, set up a run-off if it ended level, open the
+     * next round, and at the end the minutes.
+     *
+     * @return array{text: string, hint: string|null, action: string|null, label: string|null, click: string|null, href: string|null}
      */
     protected function nextStepOf(Election $election): array
     {
@@ -566,74 +763,136 @@ new class extends Component
 
         if ($phase === 0) {
             if ($rounds->isEmpty()) {
-                return ['text' => __('Lege mindestens einen Wahlgang an.'), 'hint' => __('Ohne Wahlgang lässt sich die Wahl nicht ankündigen.'), 'action' => 'settings', 'label' => __('Wahlgang anlegen')];
+                return $this->step(__('Lege mindestens einen Wahlgang an.'), __('Ohne Wahlgang lässt sich die Wahl nicht ankündigen.'), action: 'settings', label: __('Wahlgang anlegen'));
             }
 
             if ($election->meeting_at === null) {
-                return ['text' => __('Trage den Sitzungstermin ein.'), 'hint' => __('Gewählt wird live in dieser Sitzung. Mitglieder sehen den Termin mit der Ankündigung.'), 'action' => 'settings', 'label' => __('Termin eintragen')];
+                return $this->step(__('Trage den Sitzungstermin ein.'), __('Gewählt wird live in dieser Sitzung. Mitglieder sehen den Termin mit der Ankündigung.'), action: 'settings', label: __('Termin eintragen'));
             }
 
-            return [
-                'text' => __('Wahl ankündigen.'),
-                'hint' => $election->is_test
+            return $this->step(
+                __('Wahl ankündigen.'),
+                $election->is_test
                     ? __('Probewahl: auch angekündigt sieht sie nur der Vorstand.')
                     : __('Danach sehen alle Mitglieder die Wahl und können kandidieren.'),
-                'action' => 'announce',
-                'label' => __('Wahl ankündigen'),
-            ];
+                action: 'announce',
+                label: __('Wahl ankündigen'),
+            );
         }
 
         if ($phase === 2) {
             $pending = $rounds->sum(fn (ElectionRound $round): int => $round->candidates->where('status', ElectionCandidateStatus::Pending)->count());
 
             if ($pending > 0) {
-                return [
-                    'text' => trans_choice('{1} Eine Kandidatur wartet auf Prüfung.|[2,*] :count Kandidaturen warten auf Prüfung.', $pending, ['count' => $pending]),
-                    'hint' => __('Freigeben geht, sobald die Person nach der Beitragsregel wahlberechtigt ist.'),
-                    'action' => 'candidacies',
-                    'label' => __('Kandidaturen prüfen'),
-                ];
+                return $this->step(
+                    trans_choice('{1} Eine Kandidatur wartet auf Prüfung.|[2,*] :count Kandidaturen warten auf Prüfung.', $pending, ['count' => $pending]),
+                    __('Freigeben geht, sobald die Person nach der Beitragsregel wahlberechtigt ist.'),
+                    action: 'candidacies',
+                    label: __('Kandidaturen prüfen'),
+                );
             }
 
             $without = $rounds->first(fn (ElectionRound $round): bool => $round->candidates->where('status', ElectionCandidateStatus::Approved)->isEmpty());
 
             if ($without !== null) {
-                return [
-                    'text' => __('„:round“ hat noch keine freigegebene Kandidatur.', ['round' => $without->title]),
-                    'hint' => __('Ohne freigegebene Kandidatur lässt sich ein Wahlgang in der Sitzung nicht öffnen.'),
-                    'action' => 'candidacies',
-                    'label' => __('Kandidaturen ansehen'),
-                ];
+                return $this->step(
+                    __('„:round“ hat noch keine freigegebene Kandidatur.', ['round' => $without->title]),
+                    __('Ohne freigegebene Kandidatur lässt sich ein Wahlgang in der Sitzung nicht öffnen.'),
+                    action: 'candidacies',
+                    label: __('Kandidaturen ansehen'),
+                );
             }
-
-            return [
-                'text' => $election->meeting_at === null
-                    ? __('Bereit für die Sitzung.')
-                    : __('Bereit für die Sitzung am :date.', ['date' => $this->longDate($election->meeting_at)]),
-                'hint' => __('In der Sitzung öffnet ihr die Wahlgänge der Reihe nach.'),
-                'action' => null,
-                'label' => null,
-            ];
         }
 
-        if ($phase === 3) {
-            $open = $rounds->first(fn (ElectionRound $round): bool => $round->stateAt(now()) === ElectionRoundState::Open);
-            $next = $rounds->first(fn (ElectionRound $round): bool => $round->opened_at === null);
+        $all = $election->rounds->sortBy('position')->values();
+        $now = now();
 
-            return [
-                'text' => match (true) {
-                    $open !== null => __('„:round“ ist offen.', ['round' => $open->title]),
-                    $next !== null => __('Als Nächstes: „:round“.', ['round' => $next->title]),
-                    default => __('Die Sitzung läuft.'),
+        if ($all->isEmpty()) {
+            return $this->step(
+                __('Diese Wahl hat noch keinen Wahlgang.'),
+                __('Legt unter „Einstellungen“ mindestens einen Wahlgang an.'),
+                action: 'settings',
+                label: __('Wahlgänge anlegen'),
+            );
+        }
+
+        $open = $all->first(fn (ElectionRound $round): bool => $round->stateAt($now) === ElectionRoundState::Open);
+
+        if ($open !== null) {
+            return $this->step(
+                __('„:round“ ist offen.', ['round' => $open->title]),
+                __('Die Beteiligung steht unter „Sitzung“ und in der Ansicht zum Teilen. Schließt den Wahlgang, wenn alle abgestimmt haben, die abstimmen wollen.'),
+                label: __('Wahlgang schließen'),
+                click: "startRoundAction({$open->id}, 'close')",
+            );
+        }
+
+        $overByClock = $all->first(fn (ElectionRound $round): bool => $round->stateAt($now) === ElectionRoundState::Closed && ! $round->isSealed());
+
+        if ($overByClock !== null) {
+            return $this->step(
+                __('„:round“ nimmt nach :minutes Minuten keine Stimmen mehr an.', ['round' => $overByClock->title, 'minutes' => \App\Services\Election\OpenRound::LIVE_MAX_MINUTES]),
+                __('Zählt ihn aus, dann seht ihr das Ergebnis.'),
+                label: __('Auszählen'),
+                click: "sealRound({$overByClock->id})",
+            );
+        }
+
+        $runOffs = app(CreateRunOff::class);
+        $level = $all->first(fn (ElectionRound $round): bool => $round->isSealed()
+            && $all->where('parent_round_id', $round->id)->whereNull('annulled_at')->isEmpty()
+            && $runOffs->proposal($round)['candidates'] !== []);
+
+        if ($level !== null) {
+            return $this->step(
+                __('„:round“ ist ohne Entscheidung ausgezählt.', ['round' => $level->title]),
+                __('Zeigt das Ergebnis im Call. Die Stichwahl ist danach ein eigener Wahlgang zwischen den Betroffenen.'),
+                label: __('Stichwahl anlegen'),
+                click: "createRunOff({$level->id})",
+            );
+        }
+
+        $next = $all->first(fn (ElectionRound $round): bool => $round->opened_at === null && $round->parent_round_id !== null)
+            ?? $all->first(fn (ElectionRound $round): bool => $round->opened_at === null);
+
+        if ($next !== null) {
+            $last = $all->filter(fn (ElectionRound $round): bool => $round->closed_at !== null || $round->annulled_at !== null)
+                ->sortByDesc(fn (ElectionRound $round): int => ($round->closed_at ?? $round->annulled_at)->getTimestamp())
+                ->first();
+
+            return $this->step(
+                match (true) {
+                    $last?->isSealed() === true => __('„:last“ ist ausgezählt. Als Nächstes: „:round“.', ['last' => $last->title, 'round' => $next->title]),
+                    $last !== null => __('„:last“ ist annulliert. Als Nächstes: „:round“.', ['last' => $last->title, 'round' => $next->title]),
+                    $election->meeting_at !== null && ! $election->is_test => __('Bereit für die Sitzung am :date. Zuerst: „:round“.', ['date' => $this->longDate($election->meeting_at), 'round' => $next->title]),
+                    default => __('Bereit. Zuerst: „:round“.', ['round' => $next->title]),
                 },
-                'hint' => __('Gewählt wird live in der Sitzung.'),
-                'action' => null,
-                'label' => null,
-            ];
+                match (true) {
+                    $last?->isSealed() === true => __('Zeigt zuerst das Ergebnis im Call, dann öffnet den nächsten Wahlgang.'),
+                    $election->is_test => __('Probewahl: öffnet den Wahlgang, wann immer ihr üben wollt.'),
+                    default => __('Öffnet ihn erst in der Sitzung. Ab dann können die Wahlberechtigten abstimmen.'),
+                },
+                label: __('„:round“ öffnen', ['round' => $next->title]),
+                click: "startRoundAction({$next->id}, 'open')",
+            );
         }
 
-        return ['text' => __('Alle Wahlgänge sind abgeschlossen.'), 'hint' => null, 'action' => null, 'label' => null];
+        return $this->step(
+            __('Alle Wahlgänge sind abgeschlossen.'),
+            __('Das Beschlussprotokoll fasst Wahlgänge, Zahlen und Prüfsummen für die Niederschrift zusammen.'),
+            label: __('Beschlussprotokoll öffnen'),
+            href: route('association.election.admin.protocol', $election),
+        );
     }
+
+    /**
+     * @return array{text: string, hint: string|null, action: string|null, label: string|null, click: string|null, href: string|null}
+     */
+    protected function step(string $text, ?string $hint = null, ?string $action = null, ?string $label = null, ?string $click = null, ?string $href = null): array
+    {
+        return ['text' => $text, 'hint' => $hint, 'action' => $action, 'label' => $label, 'click' => $click, 'href' => $href];
+    }
+
 
     protected function countingRuleLabel(string|ElectionCountingRule $rule): string
     {
@@ -706,14 +965,73 @@ new class extends Component
         };
     }
 
+    /**
+     * A stored moment in the zone the association meets in.
+     */
+    protected function local(CarbonInterface $moment): CarbonInterface
+    {
+        return $moment->copy()->setTimezone(config('app.display_timezone'));
+    }
+
     protected function shortDate(?CarbonInterface $moment): string
     {
-        return $moment === null ? '' : $moment->format('d.m.Y');
+        return $moment === null ? '' : $this->local($moment)->format('d.m.Y');
+    }
+
+    protected function clock(?CarbonInterface $moment): string
+    {
+        return $moment === null ? '' : $this->local($moment)->format('H:i');
     }
 
     protected function longDate(CarbonInterface $moment): string
     {
-        return $moment->copy()->locale('de')->isoFormat('dd, D. MMMM YYYY').', '.$moment->format('H:i').' '.__('Uhr');
+        $local = $this->local($moment);
+
+        return $local->locale('de')->isoFormat('dd, D. MMMM YYYY').', '.$local->format('H:i').' '.__('Uhr');
+    }
+
+    /**
+     * The meeting moment a form names, read in German time and stored in UTC.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    protected function meetingAtOf(array $data): ?CarbonInterface
+    {
+        if (blank($data['meeting_date'] ?? null)) {
+            return null;
+        }
+
+        return Carbon::createFromFormat('Y-m-d H:i', $data['meeting_date'].' '.(($data['meeting_time'] ?? '') ?: '19:00'), config('app.display_timezone'))
+            ->setTimezone(config('app.timezone'));
+    }
+
+    protected function refusalText(string $action, ElectionRoundStateException $exception): string
+    {
+        return match (true) {
+            $action === 'open' && str_contains($exception->getMessage(), 'without approved candidates') => __('Dieser Wahlgang hat keine freigegebene Kandidatur.'),
+            $action === 'open' && str_contains($exception->getMessage(), 'run-off') => __('Die Stichwahl lässt sich erst öffnen, wenn ihr Wahlgang ausgezählt ist.'),
+            $action === 'open' && str_contains($exception->getMessage(), 'earlier round') => __('Eine Person kandidiert auch in einem früheren Wahlgang, der noch nicht ausgezählt ist, dort gewählt wurde oder im Gleichstand steht. Schließt zuerst diesen Wahlgang oder zieht die Kandidatur hier zurück.'),
+            $action === 'open' => __('Dieser Wahlgang lässt sich gerade nicht öffnen. Lade die Seite neu, vielleicht hat ihn schon jemand geöffnet.'),
+            $action === 'close' => __('Der Wahlgang nimmt keine Stimmen mehr an. Lade die Seite neu, vielleicht hat ihn schon jemand geschlossen.'),
+            default => __('Der Wahlgang ist schon annulliert oder noch nicht geöffnet.'),
+        };
+    }
+
+    /**
+     * The confirm text of the round modal: what happens, in numbers.
+     */
+    protected function pendingRoundText(ElectionRound $round): string
+    {
+        return match ($this->pendingRoundAction) {
+            'close' => __('Danach nimmt der Wahlgang keine Stimmen mehr an und wird sofort ausgezählt. Das lässt sich nicht zurücknehmen.'),
+            'annul' => __('Die abgegebenen Stimmen werden nie ausgezählt, und der Wahlgang lässt sich nicht wieder öffnen. Der Grund steht im Protokoll.'),
+            default => __('Ab jetzt können :count Wahlberechtigte abstimmen. Kandidaturen und Zählregel sind danach fest. Schließt ihn niemand, nimmt er nach :minutes Minuten keine Stimmen mehr an.', [
+                'count' => $round->parent_round_id !== null
+                    ? ElectionRollEntry::query()->where('election_round_id', $round->parent_round_id)->count()
+                    : app(ElectoralRoll::class)->entitled($round->election, now())->count(),
+                'minutes' => \App\Services\Election\OpenRound::LIVE_MAX_MINUTES,
+            ]),
+        };
     }
 
     protected function phaseOf(Election $election): int
@@ -756,15 +1074,21 @@ new class extends Component
     {
         $this->resetErrorBag();
         $this->selectedElectionId = (int) $election->id;
-        unset($this->selectedElection, $this->candidaciesByRound, $this->rollPreview, $this->openedRounds, $this->rollRound, $this->rollEntries, $this->enrolCandidates);
+        unset($this->selectedElection, $this->candidaciesByRound, $this->rollPreview, $this->openedRounds, $this->rollRound, $this->rollEntries, $this->enrolCandidates, $this->roundReports);
         $this->rollRoundId = null;
-        $this->form = $this->formOf($this->selectedElection ?? $election);
-        $this->section = $this->nextStepOf($this->selectedElection ?? $election)['action'] === 'candidacies' ? 'candidacies' : 'settings';
+        $current = $this->selectedElection ?? $election;
+        $this->form = $this->formOf($current);
+        $step = $this->nextStepOf($current);
+        $this->section = match (true) {
+            $step['action'] === 'candidacies' => 'candidacies',
+            $step['click'] !== null || $this->phaseOf($current) >= 3 => 'live',
+            default => 'settings',
+        };
     }
 
     protected function refreshElection(Election $election): void
     {
-        unset($this->elections, $this->selectedElection, $this->candidaciesByRound, $this->rollPreview, $this->openedRounds);
+        unset($this->elections, $this->selectedElection, $this->candidaciesByRound, $this->rollPreview, $this->openedRounds, $this->rollRound, $this->rollEntries, $this->roundReports);
         $this->form = $this->formOf($this->selectedElection ?? $election);
     }
 
@@ -799,8 +1123,8 @@ new class extends Component
 
         return [
             'name' => $election->name,
-            'meeting_date' => $election->meeting_at?->format('Y-m-d') ?? '',
-            'meeting_time' => $election->meeting_at?->format('H:i') ?? '19:00',
+            'meeting_date' => ($election->meeting_at === null ? '' : $this->local($election->meeting_at)->format('Y-m-d')),
+            'meeting_time' => ($election->meeting_at === null ? '19:00' : $this->clock($election->meeting_at)),
             'call_url' => (string) $election->call_url,
             'fee_rule' => $election->fee_rule->value,
             'fee_year' => $election->fee_year ?? (int) now()->year,
@@ -993,9 +1317,16 @@ new class extends Component
                                 <p class="mt-1 text-sm text-text-secondary">{{ $step['hint'] }}</p>
                             @endif
                         </div>
-                        @if ($step['action'] !== null)
+                        @php $primary = $isSelected && ! $creating; @endphp
+                        @if ($step['href'] !== null)
+                            <flux:button :href="$step['href']" target="_blank" :variant="$primary ? 'primary' : 'outline'" class="min-h-11 w-full shrink-0 sm:w-auto" data-test="next-step-action">{{ $step['label'] }}</flux:button>
+                        @elseif ($step['click'] !== null)
+                            <flux:button wire:click="{{ $isSelected ? $step['click'] : 'selectElection('.$item->id.')' }}"
+                                         :variant="$primary ? 'primary' : 'outline'" class="min-h-11 w-full shrink-0 sm:w-auto sm:max-w-sm" data-test="next-step-action">
+                                {{ $isSelected ? $step['label'] : __('Wahl öffnen') }}
+                            </flux:button>
+                        @elseif ($step['action'] !== null)
                             @php
-                                $primary = $isSelected && ! $creating;
                                 $stepClick = $isSelected ? "showSection('".$step['action']."')" : 'selectElection('.$item->id.')';
                             @endphp
                             @if ($step['action'] === 'announce')
@@ -1023,6 +1354,7 @@ new class extends Component
                                 'settings' => [__('Einstellungen'), null],
                                 'candidacies' => [__('Kandidaturen'), $pendingCount > 0 ? __(':count offen', ['count' => $pendingCount]) : null],
                                 'roll' => [__('Wählerverzeichnis'), null],
+                                'live' => [__('Sitzung'), $item->rounds->contains(fn ($round) => $round->stateAt(now()) === \App\Enums\ElectionRoundState::Open) ? __('läuft') : null],
                             ];
                         @endphp
                         <nav class="mt-10 flex flex-wrap gap-x-2 border-b border-border-default" aria-label="{{ __('Bereiche von „:name“', ['name' => $item->name]) }}">
@@ -1049,6 +1381,8 @@ new class extends Component
                                 @endif
                             @elseif ($section === 'candidacies')
                                 @include('livewire.association.election.admin-candidacies', ['election' => $item])
+                            @elseif ($section === 'live')
+                                @include('livewire.association.election.admin-live', ['election' => $item])
                             @else
                                 @include('livewire.association.election.admin-roll', ['election' => $item])
                             @endif
@@ -1079,6 +1413,69 @@ new class extends Component
                     </div>
                 </div>
             </flux:modal>
+
+            @php
+                $pendingRound = $pendingRoundId ? \App\Models\ElectionRound::query()->with('election')->find($pendingRoundId) : null;
+            @endphp
+            <flux:modal name="round-action" class="w-full max-w-lg">
+                <form wire:submit="confirmRoundAction" class="space-y-6" data-test="round-action-form">
+                    <div>
+                        <flux:heading size="lg">
+                            @if ($pendingRound)
+                                {{ match ($pendingRoundAction) {
+                                    'close' => __('„:round“ schließen?', ['round' => $pendingRound->title]),
+                                    'annul' => __('„:round“ annullieren?', ['round' => $pendingRound->title]),
+                                    default => __('„:round“ öffnen?', ['round' => $pendingRound->title]),
+                                } }}
+                            @endif
+                        </flux:heading>
+                        <flux:text class="mt-2">
+                            @if ($pendingRound)
+                                {{ $this->pendingRoundText($pendingRound) }}
+                            @endif
+                        </flux:text>
+                    </div>
+                    @if ($pendingRoundAction === 'close' || $pendingRoundAction === 'annul')
+                        <flux:field>
+                            <flux:label>{{ __('Grund für das Protokoll') }}</flux:label>
+                            <flux:textarea wire:model="roundReason" rows="2" maxlength="1000" data-test="round-reason"
+                                           placeholder="{{ $pendingRoundAction === 'annul' ? __('z. B. falsche Kandidatenliste geöffnet') : __('z. B. alle Anwesenden haben abgestimmt') }}" />
+                            <flux:error name="roundReason" />
+                        </flux:field>
+                    @else
+                        <flux:error name="roundReason" />
+                    @endif
+                    <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                        <flux:modal.close>
+                            <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto">{{ __('Abbrechen') }}</flux:button>
+                        </flux:modal.close>
+                        <flux:button type="submit" :variant="$pendingRoundAction === 'annul' ? 'danger' : 'primary'" class="min-h-11 w-full sm:w-auto" data-test="confirm-round-action">
+                            {{ match ($pendingRoundAction) {
+                                'close' => __('Schließen und auszählen'),
+                                'annul' => __('Annullieren'),
+                                default => __('Wahlgang öffnen'),
+                            } }}
+                        </flux:button>
+                    </div>
+                </form>
+            </flux:modal>
+
+            @if ($election->is_test)
+                <flux:modal name="purge-election" class="w-full max-w-lg">
+                    <div class="space-y-6">
+                        <div>
+                            <flux:heading size="lg">{{ __('Probewahl „:name“ löschen?', ['name' => $election->name]) }}</flux:heading>
+                            <flux:text class="mt-2">{{ __('Gelöscht werden die Wahl, alle Wahlgänge, Kandidaturen, Verzeichnisse, abgegebenen Stimmen, Prüfsummen und Protokollzeilen. Das lässt sich nicht zurücknehmen.') }}</flux:text>
+                        </div>
+                        <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                            <flux:modal.close>
+                                <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto">{{ __('Abbrechen') }}</flux:button>
+                            </flux:modal.close>
+                            <flux:button wire:click="purgeTestElection" variant="danger" class="min-h-11 w-full sm:w-auto" data-test="confirm-purge">{{ __('Probewahl löschen') }}</flux:button>
+                        </div>
+                    </div>
+                </flux:modal>
+            @endif
 
             <flux:modal name="delete-election" class="w-full max-w-lg">
                 <div class="space-y-6">

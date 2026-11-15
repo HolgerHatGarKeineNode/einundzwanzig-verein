@@ -9,7 +9,7 @@
 <form wire:submit="save" class="relative max-w-3xl space-y-10 [&_input]:min-h-11 [&_select]:min-h-11" data-test="election-form">
     @if ($locked)
         <flux:callout icon="lock-closed" variant="secondary">
-            <flux:callout.text>{{ __('Ein Wahlgang dieser Wahl ist geöffnet. Termin, Beitragsregel und Wahlgänge sind ab jetzt fest.') }}</flux:callout.text>
+            <flux:callout.text>{{ __('Ein Wahlgang dieser Wahl ist geöffnet. Name, Beitragsregel und Wahlgänge sind ab jetzt fest. Termin und Link zum Video-Call lassen sich weiter ändern, falls der Call umzieht.') }}</flux:callout.text>
         </flux:callout>
     @endif
 
@@ -23,6 +23,10 @@
         <legend class="sr-only">{{ __('Wahl') }}</legend>
 
         <flux:input wire:model="form.name" :label="__('Name der Wahl')" placeholder="{{ __('Vorstandswahl 2027') }}" maxlength="120" data-test="form-name" />
+    </fieldset>
+
+    <fieldset class="space-y-6" data-test="form-meeting">
+        <legend class="sr-only">{{ __('Sitzung') }}</legend>
 
         <div>
             <div class="grid gap-4 sm:grid-cols-[minmax(0,14rem)_minmax(0,9rem)]">
@@ -35,6 +39,10 @@
         <flux:input type="url" wire:model="form.call_url" :label="__('Link zum Video-Call')" placeholder="https://"
                     :description="__('Mitglieder sehen den Link am Sitzungstag auf ihrer Wahlseite. Ihr könnt ihn auch später eintragen.')"
                     maxlength="2048" inputmode="url" autocomplete="off" data-test="form-call-url" />
+
+        @if ($locked)
+            <flux:button wire:click="saveMeeting" variant="outline" class="min-h-11 w-full sm:w-auto" data-test="save-meeting">{{ __('Termin und Link speichern') }}</flux:button>
+        @endif
     </fieldset>
 
     <fieldset class="space-y-4" @disabled($locked)>
@@ -129,11 +137,20 @@
             </flux:button>
             @if ($isNew)
                 <flux:button wire:click="cancelCreate" variant="ghost" class="min-h-11 w-full sm:w-auto">{{ __('Abbrechen') }}</flux:button>
-            @else
+            @elseif (! $form['is_test'])
                 <flux:modal.trigger name="delete-election">
                     <flux:button variant="ghost" icon="trash" class="min-h-11 w-full text-danger! sm:ml-auto sm:w-auto" data-test="delete-election">{{ __('Wahl löschen') }}</flux:button>
                 </flux:modal.trigger>
             @endif
         </div>
     @endunless
+
+    @if (! $isNew && $form['is_test'])
+        <div class="border-t border-border-default pt-6" data-test="purge-zone">
+            <p class="text-base text-text-secondary">{{ __('Nach der Probe löscht ihr die Probewahl mit allen Stimmen, Prüfsummen und Protokollzeilen.') }}</p>
+            <flux:modal.trigger name="purge-election">
+                <flux:button variant="ghost" icon="trash" class="mt-3 min-h-11 w-full text-danger! sm:w-auto" data-test="purge-election">{{ __('Probewahl löschen') }}</flux:button>
+            </flux:modal.trigger>
+        </div>
+    @endif
 </form>

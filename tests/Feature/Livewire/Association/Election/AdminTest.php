@@ -107,7 +107,7 @@ it('answers 403 on every public method to a member who is not, or no longer, on 
     NostrAuth::login($board->pubkey);
     $methods = electionAdminMethods(electionAdmin()->instance());
 
-    expect($methods)->toContain('save', 'announce', 'approve', 'startDecision', 'confirmDecision', 'enrol', 'deleteElection', 'elections');
+    expect($methods)->toContain('save', 'announce', 'approve', 'startDecision', 'confirmDecision', 'enrol', 'deleteElection', 'elections', 'startRoundAction', 'confirmRoundAction', 'sealRound', 'createRunOff', 'saveMeeting', 'purgeTestElection', 'roundReports');
 
     foreach ($methods as $method) {
         // Loaded by the board, then the session belongs to somebody else:
@@ -131,6 +131,7 @@ it('answers 403 on every public method to a member who is not, or no longer, on 
             ->map(fn (ReflectionParameter $parameter) => match ($parameter->getName()) {
                 'electionId' => $election->id,
                 'candidateId' => $candidate->id,
+                'roundId' => $round->id,
                 'section' => 'roll',
                 'index' => 0,
                 'kind' => 'reject',
@@ -172,7 +173,7 @@ it('creates an election with the three prepared live rounds and writes the audit
     $election = Election::query()->sole();
 
     expect($election->name)->toBe('Vorstandswahl 2027')
-        ->and($election->meeting_at->format('Y-m-d H:i'))->toBe('2027-03-20 19:30')
+        ->and($election->meeting_at->setTimezone('Europe/Berlin')->format('Y-m-d H:i'))->toBe('2027-03-20 19:30')
         ->and($election->call_url)->toBe('https://meet.example.org/vorstandswahl')
         ->and($election->is_test)->toBeTrue()
         ->and($election->rounds->pluck('title')->all())->toBe(['Präsidium', 'Vorstand', 'Revisionsstelle'])

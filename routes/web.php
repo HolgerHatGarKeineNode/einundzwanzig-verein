@@ -103,6 +103,8 @@ Route::livewire('/association/benefits', 'association.benefits')->name('associat
 Route::livewire('/association/members/admin', 'association.members.admin')->name('association.members.admin');
 
 Route::livewire('/association/election/admin', 'association.election.admin')->name('association.election.admin');
+Route::livewire('/association/election/admin/{election}/screen', 'association.election.screen')->name('association.election.admin.screen');
+Route::livewire('/association/election/admin/{election}/protocol', 'association.election.protocol')->name('association.election.admin.protocol');
 
 Route::livewire('/association/news', 'association.news')->name('association.news');
 
