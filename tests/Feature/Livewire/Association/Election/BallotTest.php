@@ -418,7 +418,12 @@ it('shows the meeting date in Europe/Berlin once the election is announced', fun
     namedDraftRound(election: $election);
     $voter = electionVoter();
 
-    ballotPage($voter)->assertDontSee('Am 04.03.2027 um 19:00 Uhr');
+    // A member never sees an unannounced real election. The board does see an
+    // unannounced test election — and still no date on it.
+    $rehearsal = Election::factory()->test()->create(['name' => 'Probewahl', 'meeting_at' => '2027-03-04 18:00:00', 'announced_at' => null]);
+    NostrAuth::login(electionBoard(1)[0]->pubkey);
+    $boardPage = Livewire::test('association.election.index')->assertDontSee('Am 04.03.2027 um 19:00 Uhr');
+    expect($boardPage->instance()->election->is($rehearsal))->toBeTrue();
 
     $election->forceFill(['announced_at' => now()])->save(); // announced_at is not mass assignable
 
@@ -445,6 +450,9 @@ it('shows the call link only on the Berlin meeting day or while a round is open'
     $this->travelTo('2027-03-04 23:00:00'); // midnight, the 5th in Berlin
     ballotPage($voter)
         ->assertSeeHtml('href="https://meet.example.org/einundzwanzig" target="_blank" rel="noopener noreferrer"');
+
+    $this->travelTo('2027-03-05 23:30:00'); // 00:30 on the 6th in Berlin, the day after
+    ballotPage($voter)->assertDontSee('https://meet.example.org/einundzwanzig');
 
     $this->travelTo('2027-03-02 12:00:00'); // two days early, but the board opened a round
     app(OpenRound::class)->handle($round);
