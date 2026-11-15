@@ -447,3 +447,23 @@ it('sends an election without rounds to its settings, and a finished one to the 
         ->assertSee('Alle Wahlgänge sind abgeschlossen.')
         ->assertSeeHtml(route('association.election.admin.protocol', $done));
 });
+
+it('stores 19:00 entered by the board as 18:00 UTC in March and shows 19:00 on both pages', function () {
+    $board = liveBoard();
+    $election = Election::factory()->announced()->create(['name' => 'Märzsitzung']);
+    draftElectionRound(election: $election);
+
+    livePage()->call('selectElection', $election->id)
+        ->call('showSection', 'settings')
+        ->set('form.meeting_date', '2027-03-20')
+        ->set('form.meeting_time', '19:00')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    expect($election->fresh()->meeting_at->utc()->format('Y-m-d H:i'))->toBe('2027-03-20 18:00');
+
+    livePage()->call('selectElection', $election->id)->assertSee('20. März 2027, 19:00 Uhr')->assertSet('form.meeting_time', '19:00');
+
+    NostrAuth::login(electionVoter()->pubkey);
+    Livewire::test('association.election.index')->assertSee('Am 20.03.2027 um 19:00 Uhr')->assertDontSee('um 18:00 Uhr');
+});
