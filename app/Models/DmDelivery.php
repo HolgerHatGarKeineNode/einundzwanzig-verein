@@ -3,7 +3,10 @@
 namespace App\Models;
 
 use App\Enums\DmDeliveryStatus;
+use App\Jobs\Dm\SendDirectMessage;
+use Carbon\CarbonInterface;
 use Database\Factories\DmDeliveryFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -31,6 +34,7 @@ class DmDelivery extends Model
         'attempts',
         'claimed_at',
         'sent_at',
+        'seen_at',
         'error',
     ];
 
@@ -46,7 +50,25 @@ class DmDelivery extends Model
             'attempts' => 'integer',
             'claimed_at' => 'datetime',
             'sent_at' => 'datetime',
+            'seen_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Deliveries a send still has to do something for: `pending`, `failed`,
+     * and `claimed` by a worker that died (claim older than
+     * SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS). The one definition for
+     * the fan-out and for DirectMessagePause::resume().
+     *
+     * @param  Builder<self>  $query
+     */
+    public function scopeWithWorkLeft(Builder $query, CarbonInterface $now): void
+    {
+        $query->where(fn (Builder $query) => $query
+            ->whereIn('status', [DmDeliveryStatus::Pending->value, DmDeliveryStatus::Failed->value])
+            ->orWhere(fn (Builder $query) => $query
+                ->where('status', DmDeliveryStatus::Claimed->value)
+                ->where('claimed_at', '<', $now->copy()->subSeconds(SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS))));
     }
 
     /**

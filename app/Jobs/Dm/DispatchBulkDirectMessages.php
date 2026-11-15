@@ -6,6 +6,7 @@ use App\Enums\DmDeliveryStatus;
 use App\Models\DmDelivery;
 use App\Models\DmRun;
 use App\Models\EinundzwanzigPleb;
+use App\Services\Dm\DirectMessagePause;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
@@ -24,6 +25,8 @@ use Illuminate\Foundation\Queue\Queueable;
  *    again (an expired claim is a worker that died). A `failed` one
  *    republishes its stored wrap to the relays that have not taken it (see
  *    SendDirectMessage), so resuming adds no second message.
+ *
+ * Does nothing while direct messages are paused (DirectMessagePause).
  */
 class DispatchBulkDirectMessages implements ShouldQueue
 {
@@ -38,6 +41,12 @@ class DispatchBulkDirectMessages implements ShouldQueue
 
     public function handle(): void
     {
+        // Paused: nothing is created and nothing queued. Lifting the pause
+        // (DirectMessagePause::resume()) dispatches this job again.
+        if (app(DirectMessagePause::class)->isPaused()) {
+            return;
+        }
+
         $run = DmRun::query()->findOrFail($this->runId);
         $now = now();
 
@@ -66,13 +75,14 @@ class DispatchBulkDirectMessages implements ShouldQueue
             $run->forceFill(['fanned_out_at' => $now])->save();
         }
 
+        // A pause that came while the rows were written stops the queueing.
+        if (app(DirectMessagePause::class)->isPaused()) {
+            return;
+        }
+
         DmDelivery::query()
             ->where('dm_run_id', $run->id)
-            ->where(fn ($query) => $query
-                ->whereIn('status', [DmDeliveryStatus::Pending->value, DmDeliveryStatus::Failed->value])
-                ->orWhere(fn ($query) => $query
-                    ->where('status', DmDeliveryStatus::Claimed->value)
-                    ->where('claimed_at', '<', $now->copy()->subSeconds(SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS))))
+            ->withWorkLeft($now)
             ->orderBy('id')
             ->pluck('id')
             ->each(fn (int $deliveryId) => SendDirectMessage::dispatch($deliveryId));

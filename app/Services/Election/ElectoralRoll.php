@@ -174,12 +174,13 @@ class ElectoralRoll
      * Every member entitled to vote in `$election` at `$at`, each carrying a
      * `fee_paid` flag that says whether the fee rule is met.
      *
-     * ONE definition for the snapshot and for the single-member check, so the
-     * two cannot drift apart.
+     * ONE definition for the snapshot, the single-member check and the
+     * direct message audiences (App\Services\Dm\DirectMessageAudience), so
+     * they cannot drift apart.
      *
      * @return Builder<EinundzwanzigPleb>
      */
-    protected function entitled(Election $election, CarbonInterface $at): Builder
+    public function entitled(Election $election, CarbonInterface $at): Builder
     {
         $feePaid = $this->feePaid($election, $at);
 

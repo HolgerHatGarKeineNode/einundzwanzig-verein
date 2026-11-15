@@ -77,7 +77,7 @@ it('leaves no text column of the direct message tables holding the erased member
     // The scan sees the member before the erasure; otherwise "nothing found"
     // below would hold for a scan that reads nothing.
     $before = dmColumnsContaining($needles);
-    expect($before['tables'])->toBe(['dm_deliveries', 'dm_delivery_relays', 'dm_messages', 'dm_runs'])
+    expect($before['tables'])->toBe(['dm_deliveries', 'dm_delivery_relays', 'dm_messages', 'dm_runs', 'dm_schedules', 'dm_settings'])
         ->and($before['hits'])->toContain('dm_deliveries.wrap', 'dm_deliveries.plaintext', 'dm_delivery_relays.relay_url');
 
     app(MembershipService::class)->erasePersonalData($member);
