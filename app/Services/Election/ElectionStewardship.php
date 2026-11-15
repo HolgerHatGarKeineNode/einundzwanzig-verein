@@ -137,8 +137,8 @@ class ElectionStewardship
     }
 
     /**
-     * Annul an opened round. One-way, like sealing; its ballots are never
-     * handed out (`ElectionRound::sealedChoices()`).
+     * Annul an opened round. One-way, like sealing; its votes are never
+     * counted (`TallyRound`).
      *
      * @throws AuthorizationException
      * @throws ElectionRoundStateException

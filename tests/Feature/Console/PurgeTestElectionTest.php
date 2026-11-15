@@ -65,8 +65,7 @@ it('deletes every row of a test election in every election table, and only those
     $otherBefore = electionRowsPerTable($other, $otherRoundIds);
     $before = electionRowsPerTable($election, $roundIds);
 
-    expect($before['election_ballot_choices'])->toBeGreaterThan(0)
-        ->and($before['election_marks'])->toBe(1)
+    expect($before['election_votes'])->toBe(1)
         ->and($before['election_audit_entries'])->toBeGreaterThan(0)
         ->and(count(array_filter($before)))->toBe(count($before));
 

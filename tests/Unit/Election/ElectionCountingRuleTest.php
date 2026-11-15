@@ -4,7 +4,6 @@ use App\Enums\ElectionBallotRefusal;
 use App\Enums\ElectionChoice;
 use App\Enums\ElectionCountingRule;
 use App\Exceptions\ElectionBallotRefusedException;
-use App\Models\ElectionReceipt;
 
 /*
  * What a valid ballot is, per counting rule. Pure: no database, no framework.
@@ -76,21 +75,3 @@ it('says nothing but the reason when it refuses', function () {
 
     $this->fail('The ballot was not refused.');
 });
-
-it('binds a receipt hash to its round', function () {
-    $code = str_repeat('ab', 16);
-
-    expect(ElectionReceipt::hashFor(1, $code))
-        ->toBe(hash('sha256', 'einundzwanzig-election-receipt:1:'.$code))
-        ->not->toBe(ElectionReceipt::hashFor(2, $code));
-});
-
-it('accepts only 32 lowercase hex characters as a receipt code', function (string $code, int $matches) {
-    expect(preg_match(ElectionReceipt::CODE_PATTERN, $code))->toBe($matches);
-})->with([
-    'a 128 bit code' => [str_repeat('0f', 16), 1],
-    'uppercase' => [str_repeat('0F', 16), 0],
-    'too short' => [str_repeat('0f', 15), 0],
-    'a trailing newline' => [str_repeat('0f', 16)."\n", 0],
-    'empty' => ['', 0],
-]);

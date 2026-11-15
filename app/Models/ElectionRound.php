@@ -8,7 +8,6 @@ use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionRoundStateException;
 use Carbon\CarbonInterface;
 use Database\Factories\ElectionRoundFactory;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -16,10 +15,6 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * One ballot question of an election.
- *
- * There is deliberately no relation to marks, ballot rows or receipts on this
- * model. Ballot rows are reachable through `sealedChoices()` only, which
- * refuses until the round is sealed — see there.
  */
 class ElectionRound extends Model
 {
@@ -186,42 +181,15 @@ class ElectionRound extends Model
     }
 
     /**
-     * Has `CloseRound` run — is the round closed for good and are its ballot
-     * rows rewritten?
+     * Has `CloseRound` run — is the round closed for good and its manifest
+     * written?
      *
      * NOT the same question as "is the window over". A round whose window
-     * has run out refuses ballots at once, by the clock; it is sealed only
-     * when `CloseRound` has rewritten its ballot rows. Results may key on
-     * this and on nothing else.
+     * has run out refuses votes at once, by the clock; it is sealed only
+     * when `CloseRound` has run. Results may key on this and on nothing else.
      */
     public function isSealed(): bool
     {
         return $this->closed_at !== null && $this->annulled_at === null;
-    }
-
-    /**
-     * The ballot rows of this round — the ONLY sanctioned way to read them,
-     * and it refuses until the round is sealed.
-     *
-     * An interim count is how a candidate with admin rights reads single
-     * votes: look at the count after the first ballot. So nothing in the
-     * application can count before the close, and after the close the rows
-     * no longer sit in the order they were cast in. Asked on a fresh row, not
-     * on this instance, so a stale or hand-built model cannot talk its way
-     * past the check.
-     *
-     * @return Builder<ElectionBallotChoice>
-     *
-     * @throws ElectionRoundStateException
-     */
-    public function sealedChoices(): Builder
-    {
-        $current = $this->exists ? self::query()->find($this->getKey()) : null;
-
-        if ($current === null || ! $current->isSealed()) {
-            throw new ElectionRoundStateException('The ballots of a round cannot be read before it is sealed.');
-        }
-
-        return ElectionBallotChoice::query()->where('election_round_id', $current->getKey());
     }
 }

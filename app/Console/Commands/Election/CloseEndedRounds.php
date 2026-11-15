@@ -12,7 +12,7 @@ use Throwable;
  *
  * Ballots stop at the end of the window by the clock alone (see
  * `ElectionRound::stateAt()`); nothing waits for this command to refuse
- * them. What it adds is the seal — the rewrite and the manifest — so that
+ * them. What it adds is the seal and the manifest, so that
  * the result can be read without somebody having to press a button. A live
  * round falls under it once its maximum duration is over.
  *

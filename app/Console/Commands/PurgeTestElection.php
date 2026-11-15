@@ -10,8 +10,8 @@ use RuntimeException;
 
 /**
  * Deletes a TEST election and every row that belongs to it, in every
- * `election_*` table — rounds, candidacies, roll, marks, ballot rows,
- * receipts, audit lines, the election itself.
+ * `election_*` table — rounds, candidacies, roll, votes, manifests, audit
+ * lines, the election itself.
  *
  * The tables are discovered, not listed: whatever `election_*` table a later
  * change adds is covered without touching this class, and this class names
