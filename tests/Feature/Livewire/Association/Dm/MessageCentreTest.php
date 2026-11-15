@@ -579,7 +579,11 @@ it('shows a repeated sending within the lock as skipped and creates no new deliv
     $first = DmRun::query()->sole();
     (new DispatchBulkDirectMessages($first->id))->handle();
 
+    // Nobody is left, so nothing may claim that "all" have an inbox.
     $page = $send()
+        ->assertSee('0 Empfänger.')
+        ->assertSee('Alle haben diese Nachricht in den letzten 24 Stunden schon bekommen.')
+        ->assertDontSee('Alle haben einen Nostr-Posteingang.')
         ->assertSee('Übersprungen: 3 Mitglieder, sie haben diese Nachricht für diese Zielgruppe in den letzten 24 Stunden schon bekommen.')
         ->assertSee('Alle schon erreicht, nichts zu senden');
 
