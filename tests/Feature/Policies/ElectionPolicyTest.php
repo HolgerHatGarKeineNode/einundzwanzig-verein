@@ -167,3 +167,26 @@ it('shows a test election to the board only', function () {
         ->and(electionGate($member)->allows('view', $real))->toBeTrue()
         ->and(electionGate(null)->allows('view', $real))->toBeFalse();
 });
+
+/*
+ * Mutation that must turn this red: drop the owner comparison from
+ * `ElectionPolicy::withdrawOwnCandidacy()` — anybody could then take a
+ * candidate off the ballot.
+ */
+it('lets only the candidate themself take back their own candidacy, and only before the opening', function () {
+    ['board' => $board, 'member' => $member, 'round' => $round, 'pending' => $pending] = electionRightsScene();
+
+    $approved = ElectionCandidate::factory()->create(['election_round_id' => $round->id]);
+    $rejected = ElectionCandidate::factory()->status(ElectionCandidateStatus::Rejected)->create(['election_round_id' => $round->id]);
+
+    expect(electionGate($pending->pleb)->allows('withdrawOwnCandidacy', $pending))->toBeTrue()
+        ->and(electionGate($approved->pleb)->allows('withdrawOwnCandidacy', $approved))->toBeTrue()
+        ->and(electionGate($rejected->pleb)->allows('withdrawOwnCandidacy', $rejected))->toBeFalse()
+        ->and(electionGate($member)->allows('withdrawOwnCandidacy', $pending))->toBeFalse()
+        ->and(electionGate($board[0])->allows('withdrawOwnCandidacy', $pending))->toBeFalse()
+        ->and(electionGate(null)->allows('withdrawOwnCandidacy', $pending))->toBeFalse();
+
+    app(OpenRound::class)->handle($round);
+
+    expect(electionGate($approved->pleb)->allows('withdrawOwnCandidacy', $approved->fresh()))->toBeFalse();
+});

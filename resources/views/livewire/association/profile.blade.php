@@ -11,6 +11,7 @@ use App\Traits\NostrFetcherTrait;
 use Carbon\Carbon;
 use Flux\Flux;
 use Livewire\Attributes\Locked;
+use Livewire\Attributes\Url;
 use Livewire\Component;
 use swentel\nostr\Filter\Filter;
 use swentel\nostr\Message\RequestMessage;
@@ -88,6 +89,13 @@ new class extends Component {
 
     #[Locked]
     public ?string $qrCode = null;
+
+    /**
+     * Where the member came from, so the page can offer the way back. Only
+     * `election` means anything; every other value is ignored.
+     */
+    #[Url(as: 'from', except: null)]
+    public ?string $from = null;
 
     protected $listeners = [
         'nostrLoggedIn' => 'handleNostrLoggedIn',
@@ -249,6 +257,8 @@ new class extends Component {
                 $this->currentPleb,
                 (int) date('Y'),
                 (string) $comment,
+                // Back here after the checkout, still with the way to the election.
+                $this->from === 'election' ? route('association.profile', ['from' => 'election']) : null,
             );
 
             if ($result['created']) {
@@ -549,6 +559,16 @@ new class extends Component {
             Einundzwanzig ist, was du draus machst
         </h1>
     </div>
+
+    @if($from === 'election')
+        <flux:callout icon="hand-raised" class="mb-8">
+            <flux:callout.heading>{{ __('Du kommst von der Wahl') }}</flux:callout.heading>
+            <flux:callout.text>{{ __('Bezahle unten deinen Mitgliedsbeitrag. Danach geht es zurück zur Wahl.') }}</flux:callout.text>
+            <x-slot name="actions">
+                <flux:button :href="route('association.election')" icon="arrow-left" class="min-h-11" wire:navigate>{{ __('Zurück zur Wahl') }}</flux:button>
+            </x-slot>
+        </flux:callout>
+    @endif
 
     <div class="flex flex-col md:flex-row gap-6">
         <!-- Membership Benefits Section -->
