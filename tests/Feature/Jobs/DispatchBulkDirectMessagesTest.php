@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\DmAudience;
 use App\Enums\DmDeliveryStatus;
 use App\Jobs\Dm\DispatchBulkDirectMessages;
 use App\Jobs\Dm\SendDirectMessage;
@@ -8,6 +9,7 @@ use App\Models\DmMessage;
 use App\Models\EinundzwanzigPleb;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use Tests\Support\FakeRelayTransport;
 
 require_once __DIR__.'/DirectMessageHelpers.php';
@@ -176,4 +178,54 @@ it('queues a delivery again whose claim has expired and leaves a live claim alon
     expect(array_column($relay->published(), 'relay'))->toBe(['wss://one.example/'])
         ->and(DmDelivery::query()->where('einundzwanzig_pleb_id', $abandoned->id)->sole()->status)->toBe(DmDeliveryStatus::Sent)
         ->and(DmDelivery::query()->where('einundzwanzig_pleb_id', $working->id)->sole()->status)->toBe(DmDeliveryStatus::Claimed);
+});
+
+/*
+ * Jury run 1, M2 / plan E19: the targeted fee reminder went out in one burst.
+ * Relay operators then see wraps from one server address to exactly the
+ * npubs that have not paid, within a minute.
+ */
+
+/**
+ * The delay of every queued send, in delivery order.
+ *
+ * @return list<int|null>
+ */
+function queuedSendDelays(?DmAudience $audience): array
+{
+    Queue::fake();
+    $recipients = [];
+
+    foreach (range(1, 5) as $i) {
+        [$recipients[]] = dmRecipient(["wss://inbox{$i}.example/"]);
+    }
+
+    $run = DmMessage::factory()->create()->freezeRun($recipients, $audience);
+    (new DispatchBulkDirectMessages($run->id))->handle();
+
+    return Queue::pushed(SendDirectMessage::class)->map(fn (SendDirectMessage $job): mixed => $job->delay)->values()->all();
+}
+
+it('spreads the sends of a run to members with an outstanding fee over the configured time', function () {
+    config()->set('services.nostr_dm_targeted_spread_seconds', 3600);
+
+    $delays = queuedSendDelays(DmAudience::FeeOutstanding);
+
+    expect($delays)->toHaveCount(5)
+        ->each->toBeInt()->toBeGreaterThanOrEqual(0)->toBeLessThanOrEqual(3600)
+        ->and(array_unique($delays))->not->toHaveCount(1);
+});
+
+it('sends at once to an untargeted audience, or when the spread is configured to 0', function (?DmAudience $audience, int $spread) {
+    config()->set('services.nostr_dm_targeted_spread_seconds', $spread);
+
+    expect(queuedSendDelays($audience))->toBe([null, null, null, null, null]);
+})->with([
+    'all members, spread configured' => [DmAudience::Members, 3600],
+    'no audience (a test to one board member)' => [null, 3600],
+    'fee outstanding, spread 0' => [DmAudience::FeeOutstanding, 0],
+]);
+
+it('spreads the fee reminder over hours by default', function () {
+    expect(config('services.nostr_dm_targeted_spread_seconds'))->toBeGreaterThanOrEqual(3600);
 });

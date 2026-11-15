@@ -2,6 +2,7 @@
 
 namespace App\Jobs\Dm;
 
+use App\Enums\DmAudience;
 use App\Enums\DmDeliveryStatus;
 use App\Models\DmDelivery;
 use App\Models\DmRun;
@@ -27,6 +28,10 @@ use Illuminate\Foundation\Queue\Queueable;
  *    SendDirectMessage), so resuming adds no second message.
  *
  * Does nothing while direct messages are paused (DirectMessagePause).
+ *
+ * A run to a targeted audience (TARGETED_AUDIENCES) is spread over time:
+ * every send job waits a random 0 to `services.nostr_dm_targeted_spread_seconds`
+ * seconds (plan E19). The pause is checked again when each job runs.
  */
 class DispatchBulkDirectMessages implements ShouldQueue
 {
@@ -36,6 +41,13 @@ class DispatchBulkDirectMessages implements ShouldQueue
     public int $timeout = 60;
 
     private const int INSERT_CHUNK = 500;
+
+    /**
+     * Audiences whose very selection says something about each recipient.
+     * "Fee outstanding" is the list of members who have not paid; a burst
+     * of wraps to exactly them would publish that list to relay operators.
+     */
+    private const array TARGETED_AUDIENCES = [DmAudience::FeeOutstanding];
 
     public function __construct(public int $runId) {}
 
@@ -80,11 +92,16 @@ class DispatchBulkDirectMessages implements ShouldQueue
             return;
         }
 
+        $spread = in_array($run->audience, self::TARGETED_AUDIENCES, true)
+            ? max(0, (int) config('services.nostr_dm_targeted_spread_seconds'))
+            : 0;
+
         DmDelivery::query()
             ->where('dm_run_id', $run->id)
             ->withWorkLeft($now)
             ->orderBy('id')
             ->pluck('id')
-            ->each(fn (int $deliveryId) => SendDirectMessage::dispatch($deliveryId));
+            ->each(fn (int $deliveryId) => SendDirectMessage::dispatch($deliveryId)
+                ->delay($spread > 0 ? random_int(0, $spread) : null));
     }
 }

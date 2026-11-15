@@ -27,6 +27,16 @@ return [
      */
     'nostr_notification_key' => env('NOSTR_NOTIFICATION_KEY'),
 
+    /*
+     * Seconds over which a TARGETED direct message run is spread: each
+     * delivery waits a random 0..N seconds before it is sent. Today that is
+     * the fee reminder to members whose fee is outstanding (plan E19, "über
+     * Stunden gestreut"): sent at once, relay operators would see wraps from
+     * one server address to exactly the npubs that have not paid, within a
+     * minute. 0 sends at once.
+     */
+    'nostr_dm_targeted_spread_seconds' => (int) env('NOSTR_DM_TARGETED_SPREAD_SECONDS', 4 * 3600),
+
     'postmark' => [
         'token' => env('POSTMARK_TOKEN'),
     ],
