@@ -164,6 +164,34 @@ it('sends the same text with other placeholder values within the lock', function
         ->and($start->handle($valued('2'), DmAudience::Members)->recipient_ids)->toBe([]);
 });
 
+/*
+ * Jury run 1 (j1d): the election and the type are part of the lock as well
+ * (DirectMessageRepeatLock::skippedIds(), the `election_event_id` and the
+ * `type` condition). Each test ends with the repeat that IS locked, so it
+ * cannot pass because nothing is locked at all. Mutations that must turn
+ * them red: drop the election condition; drop the type condition.
+ */
+it('sends the same text to the entitled voters of another election within the lock', function () {
+    $member = EinundzwanzigPleb::factory()->active()->withPaidYear((int) now()->year)->create();
+    [$spring, $autumn] = Election::factory()->count(2)->create()->all();
+    $start = app(StartDirectMessageRun::class);
+    $same = fn (): DmMessage => DmMessage::factory()->create(['type' => DmMessageType::Individual, 'plaintext' => 'Gleicher Text.', 'variables' => []]);
+
+    expect($start->handle($same(), DmAudience::EntitledVoters, $spring)->recipient_ids)->toBe([$member->id])
+        ->and($start->handle($same(), DmAudience::EntitledVoters, $autumn)->recipient_ids)->toBe([$member->id])
+        ->and($start->handle($same(), DmAudience::EntitledVoters, $autumn)->recipient_ids)->toBe([]);
+});
+
+it('sends the same text as another type of message within the lock', function () {
+    $member = EinundzwanzigPleb::factory()->active()->create();
+    $start = app(StartDirectMessageRun::class);
+    $typed = fn (DmMessageType $type): DmMessage => DmMessage::factory()->create(['type' => $type, 'plaintext' => 'Gleicher Text.', 'variables' => []]);
+
+    expect($start->handle($typed(DmMessageType::Individual), DmAudience::Members)->recipient_ids)->toBe([$member->id])
+        ->and($start->handle($typed(DmMessageType::ElectionStartsNow), DmAudience::Members)->recipient_ids)->toBe([$member->id])
+        ->and($start->handle($typed(DmMessageType::ElectionStartsNow), DmAudience::Members)->recipient_ids)->toBe([]);
+});
+
 it('locks nothing when the lock period is 0 hours', function () {
     config()->set('einundzwanzig.config.dm_repeat_lock_hours', 0);
     $member = EinundzwanzigPleb::factory()->active()->create();
