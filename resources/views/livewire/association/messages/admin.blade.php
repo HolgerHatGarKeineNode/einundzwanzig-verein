@@ -20,6 +20,7 @@ use App\Services\Dm\DirectMessageText;
 use App\Services\Dm\DirectMessageTextInvalid;
 use App\Services\Dm\ScheduleDirectMessage;
 use App\Services\Dm\StartDirectMessageRun;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use App\Services\Nostr\RelayPublishStatus;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
@@ -361,6 +362,13 @@ class extends Component
                 ? __('Die Zielgruppe hat sich seit dem Probelauf geändert: gleich viele, aber andere Mitglieder. Es wurde nichts gesendet. Starte den Probelauf neu.')
                 : trans_choice('Die Zielgruppe hat sich seit dem Probelauf geändert: jetzt ein Mitglied statt :confirmed. Es wurde nichts gesendet. Starte den Probelauf neu.|Die Zielgruppe hat sich seit dem Probelauf geändert: jetzt :count Mitglieder statt :confirmed. Es wurde nichts gesendet. Starte den Probelauf neu.', $changed->currentCount, ['count' => $changed->currentCount, 'confirmed' => $changed->confirmedCount]);
             Flux::toast($reason, variant: 'danger');
+
+            return;
+        } catch (LockTimeoutException) {
+            // Another start held the lock too long; nothing was written.
+            $message->delete();
+            Flux::modal('confirm-send')->close();
+            Flux::toast(__('Gerade startet ein anderer Versand. Es wurde nichts gesendet. Versuche es in einer Minute noch einmal.'), variant: 'danger');
 
             return;
         }

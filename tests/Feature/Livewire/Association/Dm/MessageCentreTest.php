@@ -15,7 +15,10 @@ use App\Models\Election;
 use App\Services\Dm\DirectMessagePause;
 use App\Services\Dm\StartDirectMessageRun;
 use App\Support\NostrAuth;
+use Illuminate\Contracts\Cache\Lock;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Attributes\Computed;
 use Livewire\Features\SupportTesting\Testable;
@@ -212,6 +215,26 @@ it('starts the confirmed sending with the count of the dry run and stores the au
         ->and($run->election_event_id)->toBe($election->id);
     $page->assertSee('1 Mitglied, das für die Wahl „Vorstandswahl 2027“ stimmberechtigt ist');
     Queue::assertPushed(DispatchBulkDirectMessages::class, 1);
+});
+
+it('says another sending is starting when the start lock stays taken, and writes nothing', function () {
+    Queue::fake();
+    messageCentreBoard(2);
+    $taken = Mockery::mock(Lock::class);
+    $taken->shouldReceive('block')->andThrow(new LockTimeoutException);
+    Cache::partialMock()->shouldReceive('lock')->with(StartDirectMessageRun::START_LOCK, Mockery::any())->andReturn($taken);
+
+    messageCentre()
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('text', 'Hallo {name}, eins.')
+        ->call('runDryRun')
+        ->call('confirmSend')
+        ->assertDispatched('toast-show', fn (string $event, array $params): bool => ($params['dataset']['variant'] ?? null) === 'danger'
+            && $params['slots']['text'] === 'Gerade startet ein anderer Versand. Es wurde nichts gesendet. Versuche es in einer Minute noch einmal.');
+
+    expect(DmRun::query()->count())->toBe(0)->and(DmMessage::query()->count())->toBe(0);
+    Queue::assertNothingPushed();
 });
 
 it('refuses to send when the draft changed after the dry run', function () {
