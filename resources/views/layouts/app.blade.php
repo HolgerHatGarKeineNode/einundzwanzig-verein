@@ -64,6 +64,11 @@
                 <flux:navlist.item icon="users" :href="route('association.members.admin')"
                                    :current="request()->routeIs('association.members.admin')"
                                    wire:navigate>Mitglieder</flux:navlist.item>
+                @if (\App\Support\NostrAuth::user()?->getPleb()?->isBoardMember())
+                    <flux:navlist.item icon="check-badge" :href="route('association.election.admin')"
+                                       :current="request()->routeIs('association.election.admin')"
+                                       wire:navigate>{{ __('Wahl leiten') }}</flux:navlist.item>
+                @endif
             </flux:navlist.group>
         </flux:navlist>
     @endif

@@ -235,7 +235,7 @@ class ElectoralRoll
     /**
      * Expects a row from `entitled()`, i.e. one that is entitled.
      */
-    protected function reasonOf(EinundzwanzigPleb $pleb): ElectionRollReason
+    public function reasonOf(EinundzwanzigPleb $pleb): ElectionRollReason
     {
         if ($pleb->association_status === AssociationStatus::ACTIVE) {
             return ElectionRollReason::ActiveFeePaid;

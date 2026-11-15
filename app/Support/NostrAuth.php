@@ -80,6 +80,10 @@ class NostrAuth
             self::login($pubkey);
         }
 
+        // The board's electoral roll asks who has signed in since an
+        // election was announced; a working signer is what the vote needs.
+        EinundzwanzigPleb::query()->where('pubkey', $pubkey)->update(['last_login_at' => now()]);
+
         return $pubkey;
     }
 
