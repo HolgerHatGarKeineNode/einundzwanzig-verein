@@ -696,7 +696,7 @@ new class extends Component
         ];
 
         if ($selection === []) {
-            $lines[] = __('Leerer Stimmzettel');
+            $lines[] = __('Enthaltung (leer)');
 
             return implode("\n", $lines);
         }
@@ -896,15 +896,15 @@ new class extends Component
                         <a href="{{ route('association.election', ['wahl' => $choice->id]) }}" wire:navigate
                            @if ($choice->is($this->election)) aria-current="page" @endif
                            @class([
-                               'inline-flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm',
+                               'inline-flex min-h-11 max-w-full items-center gap-2 rounded-md border px-3 py-2 text-sm wrap-anywhere',
                                $focus,
                                'border-orange-500 text-text-primary' => $choice->is($this->election),
                                'border-border-default text-text-secondary hover:text-text-primary' => ! $choice->is($this->election),
                            ])>
                             @if ($choice->is_test)
-                                <flux:icon.beaker variant="micro" aria-hidden="true" />
+                                <flux:icon.beaker variant="micro" class="shrink-0" aria-hidden="true" />
                             @endif
-                            {{ $choice->name }}
+                            <span class="min-w-0">{{ $choice->name }}</span>
                         </a>
                     @endforeach
                 </nav>
