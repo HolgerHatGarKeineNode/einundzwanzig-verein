@@ -158,9 +158,19 @@ pest()->tia()
 |
 | tests/Feature/HttpStrayRequestTest.php proves all of this by effect.
 |
+| The layouts render @googlefonts, and spatie/laravel-google-fonts downloads
+| the CSS on the first render unless storage/app/public/fonts (ignored by
+| git) already holds it. Its fallback (a plain <link> to Google) is switched
+| on by `! env('APP_DEBUG')`, so with a local .env that sets APP_DEBUG=true a
+| fresh checkout threw the refused download as a 500 on every full-page test:
+| 28 red tests in a new worktree, green in one that had cached the fonts.
+| The fallback is pinned on here, as it is in production, so the outcome no
+| longer depends on .env or on what an earlier run left on disk.
+|
 */
 
 pest()->beforeEach(function (): void {
+    config(['google-fonts.fallback' => true]);
     Http::preventStrayRequests();
 
     app()->rebinding(
