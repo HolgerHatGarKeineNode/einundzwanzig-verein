@@ -163,8 +163,32 @@ class ElectionStewardship
 
             $this->audit->append($round->election, ElectionAuditAction::RoundAnnulled, $actor, round: $round, details: ['reason' => $reason]);
 
+            // A run-off decides the round it belongs to; without that round it has
+            // nothing to decide. Every run-off below goes with it, whatever its state.
+            $this->annulRunOffsOf($round, $actor);
+
             return $round;
         });
+    }
+
+    /**
+     * Annul every run-off below `$round` that is not annulled yet, deepest last,
+     * each with its own audit line naming the round that took it along.
+     */
+    protected function annulRunOffsOf(ElectionRound $round, EinundzwanzigPleb $actor): void
+    {
+        $runOffs = $round->children()->whereNull('annulled_at')->lockForUpdate()->get();
+
+        foreach ($runOffs as $runOff) {
+            $runOff->annulled_at = now();
+            $runOff->save();
+
+            $this->audit->append($round->election, ElectionAuditAction::RoundAnnulled, $actor, round: $runOff, details: [
+                'reason' => __('Mit „:title“ annulliert', ['title' => $round->title]),
+            ]);
+
+            $this->annulRunOffsOf($runOff, $actor);
+        }
     }
 
     /**

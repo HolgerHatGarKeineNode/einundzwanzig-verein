@@ -3,6 +3,7 @@
 use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionOutcome;
+use App\Exceptions\ElectionActionRefusedException;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
@@ -433,3 +434,42 @@ it('refuses a run-off of an earlier chair with a candidate elected meanwhile in 
     // Nobody is elected twice, whatever the order of the contests.
     expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($runOff->fresh())))->toBe('elected');
 });
+
+/*
+ * Annulling a round takes every run-off below it along, whatever its state,
+ * so no void round can be opened, decide a seat or get a run-off of its own.
+ * Mutation that must turn this red: drop `annulRunOffsOf()` from `annul()`.
+ */
+it('annuls every run-off below an annulled round, so none of them can be opened or get a run-off', function (string $state) {
+    $election = Election::factory()->create();
+    [$boardMember] = electionBoard(1);
+    $voters = [electionVoter(), electionVoter()];
+
+    $chair = draftElectionRound(['position' => 1, 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 2, election: $election);
+    $treasurer = draftElectionRound(['position' => 2], candidates: 1, election: $election);
+    [$a, $b] = runOffChainMembers($chair);
+    runOffChainStand($treasurer, $a);
+
+    $chair = runOffChainVoteAndSeal($chair, $voters, [$a, $b]);
+    $runOff = app(CreateRunOff::class)->handle($chair, $boardMember);
+    $second = null;
+
+    if ($state === 'open') {
+        $runOff = app(OpenRound::class)->handle($runOff->fresh());
+    }
+
+    if ($state === 'sealed level, second run-off sealed and elects A') {
+        $runOff = runOffChainVoteAndSeal($runOff, $voters, [$a, $b]);
+        $second = runOffChainVoteAndSeal(app(CreateRunOff::class)->handle($runOff, $boardMember), $voters, [$a, $a]);
+    }
+
+    app(ElectionStewardship::class)->annul($chair, $boardMember, 'Falsche Liste');
+
+    expect($runOff->fresh()->annulled_at)->not->toBeNull()
+        ->and(fn () => app(CreateRunOff::class)->handle($runOff->fresh(), $boardMember))->toThrow(ElectionActionRefusedException::class)
+        ->and(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('opens');
+
+    if ($second !== null) {
+        expect($second->fresh()->annulled_at)->not->toBeNull();
+    }
+})->with(['draft', 'open', 'sealed level, second run-off sealed and elects A']);
