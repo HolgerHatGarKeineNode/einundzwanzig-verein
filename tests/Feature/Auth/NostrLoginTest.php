@@ -233,3 +233,78 @@ it('does not allow a replay from a different (unauthenticated) session', functio
         ->toThrow(ValidationException::class)
         ->and(NostrAuth::check())->toBeFalse();
 });
+
+/*
+ * Jury run 1, B1: kind 22242 with a `challenge` tag is also the NIP-42 relay
+ * AUTH event. A relay that passes our session challenge on as its own AUTH
+ * challenge gets back exactly the event below from the member's client. It
+ * must never be an app login.
+ */
+
+it('refuses the NIP-42 relay AUTH answer to the session challenge as a login', function () {
+    $challenge = NostrAuth::issueChallenge();
+    ['event' => $signedEvent] = makeSignedLoginEvent($challenge, tags: [
+        ['relay', 'wss://attacker-relay.example/'],
+        ['challenge', $challenge],
+    ]);
+
+    expect(fn () => NostrAuth::loginWithSignedEvent($signedEvent))
+        ->toThrow(ValidationException::class)
+        ->and(NostrAuth::check())->toBeFalse()
+        ->and(Session::get('nostr_login_challenge'))->toBe($challenge);
+});
+
+it('refuses a login event with a relay tag even when it also names this app', function () {
+    $challenge = NostrAuth::issueChallenge();
+    ['event' => $signedEvent] = makeSignedLoginEvent($challenge, tags: [
+        ['relay', 'wss://attacker-relay.example/'],
+        ['challenge', $challenge],
+        ['u', NostrAuth::loginUrl()],
+    ]);
+
+    expect(fn () => NostrAuth::loginWithSignedEvent($signedEvent))
+        ->toThrow(ValidationException::class)
+        ->and(NostrAuth::check())->toBeFalse();
+});
+
+it('refuses a login event that is not bound to this app by exactly one matching u tag', function (array $uTags) {
+    $challenge = NostrAuth::issueChallenge();
+    ['event' => $signedEvent] = makeSignedLoginEvent($challenge, tags: [['challenge', $challenge], ...$uTags]);
+
+    expect(fn () => NostrAuth::loginWithSignedEvent($signedEvent))
+        ->toThrow(ValidationException::class)
+        ->and(NostrAuth::check())->toBeFalse();
+})->with([
+    'no u tag' => [fn () => []],
+    'another origin' => [fn () => [['u', 'https://other-app.example']]],
+    'this origin with a path' => [fn () => [['u', NostrAuth::loginUrl().'/login']]],
+    'this origin twice' => [fn () => [['u', NostrAuth::loginUrl()], ['u', NostrAuth::loginUrl()]]],
+]);
+
+it('binds the login to the origin of the configured app URL', function () {
+    config(['app.url' => 'https://Verein.Example:8443/sub/path/']);
+
+    expect(NostrAuth::loginUrl())->toBe('https://verein.example:8443');
+
+    $challenge = NostrAuth::issueChallenge();
+    ['event' => $signedEvent, 'pubkey' => $pubkey] = makeSignedLoginEvent($challenge, tags: [
+        ['challenge', $challenge],
+        ['u', 'https://verein.example:8443'],
+    ]);
+
+    expect(NostrAuth::loginWithSignedEvent($signedEvent))->toBe($pubkey);
+});
+
+it('fails closed when the configured app URL has no host', function () {
+    config(['app.url' => 'not a url']);
+    $challenge = NostrAuth::issueChallenge();
+    ['event' => $signedEvent] = makeSignedLoginEvent($challenge, tags: [['challenge', $challenge], ['u', '']]);
+
+    expect(NostrAuth::loginUrl())->toBeNull()
+        ->and(fn () => NostrAuth::loginWithSignedEvent($signedEvent))->toThrow(ValidationException::class);
+});
+
+it('renders the app origin for the login client next to the challenge', function () {
+    Livewire\Livewire::test('auth-button')
+        ->assertSeeHtml('data-nostr-login-url="'.NostrAuth::loginUrl().'"');
+});

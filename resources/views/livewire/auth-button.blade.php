@@ -75,7 +75,7 @@ new class extends Component
 }
 ?>
 
-<div x-data="nostrLogin" data-nostr-challenge="{{ $nostrChallenge ?? '' }}" data-location="{{ $location }}"
+<div x-data="nostrLogin" data-nostr-challenge="{{ $nostrChallenge ?? '' }}" data-nostr-login-url="{{ \App\Support\NostrAuth::loginUrl() ?? '' }}" data-location="{{ $location }}"
      x-on:nostr-login-start.window="if ($event.detail?.location === $root.dataset.location) openNostrLogin({ force: true })">
     @if($isLoggedIn)
         {{-- Vor dem Absenden den Klartext-Cache des Chats vom Geraet raeumen.

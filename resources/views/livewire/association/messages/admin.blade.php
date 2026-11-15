@@ -801,7 +801,7 @@ class extends Component
      */
     public function deliveryFailed(DmDelivery $delivery): bool
     {
-        return $delivery->status === DmDeliveryStatus::Failed || $delivery->isStuck(now());
+        return $delivery->status->isFailure() || $delivery->isStuck(now());
     }
 
     public function deliveryLabel(DmDelivery $delivery): string

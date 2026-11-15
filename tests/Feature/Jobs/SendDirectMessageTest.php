@@ -242,7 +242,9 @@ it('fails visibly when the installation has no notification key', function () {
         ->toThrow(NotificationKeyUnavailable::class);
 
     $relay->assertNothingPublished();
-    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::Failed)
+    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::NoSenderKey)
+        ->and($delivery->fresh()->status->label())->toBe('Nicht gesendet: Absenderschlüssel fehlt oder ist ungültig')
+        ->and($delivery->fresh()->status->isClaimable())->toBeTrue()
         ->and($delivery->fresh()->error)->toContain('NOSTR_NOTIFICATION_KEY')
         ->and($delivery->fresh()->wrap)->toBeNull();
 });
@@ -257,7 +259,8 @@ it('sends nothing to an erased member', function () {
     SendDirectMessage::dispatchSync($delivery->id);
 
     $relay->assertNothingPublished();
-    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::Failed)
+    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::NotSent)
+        ->and($delivery->fresh()->status->label())->toBe('Nicht gesendet, kein Relay versucht')
         ->and($delivery->fresh()->error)->toBe('The recipient has been erased.');
 });
 
@@ -265,7 +268,7 @@ it('sends nothing to an erased member', function () {
  * An erasure that lands while the job runs: nothing the job writes afterwards
  * may bring the member's text, rumor, wrap or relay answers back.
  */
-function expectNothingStoredFor(DmDelivery $delivery): void
+function expectNothingStoredFor(DmDelivery $delivery, DmDeliveryStatus $status = DmDeliveryStatus::Failed): void
 {
     $delivery->refresh();
 
@@ -273,7 +276,7 @@ function expectNothingStoredFor(DmDelivery $delivery): void
         ->and($delivery->wrap)->toBeNull()
         ->and($delivery->plaintext)->toBeNull()
         ->and($delivery->rumor_id)->toBeNull()
-        ->and($delivery->status)->toBe(DmDeliveryStatus::Failed)
+        ->and($delivery->status)->toBe($status)
         ->and($delivery->error)->toBe('The recipient has been erased.');
 }
 
@@ -329,7 +332,7 @@ it('writes no wrap when the member is erased while the wrap is being built', fun
 
     expect($erased)->toBeTrue();
     $relay->assertNothingPublished();
-    expectNothingStoredFor($delivery);
+    expectNothingStoredFor($delivery, DmDeliveryStatus::NotSent);
 });
 
 it('fails a delivery whose text can no longer be filled in, without dialling', function () {
@@ -340,7 +343,7 @@ it('fails a delivery whose text can no longer be filled in, without dialling', f
     SendDirectMessage::dispatchSync($delivery->id);
 
     $relay->assertNothingPublished();
-    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::Failed)
+    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::NotSent)
         ->and($delivery->fresh()->error)->toContain('unknown placeholder {npub}');
 });
 
@@ -450,4 +453,45 @@ it('puts a job back on the database queue while another worker holds a live clai
     $relay->assertNothingPublished();
     expect(DB::table('jobs')->count())->toBe(1)
         ->and(DB::table('jobs')->value('available_at'))->toBe(now()->getTimestamp() + SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS);
+});
+
+/*
+ * Jury run 1, L1 / board F9: "Kein Relay hat angenommen" was the label of
+ * every failure, including the ones where no relay was dialled. A missing
+ * key looked like a relay problem.
+ */
+it('labels a delivery failed only when relays were dialled, and counts every failure for the re-send', function () {
+    $relay = FakeRelayTransport::bind();
+    [$member] = dmRecipient();
+    $refused = dmDelivery($member);
+    $relay->thenReject('blocked: not on the allow list');
+
+    SendDirectMessage::dispatchSync($refused->id);
+
+    expect($refused->fresh()->status)->toBe(DmDeliveryStatus::Failed)
+        ->and($refused->fresh()->status->label())->toBe('Kein Relay hat angenommen')
+        ->and(DmDeliveryStatus::NoSenderKey->label())->not->toContain('Relay hat angenommen')
+        ->and(DmDeliveryStatus::NotSent->label())->not->toContain('Relay hat angenommen')
+        ->and(collect(DmDeliveryStatus::cases())->filter->isFailure()->values()->all())
+        ->toBe([DmDeliveryStatus::Failed, DmDeliveryStatus::NoSenderKey, DmDeliveryStatus::NotSent]);
+});
+
+it('picks a delivery that was not sent for want of a key up again once the key is there', function () {
+    $relay = FakeRelayTransport::bind();
+    config()->set('services.nostr_notification_key', null);
+    [$member] = dmRecipient();
+    $delivery = dmDelivery($member);
+
+    try {
+        SendDirectMessage::dispatchSync($delivery->id);
+    } catch (NotificationKeyUnavailable) {
+    }
+
+    armDirectMessages();
+
+    expect(DmDelivery::query()->failedOrStuck(now())->pluck('id')->all())->toBe([$delivery->id]);
+
+    SendDirectMessage::dispatchSync($delivery->id);
+
+    expect($delivery->fresh()->status)->toBe(DmDeliveryStatus::Sent);
 });

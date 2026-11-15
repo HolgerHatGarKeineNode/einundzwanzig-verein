@@ -20,6 +20,18 @@ const ANSWER_TIMEOUT_MS = 20000
 // switch to a signer app and approve.
 const SIGNER_TIMEOUT_MS = 60000
 
+/**
+ * 256 random bits as lowercase hex for the vote event's `nonce` tag. Without
+ * it the event id on the receipt could be brute-forced back to the ballot
+ * (app/Services/Election/VoteEvent.php). Drawn here, never by the server.
+ */
+function voteNonce() {
+    const bytes = new Uint8Array(32)
+    crypto.getRandomValues(bytes)
+
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
 export default ({ roundId, pubkey, rule, max, messages }) => ({
     // fill | review | signing | sending | checking | lost
     step: 'fill',
@@ -152,7 +164,7 @@ export default ({ roundId, pubkey, rule, max, messages }) => ({
             }
 
             // Extensions may hand back proxies Livewire cannot serialise.
-            signed = JSON.parse(JSON.stringify(await withTimeout(window.nostr.signEvent({ ...this.template, tags: this.template.tags.map((tag) => [...tag]) }), SIGNER_TIMEOUT_MS)))
+            signed = JSON.parse(JSON.stringify(await withTimeout(window.nostr.signEvent({ ...this.template, tags: [...this.template.tags.map((tag) => [...tag]), ['nonce', voteNonce()]] }), SIGNER_TIMEOUT_MS)))
         } catch (error) {
             if (attempt !== this.signAttempt) {
                 return

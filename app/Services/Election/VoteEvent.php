@@ -20,11 +20,21 @@ use Carbon\CarbonInterface;
  *   ["election", "<election id>"]                 exactly once
  *   ["round", "<round id>"]                       exactly once
  *   ["vote", "<candidate id>", "for|yes|no"]      once per chosen candidate; none for a blank vote
+ *   ["nonce", "<32 to 64 lowercase hex>"]         exactly once, added by the member's browser
  *
  * The signature covers the tags, so the event names one round of one
  * election and one set of choices; replayed into another round it fails the
  * binding check. `content` is free text for the signer to show and is not
  * read. Other tags are ignored.
+ *
+ * Why the nonce: everything else in the event is guessable — names every
+ * member sees, small ids, a `created_at` inside a window of a few thousand
+ * seconds, a public pubkey. The event id is the member's receipt, so without
+ * a secret component anyone who sees a receipt could hash every possible
+ * ballot until one matches (jury run 1, H1: 14 215 hashes, 0.06 s). The
+ * browser draws at least 128 random bits (`crypto.getRandomValues`) before
+ * signing; the server never sees it before the signed event and never makes
+ * it up, so it is not a value the server could have chosen to match.
  */
 final class VoteEvent
 {
@@ -32,6 +42,9 @@ final class VoteEvent
 
     /** How far `created_at` may lie outside the open period: clocks of members' devices drift. */
     public const int CLOCK_TOLERANCE_SECONDS = 300;
+
+    /** 32 hex = 128 bits at least; 64 hex = the 256 bits the browser draws. */
+    private const string NONCE_PATTERN = '/^[0-9a-f]{32,64}$/D';
 
     /**
      * The unsigned event for `$selection` (candidate id => choice value).
@@ -89,8 +102,8 @@ final class VoteEvent
 
     /**
      * Every check `$event` fails as a vote by `$pubkey` in `$round`, in this
-     * order: signature, signer, kind, binding to election and round, time.
-     * Empty when it passes all of them.
+     * order: signature, signer, kind, binding to election and round, nonce,
+     * time. Empty when it passes all of them.
      *
      * The time check accepts `created_at` from the round's beginning to its
      * end or `$periodEnd`, whichever is earlier — the moment of the cast, or
@@ -119,6 +132,12 @@ final class VoteEvent
         if (self::tagValues($event, 'election') !== [(string) $round->election_event_id]
             || self::tagValues($event, 'round') !== [(string) $round->getKey()]) {
             $failures[] = ElectionBallotRefusal::WrongRound;
+        }
+
+        $nonces = self::tagValues($event, 'nonce');
+
+        if (count($nonces) !== 1 || ! is_string($nonces[0]) || preg_match(self::NONCE_PATTERN, $nonces[0]) !== 1) {
+            $failures[] = ElectionBallotRefusal::MissingNonce;
         }
 
         $createdAt = $event['created_at'] ?? null;

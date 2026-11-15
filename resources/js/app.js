@@ -1,7 +1,6 @@
 import {Alpine, Livewire} from '../../vendor/livewire/livewire/dist/livewire.esm';
 
 import nostrDefault from "./nostrDefault.js";
-import nostrApp from "./nostrApp.js";
 import nostrLogin from "./nostrLogin.js";
 import nostrZap from "./nostrZap.js";
 import projectChatRoom from "./projectChatRoom.js";
@@ -41,7 +40,6 @@ Alpine.store('nostr', {
 });
 
 Alpine.data('nostrDefault', nostrDefault);
-Alpine.data('nostrApp', nostrApp);
 Alpine.data('nostrLogin', nostrLogin);
 Alpine.data('nostrZap', nostrZap);
 // Registrierung hier, nicht in einem seitenspezifischen Entry: Alpine startet
