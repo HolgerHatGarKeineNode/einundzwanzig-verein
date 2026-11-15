@@ -45,9 +45,10 @@ new class extends Component
     public string $fingerprint = '';
 
     /**
-     * What happened to the member's ballot on this page, per round: 'now'
-     * when the cast went through, 'late' when a retry found the vote already
-     * there, 'closed' when the board closed the round before it arrived.
+     * What happened to the member's ballot on this page, per round:
+     * 'review' once the member reached the review step, 'now' when the cast
+     * went through, 'late' when a retry found the vote already there,
+     * 'closed' when the board closed the round before it arrived.
      * Round ids only — never a choice.
      *
      * @var array<int, string>
@@ -624,6 +625,7 @@ new class extends Component
 
         $event = VoteEvent::template($round, $selection, now()->getTimestamp());
         $event['content'] = $this->summary($round, $selection);
+        $this->notes[$roundId] ??= 'review';
 
         return ['event' => $event];
     }
@@ -1186,9 +1188,16 @@ new class extends Component
                                                         <p role="status" class="mt-2 max-w-prose text-base leading-normal text-text-primary">
                                                             {{ __('Der Vorstand hat diesen Wahlgang geschlossen, bevor deine Stimme ankam. Sie ist nicht gezählt.') }}
                                                         </p>
+                                                    @elseif ($note === 'review' && $state === ElectionRoundState::Closed && $result !== null)
+                                                        {{-- The poll replaced the sheet the member was still checking. --}}
+                                                        <p role="status" class="mt-2 max-w-prose text-base leading-normal text-text-primary">
+                                                            {{ __('Der Wahlgang wurde geschlossen, bevor du abgegeben hast. Deine Stimme ist nicht dabei.') }}
+                                                        </p>
                                                     @elseif ($state === ElectionRoundState::Closed && $result === null)
                                                         <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
-                                                            @if ($standing['onRoll'])
+                                                            @if ($note === 'review')
+                                                                <span role="status" class="text-text-primary">{{ __('Der Wahlgang wurde geschlossen, bevor du abgegeben hast. Deine Stimme ist nicht dabei.') }}</span>
+                                                            @elseif ($standing['onRoll'])
                                                                 {{ __('Ohne deine Stimme geschlossen.') }}
                                                             @endif
                                                             {{ $round->isSealed() && $round->reveal_at ? __('Das Ergebnis steht hier ab :time Uhr.', ['time' => $this->displayTime($round->reveal_at, 'd.m.Y H:i')]) : __('Das Ergebnis steht hier, sobald es ausgezählt ist.') }}

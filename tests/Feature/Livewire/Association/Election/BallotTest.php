@@ -283,6 +283,32 @@ it('says so when the board closed the round before the vote arrived', function (
         ->toBe(['message' => 'Der Vorstand hat diesen Wahlgang inzwischen geschlossen. Deine Stimme ist nicht abgegeben.']);
 });
 
+it('tells a member whose sheet the board closed mid-review that their vote is not in', function () {
+    $round = namedDraftRound();
+    $reviewer = electionVoter();
+    $bystander = electionVoter();
+    $voter = electionVoter();
+    app(OpenRound::class)->handle($round);
+    castElectionBallot($round, $voter, [candidateIdOf($round, 'Alice Ambrosius') => 'for']);
+    $line = 'Der Wahlgang wurde geschlossen, bevor du abgegeben hast. Deine Stimme ist nicht dabei.';
+
+    $page = ballotPage($reviewer);
+    $page->call('prepareBallot', $round->id, []);
+    $idle = ballotPage($bystander);
+
+    app(CloseRound::class)->handle($round);
+
+    $page->call('syncRounds')
+        ->assertSee($line)
+        ->assertSee('Gewählt ist Alice Ambrosius.')
+        ->assertDontSee('Deine Stimme ist dabei.');
+    $idle->call('syncRounds')
+        ->assertSee('Gewählt ist Alice Ambrosius.')
+        ->assertDontSee($line);
+    // Session-only: a fresh page load does not know about the review.
+    ballotPage($reviewer)->assertDontSee($line);
+});
+
 it('notices on the poll when the board opens a round, and stays put while nothing changes', function () {
     $round = namedDraftRound();
     $member = electionVoter();
