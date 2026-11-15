@@ -4,6 +4,8 @@ namespace App\Services\Dm;
 
 use App\Jobs\Dm\DispatchBulkDirectMessages;
 use App\Models\DmRun;
+use Carbon\CarbonInterface;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -24,6 +26,16 @@ final class DirectMessagePause
     public function isPaused(): bool
     {
         return DB::table(self::TABLE)->whereNotNull('paused_at')->exists();
+    }
+
+    /**
+     * Since when the sending is paused; null while it is not.
+     */
+    public function pausedAt(): ?CarbonInterface
+    {
+        $pausedAt = DB::table(self::TABLE)->whereNotNull('paused_at')->value('paused_at');
+
+        return $pausedAt === null ? null : Carbon::parse($pausedAt);
     }
 
     public function pause(): void
