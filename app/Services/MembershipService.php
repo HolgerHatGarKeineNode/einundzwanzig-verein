@@ -1163,6 +1163,13 @@ class MembershipService
      *    discriminating that is depends on how many fees are booked within the
      *    same seconds and is UNMEASURED — recorded as a known unknown, not as
      *    an assessed low risk.
+     *  - Election votes (`election_votes`). The row keeps the original
+     *    pubkey, the signed vote event and the choices, still linked to the
+     *    anonymised record by `einundzwanzig_pleb_id`. They are the evidence
+     *    `election:verify` re-checks a sealed round against; deleting or
+     *    rewriting them would turn that round's result unverifiable.
+     *    `election:verify` checks such a vote against the key that signed it
+     *    instead of the tombstoned member pubkey.
      *
      * @return array{retained_payments: int}
      */
