@@ -180,7 +180,12 @@ class SendDirectMessage implements ShouldQueue
             }
 
             if (! $this->recordRelay($delivery, $relayUrl, $result)) {
-                $this->finish($delivery, DmDeliveryStatus::Failed, self::ERASED);
+                // Erased while relays were being dialled: stop here. `not_sent`
+                // would say no relay was tried, which is no longer true. If one
+                // took the wrap (this one or an earlier one) it is out there,
+                // and `sent` says so; otherwise the relays dialled took nothing.
+                $reached = $accepted > 0 || $result->accepted;
+                $this->finish($delivery, $reached ? DmDeliveryStatus::Sent : DmDeliveryStatus::Failed, self::ERASED);
 
                 return;
             }
