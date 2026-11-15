@@ -9,7 +9,10 @@ use App\Models\ElectionCandidate;
 use App\Models\ElectionManifest;
 use App\Models\ElectionRound;
 use App\Models\Profile;
+use App\Services\Election\CloseRound;
+use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionStewardship;
+use App\Services\Election\OpenRound;
 use App\Support\NostrAuth;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -666,4 +669,43 @@ it('offers the run-off of a tie once, in the next-step card', function () {
         ->and($card)->toContain('Stichwahl anlegen')
         ->and($card)->toContain("createRunOff({$round->id})")
         ->and($html)->not->toContain('data-test="run-off-'.$round->id.'"');
+});
+
+/*
+ * Annulled means void on every screen: a run-off annulled along with its round
+ * before it was opened is never offered as the next step and is never shown
+ * as opened. Mutations that must turn this red: let the next-step card pick
+ * an annulled draft; render every annulled round as "Geöffnet …".
+ */
+it('treats a run-off annulled along with its round as void on the card, the live list and the minutes', function () {
+    $board = liveBoard();
+    $election = Election::factory()->announced()->create();
+    $voters = [electionVoter(), electionVoter()];
+    $chair = draftElectionRound(['title' => 'Vorsitz', 'position' => 1, 'counting_rule' => ElectionCountingRule::MostVotes], election: $election);
+    [$first, $second] = $chair->candidates()->orderBy('id')->pluck('id')->all();
+
+    $chair = app(OpenRound::class)->handle($chair);
+    castElectionBallot($chair, $voters[0], [$first => 'for']);
+    castElectionBallot($chair, $voters[1], [$second => 'for']);
+    $chair = app(CloseRound::class)->handle($chair);
+    $runOff = app(CreateRunOff::class)->handle($chair, $board);
+
+    $page = livePage()
+        ->assertSee('„'.$runOff->title.'“ öffnen')
+        ->call('startRoundAction', $chair->id, 'annul')->set('roundReason', 'Falsche Liste')->call('confirmRoundAction')
+        ->assertHasNoErrors()
+        ->assertSee('„Vorsitz“ ist annulliert und noch nicht wiederholt.')
+        ->assertDontSee('„'.$runOff->title.'“ öffnen')
+        ->assertSee('Nicht geöffnet, annulliert.')
+        ->assertSee('Grund: Mit „Vorsitz“ annulliert');
+
+    expect($runOff->fresh()->annulled_at)->not->toBeNull();
+
+    $this->get(route('association.election.admin.protocol', $election))->assertOk()
+        ->assertSee('Nicht geöffnet, annulliert')
+        ->assertDontSee('Geöffnet , annulliert');
+
+    $page->call('startRoundAction', $chair->id, 'repeat')->call('confirmRoundAction')
+        ->assertHasNoErrors()
+        ->assertSee('„Vorsitz (Wiederholung)“ öffnen');
 });

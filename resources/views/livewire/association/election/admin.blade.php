@@ -864,11 +864,12 @@ new class extends Component
             );
         }
 
-        $next = $all->first(fn (ElectionRound $round): bool => $round->opened_at === null && $round->parent_round_id !== null)
-            ?? $all->first(fn (ElectionRound $round): bool => $round->opened_at === null);
+        // An annulled round is void, also a run-off annulled along with its round before it was opened.
+        $openable = $all->filter(fn (ElectionRound $round): bool => $round->opened_at === null && $round->annulled_at === null);
+        $next = $openable->first(fn (ElectionRound $round): bool => $round->parent_round_id !== null) ?? $openable->first();
 
         if ($next !== null) {
-            $last = $all->filter(fn (ElectionRound $round): bool => $round->closed_at !== null || $round->annulled_at !== null)
+            $last = $all->filter(fn (ElectionRound $round): bool => $round->opened_at !== null && ($round->closed_at !== null || $round->annulled_at !== null))
                 ->sortByDesc(fn (ElectionRound $round): int => ($round->closed_at ?? $round->annulled_at)->getTimestamp())
                 ->first();
 

@@ -152,7 +152,7 @@ class RoundReport
      */
     protected function reasonOf(ElectionRound $round): ?string
     {
-        if ($round->opened_at === null) {
+        if ($round->opened_at === null && $round->annulled_at === null) {
             return null;
         }
 

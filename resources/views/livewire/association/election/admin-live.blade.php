@@ -160,7 +160,11 @@
                             </div>
                         @elseif ($report['state'] === \App\Enums\ElectionRoundState::Annulled)
                             <p class="mt-4 text-base text-text-primary">
-                                {{ __(':cast Stimmen abgegeben, nicht ausgezählt.', ['cast' => $report['cast']]) }}
+                                @if ($round->opened_at === null)
+                                    {{ __('Nicht geöffnet, annulliert.') }}
+                                @else
+                                    {{ __(':cast Stimmen abgegeben, nicht ausgezählt.', ['cast' => $report['cast']]) }}
+                                @endif
                                 @if ($report['reason'])
                                     {{ __('Grund: :reason', ['reason' => $report['reason']]) }}
                                 @endif

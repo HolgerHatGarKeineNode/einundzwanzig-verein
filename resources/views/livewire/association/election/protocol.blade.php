@@ -201,6 +201,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
         $round = $report['round'];
 
         return match (true) {
+            $report['state'] === ElectionRoundState::Annulled && $round->opened_at === null => __('Nicht geöffnet, annulliert :annulled.', ['annulled' => $this->clock($round->annulled_at)]),
             $report['state'] === ElectionRoundState::Annulled => __('Geöffnet :opened, annulliert :annulled.', ['opened' => $this->clock($round->opened_at), 'annulled' => $this->clock($round->annulled_at)]),
             $report['sealed'] => __('Geöffnet :opened, geschlossen und ausgezählt :closed.', ['opened' => $this->clock($round->opened_at), 'closed' => $this->clock($round->closed_at)]),
             $report['state'] === ElectionRoundState::Open => __('Geöffnet :opened, läuft noch.', ['opened' => $this->clock($round->opened_at)]),
