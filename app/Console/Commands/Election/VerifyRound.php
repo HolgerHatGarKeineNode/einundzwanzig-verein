@@ -6,9 +6,11 @@ use App\Enums\ElectionBallotRefusal;
 use App\Enums\ElectionCandidateStatus;
 use App\Exceptions\ElectionBallotRefusedException;
 use App\Exceptions\ElectionRoundStateException;
+use App\Models\ElectionAuditEntry;
 use App\Models\ElectionManifest;
 use App\Models\ElectionRound;
 use App\Models\ElectionVote;
+use App\Services\Election\ElectionAuditLog;
 use App\Services\Election\RoundManifest;
 use App\Services\Election\TallyRound;
 use App\Services\Election\VoteEvent;
@@ -21,16 +23,24 @@ use UnexpectedValueException;
  * Check a sealed round against the signed votes and the manifest written at
  * the close.
  *
- * Three checks, each reported on its own:
+ * Four checks, each reported on its own:
  *
  *  1. Every stored vote again: signature, signer (the event's pubkey, the
  *     stored pubkey and the member's pubkey agree), kind, binding to election
- *     and round, `created_at` within the open period, the stored event id,
- *     choices valid for the round, stored choices equal to the signed ones.
+ *     and round, nonce, `created_at` within the open period, the stored event
+ *     id, choices valid for the round, stored choices equal to the signed
+ *     ones. A member who erased their data has no pubkey left to compare
+ *     (`MembershipService::erasePersonalData()` tombstones it); their vote is
+ *     checked against the key that signed it, see failedChecks().
  *  2. A recount from the signed events of the votes that pass (1), compared
  *     with the result in the stored manifest.
  *  3. The manifest rebuilt from the tables as they are now, compared with
  *     the stored text, and the stored text with its stored hash.
+ *  4. The election's audit log: its hash chain holds, and the head the
+ *     manifest anchored at the seal (`audit_head_hash`) is still a line of
+ *     it. Without (4) a line written before the seal — say the reason for a
+ *     voter enrolled by hand — could be edited, or deleted with the rest of
+ *     the chain re-hashed, and this command still said OK (jury run 1, A).
  *
  * Exit 0: nothing differs. Exit 1: discrepancies — the output names vote ids
  * and check names or manifest fields, never a choice. Exit 2: there is
@@ -45,7 +55,7 @@ class VerifyRound extends Command
     /** Manifest fields a recount from the signed events must reproduce. */
     private const RECOUNTED_FIELDS = ['counts', 'blank', 'outcome', 'elected', 'tied', 'tied_seats'];
 
-    public function handle(RoundManifest $manifests, TallyRound $tally): int
+    public function handle(RoundManifest $manifests, TallyRound $tally, ElectionAuditLog $audit): int
     {
         $round = ElectionRound::query()->find($this->argument('round'));
 
@@ -80,11 +90,12 @@ class VerifyRound extends Command
         }
 
         $clean = $this->verifyVotes($round, $tally, is_array($stored) ? $stored : []);
+        $auditHolds = $this->verifyAuditLog($round, $audit, is_array($stored) ? ($stored['audit_head_hash'] ?? null) : null);
 
         $storedIntact = hash_equals($manifest->hash, RoundManifest::hash($manifest->body));
         $tablesUnchanged = $recomputed !== null && hash_equals($manifest->hash, RoundManifest::hash($recomputed));
 
-        if ($clean && $storedIntact && $tablesUnchanged) {
+        if ($clean && $auditHolds && $storedIntact && $tablesUnchanged) {
             $this->info('OK round '.$round->getKey().' manifest '.$manifest->hash);
 
             return self::SUCCESS;
@@ -111,6 +122,42 @@ class VerifyRound extends Command
     }
 
     /**
+     * Check (4). Prints one line per failure; true when there is none.
+     *
+     * The anchor is safe to compare by membership: it sits inside the
+     * manifest text, whose hash check (3) covers, and every line's hash
+     * covers the line before it. Editing a line before the anchor breaks the
+     * chain; deleting one and re-hashing the rest changes every hash from
+     * there on, the anchor included, so it is no longer found. `GENESIS` is
+     * the anchor of a round sealed while the log was still empty — there was
+     * nothing before the seal to protect.
+     */
+    private function verifyAuditLog(ElectionRound $round, ElectionAuditLog $audit, mixed $anchor): bool
+    {
+        $holds = true;
+
+        if (! $audit->verify($round->election)) {
+            $this->error('MISMATCH: the audit log of this election no longer holds its hash chain.');
+            $holds = false;
+        }
+
+        $anchored = is_string($anchor) && (
+            hash_equals(ElectionAuditLog::GENESIS, $anchor)
+            || ElectionAuditEntry::query()
+                ->where('election_event_id', $round->election_event_id)
+                ->where('hash', $anchor)
+                ->exists()
+        );
+
+        if (! $anchored) {
+            $this->error('MISMATCH: the audit log head the manifest anchored at the seal is no longer a line of the audit log.');
+            $holds = false;
+        }
+
+        return $holds;
+    }
+
+    /**
      * Checks (1) and (2). Prints one line per failing vote and one for a
      * recount that differs; true when there is nothing to print.
      *
@@ -123,8 +170,10 @@ class VerifyRound extends Command
         $approved = $round->candidates()->where('status', ElectionCandidateStatus::Approved)->pluck('id')->all();
         $clean = true;
         $verified = [];
+        $byErased = 0;
 
         foreach ($round->votes()->with('pleb')->orderBy('id')->get() as $vote) {
+            $byErased += $vote->pleb?->isErased() === true ? 1 : 0;
             $event = is_array($vote->event) ? $vote->event : [];
             $selection = VoteEvent::selection($event);
             $failed = $this->failedChecks($vote, $event, $selection, $round, $periodEnd, $approved);
@@ -137,6 +186,10 @@ class VerifyRound extends Command
 
             $clean = false;
             $this->error('FAIL vote '.$vote->getKey().' event '.$vote->event_id.': '.implode(', ', $failed));
+        }
+
+        if ($byErased > 0) {
+            $this->line('Note: '.$byErased.' vote(s) by members who erased their data, checked against the key that signed them.');
         }
 
         try {
@@ -180,7 +233,21 @@ class VerifyRound extends Command
             VoteEvent::failures($event, $round, (string) $vote->pubkey, $periodEnd),
         );
 
-        if ($vote->pleb?->pubkey !== $vote->pubkey && ! in_array(ElectionBallotRefusal::ForeignSigner->value, $failed, true)) {
+        /*
+         * The member record must still hold the key the vote was signed
+         * with. Not for a member who erased their data: their pubkey is a
+         * tombstone now, so the comparison would report every such vote as
+         * foreign and the round as tampered with — a signal any voter could
+         * trigger by exercising a legal right (jury run 1, C). Their vote
+         * still has to pass every check above against the pubkey stored
+         * with it and signed into the event. Skipping this one comparison
+         * for an erased row gives a database writer nothing: whoever can
+         * tombstone a member row can as well write the matching pubkey
+         * into it, so the comparison never protected against that writer.
+         */
+        $erased = $vote->pleb?->isErased() === true;
+
+        if (! $erased && $vote->pleb?->pubkey !== $vote->pubkey && ! in_array(ElectionBallotRefusal::ForeignSigner->value, $failed, true)) {
             $failed[] = ElectionBallotRefusal::ForeignSigner->value;
         }
 

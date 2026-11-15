@@ -137,7 +137,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
                     $lines[] = '   - '.$row['name'].': '.$this->countText($round->counting_rule, $row).($row['elected'] ? ', '.__('gewählt') : ($row['tied'] ? ', '.__('Gleichstand') : ''));
                 }
 
-                $lines[] = '   '.__('Enthaltungen: :blank', ['blank' => $report['result']['blank']]);
+                $lines[] = '   '.__('Enthaltungen (leer): :blank', ['blank' => $report['result']['blank']]);
                 $lines[] = '   '.__('Ergebnis: :outcome', ['outcome' => $this->outcomeText($report['result'])]);
             }
 
@@ -153,8 +153,8 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
         $chain = $this->chain;
         $lines[] = '';
         $lines[] = $chain['intact']
-            ? __('Protokollkette: unversehrt, :lines Einträge.', ['lines' => $chain['lines']])
-            : __('Protokollkette: BESCHÄDIGT, :lines Einträge.', ['lines' => $chain['lines']]);
+            ? trans_choice('{1} Protokollkette: unversehrt, 1 Eintrag.|[0,*] Protokollkette: unversehrt, :count Einträge.', $chain['lines'])
+            : trans_choice('{1} Protokollkette: BESCHÄDIGT, 1 Eintrag.|[0,*] Protokollkette: BESCHÄDIGT, :count Einträge.', $chain['lines']);
         $lines[] = __('Letzte Prüfsumme der Kette: :head', ['head' => $chain['head']]);
         $lines[] = __('Erstellt am :date', ['date' => $this->stamp(now())]);
 
@@ -274,7 +274,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
     $chain = $this->chain;
 @endphp
 
-<div class="mx-auto max-w-3xl px-4 py-8 sm:px-8 sm:py-12 print:max-w-none print:p-0" data-test="protocol">
+<div class="election-ui mx-auto max-w-3xl px-4 py-8 sm:px-8 sm:py-12 print:max-w-none print:p-0" data-test="protocol">
     <nav class="mb-8 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center print:hidden" aria-label="{{ __('Aktionen') }}"
          x-data="{ copied: false, copy() { navigator.clipboard.writeText($refs.plain.value).then(() => { this.copied = true; setTimeout(() => this.copied = false, 2500) }, () => { $refs.plain.closest('details').open = true; $refs.plain.select() }) } }">
         <flux:button :href="route('association.election.admin')" icon="arrow-left" variant="ghost" class="min-h-11 w-full sm:w-auto">{{ __('Zur Wahlleitung') }}</flux:button>
@@ -332,25 +332,31 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
                                 <tr class="border-b border-border-default text-sm text-text-secondary print:border-black print:text-black">
                                     <th scope="col" class="py-2 pr-4 font-normal">{{ __('Kandidatur') }}</th>
                                     <th scope="col" class="py-2 pr-4 text-right font-normal">{{ __('Stimmen') }}</th>
-                                    <th scope="col" class="py-2 font-normal"><span class="sr-only">{{ __('Ergebnis') }}</span></th>
+                                    <th scope="col" class="hidden py-2 font-normal sm:table-cell print:table-cell"><span class="sr-only">{{ __('Ergebnis') }}</span></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @foreach ($result['rows'] as $row)
                                     <tr class="border-b border-border-subtle print:border-neutral-400">
-                                        <td class="py-2 pr-4 font-bold break-words">{{ $row['name'] }}</td>
-                                        <td class="py-2 pr-4 text-right tabular-nums whitespace-nowrap">{{ $this->countText($round->counting_rule, $row) }}</td>
-                                        <td class="py-2">{{ $row['elected'] ? __('gewählt') : ($row['tied'] ? __('Gleichstand') : '') }}</td>
+                                        @php $verdict = $row['elected'] ? __('gewählt') : ($row['tied'] ? __('Gleichstand') : ''); @endphp
+                                        <td class="py-2 pr-4 align-top font-bold [overflow-wrap:anywhere]">
+                                            {{ $row['name'] }}
+                                            @if ($verdict !== '')
+                                                <span class="block font-normal sm:hidden print:hidden">{{ $verdict }}</span>
+                                            @endif
+                                        </td>
+                                        <td class="py-2 pr-4 align-top text-right tabular-nums whitespace-nowrap">{{ $this->countText($round->counting_rule, $row) }}</td>
+                                        <td class="hidden py-2 align-top sm:table-cell print:table-cell">{{ $verdict }}</td>
                                     </tr>
                                 @endforeach
                             </tbody>
                         </table>
-                        <p class="mt-3 text-base">{{ __('Enthaltungen: :blank', ['blank' => $result['blank']]) }}</p>
-                        <p class="mt-1 text-base font-bold" data-test="protocol-outcome-{{ $round->id }}">{{ __('Ergebnis: :outcome', ['outcome' => $this->outcomeText($result)]) }}</p>
+                        <p class="mt-3 text-base">{{ __('Enthaltungen (leer): :blank', ['blank' => $result['blank']]) }}</p>
+                        <p class="mt-1 text-base font-bold break-words" data-test="protocol-outcome-{{ $round->id }}">{{ __('Ergebnis: :outcome', ['outcome' => $this->outcomeText($result)]) }}</p>
                     @endif
 
                     @if ($report['reason'])
-                        <p class="mt-2 text-base">{{ __('Grund: :reason', ['reason' => $report['reason']]) }}</p>
+                        <p class="mt-2 text-base break-words">{{ __('Grund: :reason', ['reason' => $report['reason']]) }}</p>
                     @endif
 
                     @if ($report['manifest'])
@@ -368,9 +374,9 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
         <h2 id="protocol-check" class="text-2xl font-bold">{{ __('Prüfung') }}</h2>
         <p @class(['mt-4 inline-flex items-start gap-2 text-lg font-bold', 'text-success print:text-black' => $chain['intact'], 'text-danger print:text-black' => ! $chain['intact']]) data-test="protocol-chain">
             @if ($chain['intact'])
-                <flux:icon.check-circle variant="mini" class="mt-1 size-5 shrink-0" aria-hidden="true" />{{ __('Protokollkette unversehrt, :lines Einträge.', ['lines' => $chain['lines']]) }}
+                <flux:icon.check-circle variant="mini" class="mt-1 size-5 shrink-0" aria-hidden="true" />{{ trans_choice('{1} Protokollkette unversehrt, 1 Eintrag.|[0,*] Protokollkette unversehrt, :count Einträge.', $chain['lines']) }}
             @else
-                <flux:icon.exclamation-triangle variant="mini" class="mt-1 size-5 shrink-0" aria-hidden="true" />{{ __('Protokollkette beschädigt, :lines Einträge.', ['lines' => $chain['lines']]) }}
+                <flux:icon.exclamation-triangle variant="mini" class="mt-1 size-5 shrink-0" aria-hidden="true" />{{ trans_choice('{1} Protokollkette beschädigt, 1 Eintrag.|[0,*] Protokollkette beschädigt, :count Einträge.', $chain['lines']) }}
             @endif
         </p>
         <p class="mt-2 text-sm text-text-secondary break-all print:text-black">{{ __('Letzte Prüfsumme der Kette: :head', ['head' => $chain['head']]) }}</p>

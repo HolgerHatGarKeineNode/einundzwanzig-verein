@@ -123,7 +123,7 @@ it('prepares the event to sign with a readable summary and the server clock', fu
         ->and($answer['event']['tags'])->toBe([['election', (string) $round->election_event_id], ['round', (string) $round->id], ['vote', (string) $alice, 'yes']])
         ->and($answer['event']['content'])->toBe("Meine Stimme bei „Vorstandswahl 2027“\nWahlgang: Präsidium\nJa: Alice Ambrosius\nEnthaltung: Bob Brenner");
 
-    expect($page->instance()->prepareBallot($round->id, [])['event']['content'])->toEndWith('Leerer Stimmzettel');
+    expect($page->instance()->prepareBallot($round->id, [])['event']['content'])->toEndWith("\nEnthaltung (leer)");
 });
 
 it('refuses to prepare a ballot that does not fit the rule', function () {
@@ -234,6 +234,11 @@ it('tells the member in German why a vote was refused', function (ElectionBallot
         ElectionBallotRefusal::WrongRound => signedElectionVote($round, $member, [], ['tags' => [['election', (string) $round->election_event_id], ['round', '999999']]]),
         ElectionBallotRefusal::OutsideOpenPeriod => signedElectionVote($round, $member, [], ['created_at' => now()->subHours(3)->getTimestamp()]),
         ElectionBallotRefusal::InvalidChoices => signedElectionVote($round, $member, [999999 => 'for']),
+        ElectionBallotRefusal::MissingNonce => (function () use ($round, $member, $now): array {
+            $template = VoteEvent::template($round, [], $now);
+
+            return EventSigning::sign(electionSecretFor($member), $template['kind'], $template['tags'], $template['content'], $template['created_at']);
+        })(),
         ElectionBallotRefusal::TooManyAttempts => (function () use ($round, $member): array {
             for ($i = 0; $i < CastBallot::MAX_ATTEMPTS; $i++) {
                 RateLimiter::hit('election-cast:'.$member->getKey(), CastBallot::DECAY_SECONDS);
@@ -254,6 +259,7 @@ it('tells the member in German why a vote was refused', function (ElectionBallot
     'wrong round' => [ElectionBallotRefusal::WrongRound],
     'outside the open period' => [ElectionBallotRefusal::OutsideOpenPeriod],
     'invalid choices' => [ElectionBallotRefusal::InvalidChoices],
+    'missing nonce' => [ElectionBallotRefusal::MissingNonce],
     'too many attempts' => [ElectionBallotRefusal::TooManyAttempts],
 ]);
 
@@ -368,7 +374,7 @@ it('shows the result only after the round is sealed, as counts without voters', 
 
     $page = ballotPage($voters[0])
         ->assertSee('Gewählt ist Alice Ambrosius.')
-        ->assertSee('3 Stimmzettel abgegeben, davon 1 leer.')
+        ->assertSee('3 Stimmzettel abgegeben, davon 1 Enthaltung (leer).')
         ->assertSee('Deine Stimme ist dabei.')
         ->assertSee('Zustand nach der Wahl')
         ->assertDontSee('Wählerin Xenia')
@@ -538,4 +544,118 @@ it('offers the ballot of a second run-off and counts its winner in the result', 
 
     expect(ballotPage($voters[0])->instance()->outcome)
         ->toBe([['title' => 'Präsidium', 'seats' => 1, 'names' => ['Alice Ambrosius'], 'annulled' => false, 'open' => 0]]);
+});
+
+it('tells an unpaid member off the roll that paying now adds them, and a paid one whom to ask', function () {
+    $round = namedDraftRound();
+    app(OpenRound::class)->handle($round);
+    $lateComer = electionVoter();
+    $unpaid = EinundzwanzigPleb::factory()->active()->create();
+
+    ballotPage($unpaid)
+        ->assertSee('Wer den Beitrag bezahlt, solange der Wahlgang offen ist, kommt automatisch dazu.')
+        ->assertSee('Jetzt Beitrag bezahlen')
+        ->assertSee(route('association.profile', ['from' => 'election']), false)
+        ->assertDontSee('Melde dich im Call beim Vorstand');
+
+    ballotPage($lateComer)
+        ->assertSee('oder seinen Beitrag bezahlt, solange er offen ist. Melde dich im Call beim Vorstand, wenn das nicht stimmt.')
+        ->assertDontSee('Jetzt Beitrag bezahlen');
+});
+
+it('names the crosses in the legend, announces the counter and shows a run-off title once', function () {
+    $round = namedDraftRound(['Alice Ambrosius', 'Bob Brenner', 'Carla Conrad'], ElectionCountingRule::MostVotes, 2);
+    [$board] = electionBoard(1);
+    $voters = [electionVoter(), electionVoter()];
+    app(OpenRound::class)->handle($round);
+
+    $page = ballotPage($voters[0])
+        ->assertSeeHtml('<legend class="sr-only">Stimmzettel: Präsidium, höchstens 2 Kreuze</legend>')
+        ->assertSeeHtml('aria-live="polite" x-text="summaryLine()"');
+
+    // Two of three tie for the second seat: a run-off follows.
+    $ids = $round->candidates()->orderBy('id')->pluck('id')->all();
+    castElectionBallot($round, $voters[0], [$ids[0] => 'for', $ids[1] => 'for']);
+    castElectionBallot($round, $voters[1], [$ids[0] => 'for', $ids[2] => 'for']);
+    $runOff = app(OpenRound::class)->handle(app(CreateRunOff::class)->handle(app(CloseRound::class)->handle($round), $board));
+
+    expect($runOff->title)->toBe('Stichwahl Präsidium');
+
+    ballotPage($voters[0])
+        ->assertSee('Stichwahl Präsidium')
+        ->assertDontSee('Stichwahl: Stichwahl');
+});
+
+it('explains on the review that no screen shows who voted how, without promising anonymity', function () {
+    $round = namedDraftRound();
+    $member = electionVoter();
+    app(OpenRound::class)->handle($round);
+
+    ballotPage($member)
+        ->assertSee('Keine Seite des Portals zeigt, wer wie gewählt hat, auch nicht dem Vorstand.')
+        ->assertSee('Gespeichert wird deine Stimme signiert beim Verein')
+        ->assertDontSee('Die Stimme geht nur an den Verein')
+        ->assertDontSee('anonym');
+});
+
+it('carries the German signer help on the ballot, with the nsec warning, before any vendor dialog', function () {
+    $round = namedDraftRound();
+    $member = electionVoter();
+    app(OpenRound::class)->handle($round);
+
+    ballotPage($member)
+        ->assertSee('Noch kein Nostr-Signer?')
+        ->assertSee('Gib nie deinen nsec in eine Webseite ein')
+        ->assertSee('Signer-App verbinden')
+        ->assertDontSee('Connect with Nostr')
+        ->assertSee('Dein Signer hat nach einer Minute nicht geantwortet.');
+});
+
+it('explains the vote id and moves the focus to the receipt right after the cast', function () {
+    $round = namedDraftRound();
+    $member = electionVoter();
+    app(OpenRound::class)->handle($round);
+    $page = ballotPage($member);
+
+    $page->call('castBallot', $round->id, signedElectionVote($round, $member, [candidateIdOf($round, 'Alice Ambrosius') => 'for']))
+        ->assertSee('Sie ist der Fingerabdruck deiner signierten Stimme')
+        ->assertSeeHtml('$refs.receipt.focus(');
+
+    // Coming back later is no fresh cast: no jump.
+    ballotPage($member)
+        ->assertSee('Du hast in diesem Wahlgang schon gewählt.')
+        ->assertDontSeeHtml('$refs.receipt.focus(');
+});
+
+it('adds no second full stop after a name that ends in one', function () {
+    $round = namedDraftRound(['Erik E.', 'Bob Brenner']);
+    $voter = electionVoter();
+    app(OpenRound::class)->handle($round);
+    castElectionBallot($round, $voter, [candidateIdOf($round, 'Erik E.') => 'for']);
+    app(CloseRound::class)->handle($round);
+
+    ballotPage($voter)
+        ->assertSee('Gewählt ist Erik E.')
+        ->assertDontSee('Erik E..');
+});
+
+it('says on a tied round that its run-off decided, not that the seat stays empty', function () {
+    $round = namedDraftRound(['Alice Ambrosius', 'Bob Brenner'], ElectionCountingRule::MostVotes);
+    [$board] = electionBoard(1);
+    $voters = [electionVoter(), electionVoter()];
+    $round = app(OpenRound::class)->handle($round);
+    $ids = $round->candidates()->orderBy('id')->pluck('id')->all();
+    castElectionBallot($round, $voters[0], [$ids[0] => 'for']);
+    castElectionBallot($round, $voters[1], [$ids[1] => 'for']);
+    $runOff = app(OpenRound::class)->handle(app(CreateRunOff::class)->handle(app(CloseRound::class)->handle($round), $board));
+
+    ballotPage($voters[0])->assertSee('Dazu gibt es eine Stichwahl, sie steht darunter.');
+
+    castElectionBallot($runOff, $voters[0], [$runOff->candidates()->orderBy('id')->first()->id => 'for']);
+    app(CloseRound::class)->handle($runOff);
+
+    ballotPage($voters[0])
+        ->assertSee('Gleichstand um 1 Sitz zwischen Alice Ambrosius, Bob Brenner.')
+        ->assertSee('Entschieden hat die Stichwahl darunter.')
+        ->assertDontSee('Wie es weitergeht, sagt der Vorstand im Call.');
 });

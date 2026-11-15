@@ -124,7 +124,7 @@ class SendDirectMessage implements ShouldQueue
         $recipient = $delivery->recipient;
 
         if ($recipient->isErased()) {
-            $this->finish($delivery, DmDeliveryStatus::Failed, self::ERASED);
+            $this->finish($delivery, DmDeliveryStatus::NotSent, self::ERASED);
 
             return;
         }
@@ -140,17 +140,17 @@ class SendDirectMessage implements ShouldQueue
         try {
             $wrap = $this->storedOrNewWrap($delivery, $recipient, $signer, $text);
         } catch (NotificationKeyUnavailable $exception) {
-            $this->finish($delivery, DmDeliveryStatus::Failed, $exception->getMessage());
+            $this->finish($delivery, DmDeliveryStatus::NoSenderKey, $exception->getMessage());
 
             throw $exception;
         } catch (DirectMessageNotBuildable|DirectMessageTextInvalid $exception) {
-            $this->finish($delivery, DmDeliveryStatus::Failed, $exception->getMessage());
+            $this->finish($delivery, DmDeliveryStatus::NotSent, $exception->getMessage());
 
             return;
         }
 
         if ($wrap === null) {
-            $this->finish($delivery, DmDeliveryStatus::Failed, self::ERASED);
+            $this->finish($delivery, DmDeliveryStatus::NotSent, self::ERASED);
 
             return;
         }
@@ -169,7 +169,7 @@ class SendDirectMessage implements ShouldQueue
                 $result = $transport->publish($relayUrl, $wrap);
             } catch (NotificationKeyUnavailable $exception) {
                 $this->recordRelay($delivery, $relayUrl, RelayPublishResult::failed($exception->getMessage()));
-                $this->finish($delivery, DmDeliveryStatus::Failed, $exception->getMessage());
+                $this->finish($delivery, DmDeliveryStatus::NoSenderKey, $exception->getMessage());
 
                 throw $exception;
             } catch (Throwable $exception) {
@@ -250,7 +250,7 @@ class SendDirectMessage implements ShouldQueue
         return DmDelivery::query()
             ->whereKey($this->deliveryId)
             ->where(function ($query) use ($now): void {
-                $query->whereIn('status', [DmDeliveryStatus::Pending->value, DmDeliveryStatus::Failed->value])
+                $query->whereIn('status', DmDeliveryStatus::claimableValues())
                     ->orWhere(fn ($query) => $query
                         ->where('status', DmDeliveryStatus::Claimed->value)
                         ->where('claimed_at', '<', $now->copy()->subSeconds(self::CLAIM_EXPIRES_AFTER_SECONDS)));

@@ -24,6 +24,8 @@ final class DirectMessageInbox
         DmDeliveryStatus::Sent->value,
         DmDeliveryStatus::NoInbox->value,
         DmDeliveryStatus::Failed->value,
+        DmDeliveryStatus::NoSenderKey->value,
+        DmDeliveryStatus::NotSent->value,
     ];
 
     public function __construct(private readonly DirectMessageText $text) {}

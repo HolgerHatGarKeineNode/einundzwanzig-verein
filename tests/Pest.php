@@ -3,6 +3,7 @@
 use App\Http\Middleware\ThrottleApiV1;
 use App\Models\EinundzwanzigPleb;
 use App\Support\ApiIdentity;
+use App\Support\NostrAuth;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Factory as HttpClientFactory;
 use Illuminate\Http\Request;
@@ -263,11 +264,13 @@ function testPrivateKey(): string
  * that has to reach the state "logged in the way a real browser does".
  *
  * Pass `$privkey` to sign a second, different challenge with the same identity —
- * that is what a returning member's browser does on the next login.
+ * that is what a returning member's browser does on the next login. Pass
+ * `$tags` to replace the default `challenge` + `u` pair, e.g. to sign the
+ * NIP-42 relay AUTH form of the same challenge.
  *
  * @return array{event: array<string, mixed>, pubkey: string, privkey: string}
  */
-function makeSignedLoginEvent(string $challenge, ?int $createdAt = null, ?string $privkey = null): array
+function makeSignedLoginEvent(string $challenge, ?int $createdAt = null, ?string $privkey = null, ?array $tags = null): array
 {
     $key = new Key;
     $privkey ??= testPrivateKey();
@@ -276,7 +279,7 @@ function makeSignedLoginEvent(string $challenge, ?int $createdAt = null, ?string
     $event = new Event;
     $event->setKind(22242);
     $event->setCreatedAt($createdAt ?? time());
-    $event->setTags([['challenge', $challenge]]);
+    $event->setTags($tags ?? [['challenge', $challenge], ['u', NostrAuth::loginUrl()]]);
     $event->setContent('');
 
     (new Sign)->signEvent($event, $privkey);

@@ -14,9 +14,16 @@
         ElectionCountingRule::MostVotes => trans_choice('Kreuze höchstens :count Person an. Ohne Kreuz gibst du den Stimmzettel leer ab.|Kreuze höchstens :count Personen an. Ohne Kreuz gibst du den Stimmzettel leer ab.', $max, ['count' => $max]),
         ElectionCountingRule::YesNoPerCandidate => __('Kreuze bei jeder Person Ja, Nein oder Enthaltung an. Ohne Kreuz zählt es als Enthaltung.'),
     };
+    // The legend is what a screen reader names the group by: the office and how many crosses it takes.
+    $legend = match ($rule) {
+        ElectionCountingRule::SingleMajority => __('Stimmzettel: :office, ein Kreuz', ['office' => $round->title]),
+        ElectionCountingRule::MostVotes => trans_choice('Stimmzettel: :office, höchstens :count Kreuz|Stimmzettel: :office, höchstens :count Kreuze', $max, ['office' => $round->title, 'count' => $max]),
+        ElectionCountingRule::YesNoPerCandidate => __('Stimmzettel: :office, je Person Ja, Nein oder Enthaltung', ['office' => $round->title]),
+    };
     $messages = [
         'tooMany' => trans_choice('Du kannst höchstens :count Person ankreuzen. Nimm erst ein Kreuz weg.|Du kannst höchstens :count Personen ankreuzen. Nimm erst ein Kreuz weg.', $max, ['count' => $max]),
-        'noSigner' => __('Kein Nostr-Signer gefunden. Installiere eine Browser-Erweiterung wie Alby oder nos2x, oder verbinde über den Knopf „Connect with Nostr“ unten eine Signer-App. Deine Auswahl bleibt stehen.'),
+        'noSigner' => __('Auf diesem Gerät ist noch kein Nostr-Signer eingerichtet. Deine Stimme ist nicht abgegeben, deine Auswahl bleibt stehen. So bekommst du einen:'),
+        'signerTimeout' => __('Dein Signer hat nach einer Minute nicht geantwortet. Deine Stimme ist nicht abgegeben, deine Auswahl bleibt stehen. Öffne deinen Signer und wähle noch einmal „Signieren und abgeben“.'),
         'cancelled' => __('Nicht signiert: Du hast im Signer abgebrochen, oder er hat nicht geantwortet. Deine Stimme ist nicht abgegeben. Du kannst es noch einmal versuchen.'),
         'otherAccount' => __('Dein Signer gehört zu einem anderen Nostr-Konto als dein Login. Wechsle im Signer auf das Konto, mit dem du angemeldet bist, und signiere noch einmal. Deine Stimme ist nicht abgegeben.'),
         'lineNone' => __('Noch kein Kreuz: Das zählt als Enthaltung bei allen.'),
@@ -39,10 +46,11 @@
     {{-- Step 1: fill in --}}
     <form x-show="step === 'fill'" x-on:submit.prevent="review()" novalidate>
         <fieldset x-ref="sheet" tabindex="-1" class="ballot-sheet min-w-0 rounded-md bg-paper text-ink shadow-[0_1px_0_rgb(255_255_255/0.6)_inset] {{ $sheetFocus }}">
-            <legend class="sr-only">{{ __('Stimmzettel: :office', ['office' => $round->title]) }}</legend>
+            <legend class="sr-only">{{ $legend }}</legend>
             <div class="border-b-2 border-ink px-4 pb-3 pt-4 sm:px-6">
                 <p class="text-xl font-bold leading-tight">{{ __('Stimmzettel') }}</p>
-                <p class="mt-1 text-base leading-normal">{{ $round->parent_round_id ? __('Stichwahl: :office', ['office' => $round->title]) : $round->title }}</p>
+                {{-- A run-off's title already reads "Stichwahl …" (CreateRunOff). --}}
+                <p class="mt-1 break-words text-base leading-normal">{{ $round->title }}</p>
                 <p class="mt-2 text-sm leading-normal text-ink-soft">{{ $instruction }}</p>
             </div>
 
@@ -95,10 +103,11 @@
         <p x-show="notice" x-text="notice" x-cloak role="status" class="mt-3 text-sm leading-normal text-warning"></p>
 
         <div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <flux:button type="submit" variant="primary" icon="eye" class="min-h-11 w-full sm:w-auto" x-bind:disabled="busy">
+            {{-- aria-disabled, not disabled: a disabled button drops the focus to BODY. --}}
+            <flux:button type="submit" variant="primary" icon="eye" class="min-h-11 w-full sm:w-auto" x-bind:aria-disabled="busy ? 'true' : 'false'">
                 {{ __('Prüfen') }}
             </flux:button>
-            <p class="text-sm text-text-secondary" x-text="summaryLine()"></p>
+            <p class="text-sm text-text-secondary" aria-live="polite" x-text="summaryLine()"></p>
         </div>
     </form>
 
@@ -107,7 +116,12 @@
         <div class="rounded-md bg-paper px-4 py-4 text-ink sm:px-6">
             <h5 x-ref="reviewHeading" tabindex="-1" class="text-xl font-bold leading-tight {{ $sheetFocus }}">{{ __('Prüfe deine Stimme') }}</h5>
             <p class="mt-2 max-w-prose text-sm leading-normal text-ink-soft">
-                {{ __('Genau diesen Text signierst du mit deinem Nostr-Schlüssel. Die Stimme geht nur an den Verein, nicht an Relays. Abgegeben ist abgegeben: Ändern geht danach nicht mehr.') }}
+                {{ __('Genau diesen Text signierst du mit deinem Nostr-Schlüssel. Abgegeben ist abgegeben: Ändern geht danach nicht mehr.') }}
+            </p>
+            {{-- Honest about secrecy: no screen links a member to a choice, but the
+                 signed vote is stored, so nothing here promises anonymity. --}}
+            <p class="mt-2 max-w-prose text-sm leading-normal text-ink-soft">
+                {{ __('Keine Seite des Portals zeigt, wer wie gewählt hat, auch nicht dem Vorstand. Gespeichert wird deine Stimme signiert beim Verein, auf Nostr-Relays landet sie nicht.') }}
             </p>
             <pre class="mt-4 whitespace-pre-wrap break-words border-l-4 border-ink py-1 pl-4 font-sans text-base font-bold leading-relaxed" x-text="content"></pre>
         </div>
@@ -142,5 +156,10 @@
                 <span x-text="error"></span>
             </div>
         </template>
+    </div>
+
+    {{-- No signer on this device: the German help, before any vendor dialog. --}}
+    <div x-show="needsSigner" x-cloak class="mt-3">
+        <x-election-signer-help :id="'ballot-signer-help-'.$round->id" connect="sign(true)" />
     </div>
 </div>

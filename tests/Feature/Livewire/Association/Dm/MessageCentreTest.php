@@ -13,8 +13,12 @@ use App\Models\DmSchedule;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Services\Dm\DirectMessagePause;
+use App\Services\Dm\StartDirectMessageRun;
 use App\Support\NostrAuth;
+use Illuminate\Contracts\Cache\Lock;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Attributes\Computed;
 use Livewire\Features\SupportTesting\Testable;
@@ -211,6 +215,26 @@ it('starts the confirmed sending with the count of the dry run and stores the au
         ->and($run->election_event_id)->toBe($election->id);
     $page->assertSee('1 Mitglied, das für die Wahl „Vorstandswahl 2027“ stimmberechtigt ist');
     Queue::assertPushed(DispatchBulkDirectMessages::class, 1);
+});
+
+it('says another sending is starting when the start lock stays taken, and writes nothing', function () {
+    Queue::fake();
+    messageCentreBoard(2);
+    $taken = Mockery::mock(Lock::class);
+    $taken->shouldReceive('block')->andThrow(new LockTimeoutException);
+    Cache::partialMock()->shouldReceive('lock')->with(StartDirectMessageRun::START_LOCK, Mockery::any())->andReturn($taken);
+
+    messageCentre()
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('text', 'Hallo {name}, eins.')
+        ->call('runDryRun')
+        ->call('confirmSend')
+        ->assertDispatched('toast-show', fn (string $event, array $params): bool => ($params['dataset']['variant'] ?? null) === 'danger'
+            && $params['slots']['text'] === 'Gerade startet ein anderer Versand. Es wurde nichts gesendet. Versuche es in einer Minute noch einmal.');
+
+    expect(DmRun::query()->count())->toBe(0)->and(DmMessage::query()->count())->toBe(0);
+    Queue::assertNothingPushed();
 });
 
 it('refuses to send when the draft changed after the dry run', function () {
@@ -416,6 +440,29 @@ it('shows the state per recipient of a run, with the relays that took it', funct
         ->assertSee('0 von 1 Relays haben angenommen');
 });
 
+/*
+ * Jury run 1, L1 / board F9: a delivery no relay was tried for reads as what
+ * it is, in red, counts as failed and is offered for the re-send.
+ */
+it('shows a delivery that was not sent for want of a key as such, not as refused by relays', function () {
+    messageCentreBoard();
+    $anna = EinundzwanzigPleb::factory()->active()->create();
+    $anna->profile()->create(['pubkey' => $anna->pubkey, 'name' => 'Anna']);
+    $run = DmMessage::factory()->create()->freezeRun([$anna], DmAudience::Members);
+    $delivery = DmDelivery::query()->create(['dm_run_id' => $run->id, 'einundzwanzig_pleb_id' => $anna->id, 'status' => DmDeliveryStatus::NoSenderKey]);
+
+    $page = messageCentre()
+        ->assertSee('1 fehlgeschlagen')
+        ->call('toggleRun', $run->id)
+        ->assertSee('Nicht gesendet: Absenderschlüssel fehlt oder ist ungültig')
+        ->assertDontSee('Kein Relay hat angenommen')
+        ->assertSee('Fehlgeschlagene erneut senden (1)');
+
+    preg_match('/<li[^>]*data-test="delivery-'.$delivery->id.'".*?<\/li>/s', $page->html(), $row);
+
+    expect($row[0] ?? '')->toContain('text-danger');
+});
+
 it('adds a planned row in German time, says to how many it would go today, and removes it again', function () {
     Queue::fake();
     $this->travelTo(Carbon::parse('2027-02-01 08:00:00'));
@@ -510,4 +557,40 @@ it('never claims more than the relays told: no state label says read or delivere
             ->not->toContain('read')
             ->not->toContain('delivered');
     }
+});
+
+/*
+ * Design Q23 on the page: the second sending of the same message to the same
+ * audience within the lock counts the members as skipped, creates no
+ * delivery, and the history says „übersprungen“.
+ */
+it('shows a repeated sending within the lock as skipped and creates no new delivery', function () {
+    Queue::fake();
+    messageCentreBoard(2);
+
+    $send = fn (): Testable => messageCentre()
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('audience', DmAudience::Members->value)
+        ->set('text', 'Hallo {name}, morgen ist Wahl.')
+        ->call('runDryRun');
+
+    $send()->call('confirmSend')->assertSet('tab', 'history');
+    $first = DmRun::query()->sole();
+    (new DispatchBulkDirectMessages($first->id))->handle();
+
+    $page = $send()
+        ->assertSee('Übersprungen: 3 Mitglieder, sie haben diese Nachricht für diese Zielgruppe in den letzten 24 Stunden schon bekommen.')
+        ->assertSee('Alle schon erreicht, nichts zu senden');
+
+    expect($page->get('dryRun')['count'])->toBe(0)
+        ->and(DmDelivery::query()->count())->toBe(3);
+
+    // A start that slips through anyway (an older page, a second board member) adds nobody.
+    $again = app(StartDirectMessageRun::class)->handle(tap($first->message->replicate())->save(), DmAudience::Members);
+    (new DispatchBulkDirectMessages($again->id))->handle();
+
+    expect(DmDelivery::query()->count())->toBe(3);
+
+    messageCentre()->call('showTab', 'history')->assertSee('3 übersprungen');
 });

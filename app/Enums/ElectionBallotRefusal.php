@@ -35,6 +35,9 @@ enum ElectionBallotRefusal: string
     /** Signed outside the round's open period. */
     case OutsideOpenPeriod = 'outside_open_period';
 
+    /** No single random `nonce` tag of at least 128 bits (`VoteEvent`). */
+    case MissingNonce = 'missing_nonce';
+
     public function label(): string
     {
         return match ($this) {
@@ -48,6 +51,7 @@ enum ElectionBallotRefusal: string
             self::WrongKind => __('Das signierte Ereignis ist keine Stimme.'),
             self::WrongRound => __('Diese Stimme wurde für einen anderen Wahlgang signiert.'),
             self::OutsideOpenPeriod => __('Diese Stimme wurde außerhalb der Öffnungszeit des Wahlgangs signiert. Bitte prüfe die Uhrzeit deines Geräts und signiere noch einmal.'),
+            self::MissingNonce => __('Deiner Stimme fehlt der Zufallswert, der sie unkenntlich macht. Bitte lade die Seite neu und signiere noch einmal.'),
         };
     }
 }

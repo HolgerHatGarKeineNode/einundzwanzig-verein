@@ -9,6 +9,7 @@ use App\Services\Nostr\RelayFetchResult;
 use App\Services\Nostr\RelayPublishResult;
 use App\Services\Nostr\RelayTransport;
 use Carbon\CarbonImmutable;
+use Illuminate\Console\Scheduling\Schedule;
 use swentel\nostr\Key\Key;
 use Tests\Support\FakeRelayTransport;
 
@@ -300,4 +301,17 @@ it('deletes the inbox relays when a member is erased', function () {
     app(MembershipService::class)->erasePersonalData($alice);
 
     expect(PlebDmRelay::query()->pluck('einundzwanzig_pleb_id')->all())->toBe([$bob->id]);
+});
+
+/*
+ * Jury run 1, M1: the sync ran only by hand. A member who publishes or
+ * changes a 10050 list afterwards stays on stale relays or `no_inbox`.
+ */
+it('is scheduled daily without overlapping', function () {
+    $events = collect(app(Schedule::class)->events())
+        ->filter(fn ($event): bool => str_contains((string) $event->command, 'nostr:sync-dm-relays'));
+
+    expect($events)->toHaveCount(1)
+        ->and($events->first()->expression)->toBe('45 0 * * *')
+        ->and($events->first()->withoutOverlapping)->toBeTrue();
 });

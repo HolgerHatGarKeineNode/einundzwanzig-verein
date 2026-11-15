@@ -3,6 +3,7 @@
 use App\Enums\ElectionCountingRule;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
+use App\Models\Election;
 use App\Models\ElectionAuditEntry;
 use App\Models\ElectionManifest;
 use App\Models\ElectionRound;
@@ -11,6 +12,7 @@ use App\Services\Election\ElectionAuditLog;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\OpenRound;
 use App\Services\Election\RoundManifest;
+use App\Services\MembershipService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -333,6 +335,148 @@ it('names a vote whose member no longer has the signing key', function () {
     [$round, $events] = manifestRound();
     $vote = DB::table('election_votes')->where('event_id', $events[0]['id'])->sole();
     DB::table('einundzwanzig_plebs')->where('id', $vote->einundzwanzig_pleb_id)->update(['pubkey' => str_repeat('c', 64)]);
+
+    [$status, $output] = verifyRound($round);
+
+    expect($status)->toBe(1)
+        ->and($output)->toContain('FAIL vote '.$vote->id.' event '.$events[0]['id'].': foreign_signer');
+});
+
+/*
+ * Jury run 1, A: `election:verify` copied the anchored audit head into the
+ * rebuilt manifest and never looked at the audit log itself. A line written
+ * before the seal could be edited, or deleted with the rest re-hashed, and
+ * the command still printed OK.
+ */
+
+/**
+ * A round opened, voted in and closed early through the stewardship, so the
+ * audit log holds `round_opened` (the anchor) and `round_closed_early`.
+ *
+ * @return array{0: ElectionRound, 1: string}
+ */
+function stewardedManifestRound(): array
+{
+    [$board] = electionBoard(1);
+    $voter = electionVoter();
+    $round = app(ElectionStewardship::class)->open(draftElectionRound(), $board);
+    castElectionBallot($round, $voter, [$round->candidates()->orderBy('id')->value('id') => 'for']);
+    app(ElectionStewardship::class)->closeEarly($round, $board, 'Alle haben abgestimmt');
+
+    $anchor = json_decode(ElectionManifest::query()->where('election_round_id', $round->id)->value('body'), true)['audit_head_hash'];
+
+    return [$round->fresh(), $anchor];
+}
+
+it('fails verification when an audit line before the seal is edited in place', function () {
+    [$round, $anchor] = stewardedManifestRound();
+    $opened = ElectionAuditEntry::query()->where('election_event_id', $round->election_event_id)->where('sequence', 1)->sole();
+    DB::table('election_audit_entries')->where('id', $opened->id)->update(['details' => json_encode(['reason' => 'nachträglich'])]);
+
+    [$status, $output] = verifyRound($round);
+
+    expect($opened->hash)->toBe($anchor)
+        ->and(app(ElectionAuditLog::class)->verify($round->election))->toBeFalse()
+        ->and($status)->toBe(1)
+        ->and($output)->toContain('MISMATCH: the audit log of this election no longer holds its hash chain.')
+        ->and($output)->not->toContain('OK round');
+});
+
+it('fails verification when an audit line before the seal is deleted and the rest re-hashed', function () {
+    [$round, $anchor] = stewardedManifestRound();
+    $log = app(ElectionAuditLog::class);
+    $attributesOf = (new ReflectionMethod($log, 'attributesOf'))->getClosure($log);
+    $hashOf = (new ReflectionMethod($log, 'hashOf'))->getClosure($log);
+
+    DB::table('election_audit_entries')->where('election_event_id', $round->election_event_id)->where('sequence', 1)->delete();
+    $previous = ElectionAuditLog::GENESIS;
+    foreach (ElectionAuditEntry::query()->where('election_event_id', $round->election_event_id)->orderBy('sequence')->get() as $entry) {
+        DB::table('election_audit_entries')->where('id', $entry->id)->update(['sequence' => $entry->sequence - 1, 'previous_hash' => $previous]);
+        $rewritten = $entry->fresh();
+        $previous = $hashOf($attributesOf($rewritten));
+        DB::table('election_audit_entries')->where('id', $entry->id)->update(['hash' => $previous]);
+    }
+
+    [$status, $output] = verifyRound($round);
+
+    expect($log->verify($round->election))->toBeTrue()
+        ->and(ElectionAuditEntry::query()->where('hash', $anchor)->exists())->toBeFalse()
+        ->and($status)->toBe(1)
+        ->and($output)->toContain('MISMATCH: the audit log head the manifest anchored at the seal is no longer a line of the audit log.')
+        ->and($output)->not->toContain('OK round');
+});
+
+/*
+ * Gate A (r1): the anchor must be a line of THIS election's log, and a
+ * manifest without one is not anchored. Mutations that must turn these red:
+ * drop the election scope of the anchor lookup; treat a missing anchor as
+ * found (`! is_string($anchor) || (`).
+ */
+it('fails verification when the anchored audit head is only a line of another election\'s log', function () {
+    [$round, $anchor] = stewardedManifestRound();
+    $log = app(ElectionAuditLog::class);
+    $attributesOf = (new ReflectionMethod($log, 'attributesOf'))->getClosure($log);
+    $hashOf = (new ReflectionMethod($log, 'hashOf'))->getClosure($log);
+
+    DB::table('election_audit_entries')->where('election_event_id', $round->election_event_id)->where('sequence', 1)->delete();
+    $previous = ElectionAuditLog::GENESIS;
+    foreach (ElectionAuditEntry::query()->where('election_event_id', $round->election_event_id)->orderBy('sequence')->get() as $entry) {
+        DB::table('election_audit_entries')->where('id', $entry->id)->update(['sequence' => $entry->sequence - 1, 'previous_hash' => $previous]);
+        $previous = $hashOf($attributesOf($entry->fresh()));
+        DB::table('election_audit_entries')->where('id', $entry->id)->update(['hash' => $previous]);
+    }
+    $other = Election::factory()->create();
+    DB::table('election_audit_entries')->insert(['election_event_id' => $other->id, 'sequence' => 1, 'action' => 'round_opened', 'previous_hash' => ElectionAuditLog::GENESIS, 'hash' => $anchor, 'created_at' => now()]);
+
+    [$status, $output] = verifyRound($round);
+
+    expect($log->verify($round->election))->toBeTrue()
+        ->and(ElectionAuditEntry::query()->where('hash', $anchor)->value('election_event_id'))->toBe($other->id)
+        ->and($status)->toBe(1)
+        ->and($output)->toContain('MISMATCH: the audit log head the manifest anchored at the seal is no longer a line of the audit log.')
+        ->and($output)->not->toContain('OK round');
+});
+
+it('fails verification when the manifest carries no audit anchor', function () {
+    [$round] = stewardedManifestRound();
+    $body = app(RoundManifest::class)->body($round, null);
+    ElectionManifest::query()->where('election_round_id', $round->id)->update(['body' => $body, 'hash' => RoundManifest::hash($body)]);
+
+    [$status, $output] = verifyRound($round);
+
+    expect(json_decode($body, true)['audit_head_hash'])->toBeNull()
+        ->and($status)->toBe(1)
+        ->and($output)->toContain('MISMATCH: the audit log head the manifest anchored at the seal is no longer a line of the audit log.')
+        ->and($output)->not->toContain('OK round');
+});
+
+/*
+ * Jury run 1, C: erasing one's data tombstones the member pubkey. The
+ * verifier compared it with the vote's pubkey, reported `foreign_signer`,
+ * dropped the vote from the recount and the round turned red for good.
+ */
+it('verifies a sealed round after a voter erased their data, against the key that signed the vote', function () {
+    [$round, $events] = manifestRound();
+    $vote = DB::table('election_votes')->where('event_id', $events[0]['id'])->sole();
+    $voter = EinundzwanzigPleb::query()->findOrFail($vote->einundzwanzig_pleb_id);
+
+    app(MembershipService::class)->erasePersonalData($voter);
+
+    [$status, $output] = verifyRound($round);
+
+    expect($voter->fresh()->isErased())->toBeTrue()
+        ->and(DB::table('election_votes')->where('id', $vote->id)->value('pubkey'))->toBe($events[0]['pubkey'])
+        ->and($status)->toBe(0)
+        ->and($output)->not->toContain('FAIL')
+        ->and($output)->not->toContain('MISMATCH')
+        ->and($output)->toContain('Note: 1 vote(s) by members who erased their data, checked against the key that signed them.');
+});
+
+it('still names a forged vote of a voter who erased their data', function () {
+    [$round, $events] = manifestRound();
+    $vote = DB::table('election_votes')->where('event_id', $events[0]['id'])->sole();
+    app(MembershipService::class)->erasePersonalData(EinundzwanzigPleb::query()->findOrFail($vote->einundzwanzig_pleb_id));
+    DB::table('election_votes')->where('id', $vote->id)->update(['pubkey' => str_repeat('c', 64)]);
 
     [$status, $output] = verifyRound($round);
 

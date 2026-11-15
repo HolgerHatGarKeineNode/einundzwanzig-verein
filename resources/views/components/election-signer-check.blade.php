@@ -10,22 +10,29 @@
          class="rounded-lg border border-border-default bg-bg-surface p-5"
          x-data="{
              state: 'idle',
-             async probe() {
+             attempt: 0,
+             async probe(force = false) {
+                 const signer = window.nostrSigner;
+                 if (! force && signer.signerKind() === 'none') {
+                     this.state = 'missing';
+                     $nextTick(() => $refs.help?.focus());
+                     return;
+                 }
+                 const attempt = ++this.attempt;
                  this.state = 'busy';
                  try {
-                     if (! window.nostr || typeof window.nostr.signEvent !== 'function') {
-                         this.state = 'missing';
-                         return;
-                     }
-                     const key = await window.nostr.getPublicKey();
+                     const key = await signer.withTimeout(window.nostr.getPublicKey(), 60000);
+                     if (attempt !== this.attempt) return;
                      if (@js($pubkey) && key !== @js($pubkey)) {
                          this.state = 'other';
                          return;
                      }
-                     const signed = await window.nostr.signEvent({ kind: 22242, created_at: Math.floor(Date.now() / 1000), tags: [['challenge', 'probe-vereinswahl']], content: '' });
+                     const signed = await signer.withTimeout(window.nostr.signEvent({ kind: 22242, created_at: Math.floor(Date.now() / 1000), tags: [['challenge', 'probe-vereinswahl']], content: '' }), 60000);
+                     if (attempt !== this.attempt) return;
                      this.state = signed && signed.sig ? 'ok' : 'failed';
                  } catch (error) {
-                     this.state = 'failed';
+                     if (attempt !== this.attempt) return;
+                     this.state = error?.message === 'timeout' ? 'timeout' : 'failed';
                  }
              },
          }">
@@ -48,21 +55,21 @@
             <flux:icon.exclamation-triangle variant="mini" class="mt-0.5 shrink-0 text-orange-500" aria-hidden="true" />
             <span>{{ __('Dein Signer gehört zu einem anderen Konto als dein Login. Wechsle im Signer auf das Konto, mit dem du angemeldet bist.') }}</span>
         </p>
-        <p x-show="state === 'missing' || state === 'failed'" x-cloak class="flex items-start gap-2 text-text-primary">
+        <p x-show="state === 'missing' || state === 'failed' || state === 'timeout'" x-cloak class="flex items-start gap-2 text-text-primary">
             <flux:icon.exclamation-triangle variant="mini" class="mt-0.5 shrink-0 text-orange-500" aria-hidden="true" />
-            <span x-text="state === 'missing' ? @js(__('Kein Signer gefunden.')) : @js(__('Nicht unterschrieben. Abgebrochen oder der Signer antwortet nicht.'))"></span>
+            <span x-text="{ missing: @js(__('Auf diesem Gerät ist noch kein Nostr-Signer eingerichtet. So bekommst du einen:')), timeout: @js(__('Dein Signer hat nach einer Minute nicht geantwortet. Öffne ihn, bestätige dort und probier es noch einmal.')), failed: @js(__('Nicht unterschrieben. Abgebrochen oder der Signer antwortet nicht.')) }[state] ?? ''"></span>
         </p>
     </div>
 
-    <details class="group mt-3 text-sm">
+    <div x-show="state === 'missing'" x-cloak class="mt-3">
+        <x-election-signer-help id="signer-check-help" x-ref="help" bare connect="probe(true)" />
+    </div>
+
+    <details class="group mt-3 text-sm" x-show="state !== 'missing'">
         <summary class="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md text-text-primary underline decoration-neutral-500 underline-offset-4 hover:decoration-orange-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 [&::-webkit-details-marker]:hidden">
             <flux:icon.chevron-right variant="micro" class="shrink-0 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
             {{ __('So richtest du einen Signer ein') }}
         </summary>
-        <ul class="mt-2 space-y-2 pl-6 leading-normal text-text-secondary [&>li]:list-disc">
-            <li>{{ __('Am Computer: eine Browser-Erweiterung wie Alby oder nos2x installieren und deinen Nostr-Schlüssel dort hinterlegen.') }}</li>
-            <li>{{ __('Am Telefon oder ohne Erweiterung: über den Knopf „Connect with Nostr“ unten auf der Seite eine Signer-App verbinden, zum Beispiel Amber unter Android.') }}</li>
-            <li>{{ __('Danach hier noch einmal „Signer ausprobieren“ wählen.') }}</li>
-        </ul>
+        <x-election-signer-help id="signer-check-howto" class="mt-2" bare connect="probe(true)" />
     </details>
 </section>

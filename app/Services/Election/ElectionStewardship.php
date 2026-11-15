@@ -172,6 +172,39 @@ class ElectionStewardship
     }
 
     /**
+     * Strike a first-level round that was never opened: the way out for a
+     * round nobody can stand in any more (everyone elected elsewhere,
+     * withdrawn or not approvable), which could otherwise never be opened
+     * and never be finished. It is annulled with the board's reason — void
+     * like any annulled round, never opened, and never awaiting a repeat.
+     *
+     * A run-off is not struck: annulled, it would only be proposed again
+     * (`CreateRunOff` counts annulled run-offs as none).
+     *
+     * @throws AuthorizationException
+     * @throws ElectionRoundStateException
+     */
+    public function strike(ElectionRound $round, EinundzwanzigPleb $actor, string $reason): ElectionRound
+    {
+        return DB::transaction(function () use ($round, $actor, $reason): ElectionRound {
+            $round = $this->lockedRound($round);
+
+            $this->authorizeActor($actor, 'annul', $round);
+
+            if ($round->opened_at !== null || $round->annulled_at !== null || $round->parent_round_id !== null) {
+                throw new ElectionRoundStateException('Only a first-level round that has never been opened and is not annulled can be struck.');
+            }
+
+            $round->annulled_at = now();
+            $round->save();
+
+            $this->audit->append($round->election, ElectionAuditAction::RoundAnnulled, $actor, round: $round, details: ['reason' => $reason]);
+
+            return $round;
+        });
+    }
+
+    /**
      * Annul every run-off below `$round` that is not annulled yet, deepest last,
      * each with its own audit line naming the round that took it along.
      */
@@ -261,11 +294,12 @@ class ElectionStewardship
     /**
      * Is `$round` annulled and not yet set up again? Only a round of its
      * own: an annulled run-off is set up anew by `CreateRunOff`, which
-     * counts annulled run-offs as none.
+     * counts annulled run-offs as none. A round struck before it was ever
+     * opened (`strike()`) awaits nothing.
      */
     public function awaitsRepeat(ElectionRound $round): bool
     {
-        if ($round->annulled_at === null || $round->parent_round_id !== null) {
+        if ($round->annulled_at === null || $round->opened_at === null || $round->parent_round_id !== null) {
             return false;
         }
 

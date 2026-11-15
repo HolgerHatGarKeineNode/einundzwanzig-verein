@@ -84,6 +84,24 @@ function electionSecretFor(EinundzwanzigPleb $member): string
 }
 
 /**
+ * `$tags` plus the random `nonce` tag the member's browser adds before
+ * signing (resources/js/electionBallot.js), unless one is there already.
+ *
+ * @param  array<int, mixed>  $tags
+ * @return array<int, mixed>
+ */
+function withVoteNonce(array $tags): array
+{
+    foreach ($tags as $tag) {
+        if (is_array($tag) && ($tag[0] ?? null) === 'nonce') {
+            return $tags;
+        }
+    }
+
+    return [...$tags, ['nonce', bin2hex(random_bytes(32))]];
+}
+
+/**
  * A vote event for `$selection`, signed by `$voter` now. `$overrides`
  * replaces fields of the unsigned template before signing.
  *
@@ -94,6 +112,7 @@ function electionSecretFor(EinundzwanzigPleb $member): string
 function signedElectionVote(ElectionRound $round, EinundzwanzigPleb $voter, array $selection = [], array $overrides = []): array
 {
     $template = [...VoteEvent::template($round, $selection, now()->getTimestamp()), ...$overrides];
+    $template['tags'] = withVoteNonce($template['tags']);
 
     return EventSigning::sign(electionSecretFor($voter), $template['kind'], $template['tags'], $template['content'], $template['created_at']);
 }

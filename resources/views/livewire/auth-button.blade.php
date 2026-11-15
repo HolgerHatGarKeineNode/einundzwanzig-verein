@@ -11,7 +11,14 @@ new class extends Component
     public bool $isLoggedIn = false;
 
     #[Locked]
-    public string $location = 'sidebar'; // 'sidebar' or 'navbar'
+    public string $location = 'sidebar'; // 'sidebar', 'navbar' or a page ('election')
+
+    /**
+     * The login button's text. A page that asks a guest to log in names the
+     * action plainly ("Mit Nostr anmelden"); the sidebar keeps its own.
+     */
+    #[Locked]
+    public string $label = '';
 
     #[Locked]
     public ?string $nostrChallenge = null;
@@ -41,9 +48,20 @@ new class extends Component
         return $challenge;
     }
 
+    /**
+     * Every mounted auth-button hears the browser event. Only the one whose
+     * button started the login answers it: the challenge is spent by the
+     * first verification, so a second instance would fail on the same event.
+     */
     #[On('nostrLoggedIn')]
-    public function handleNostrLoggedIn($signedEvent = null): void
+    public function handleNostrLoggedIn($signedEvent = null, ?string $location = null): void
     {
+        if ($location !== null && $location !== $this->location) {
+            $this->skipRender();
+
+            return;
+        }
+
         NostrAuth::loginWithSignedEvent($signedEvent);
 
         $this->js('window.location.reload(true);');
@@ -57,7 +75,8 @@ new class extends Component
 }
 ?>
 
-<div x-data="nostrLogin" data-nostr-challenge="{{ $nostrChallenge ?? '' }}">
+<div x-data="nostrLogin" data-nostr-challenge="{{ $nostrChallenge ?? '' }}" data-nostr-login-url="{{ \App\Support\NostrAuth::loginUrl() ?? '' }}" data-location="{{ $location }}"
+     x-on:nostr-login-start.window="if ($event.detail?.location === $root.dataset.location) openNostrLogin({ force: true })">
     @if($isLoggedIn)
         {{-- Vor dem Absenden den Klartext-Cache des Chats vom Geraet raeumen.
              Der Handler laedt dafuer NICHTS nach; ohne Chat auf der Seite ist es
@@ -74,8 +93,8 @@ new class extends Component
                      @click="openNostrLogin"
                      x-bind:disabled="nostrLoginInProgress"
                      x-bind:aria-busy="nostrLoginInProgress"
-                     class="cursor-pointer">
-            <span x-show="!nostrLoginInProgress">Mit Nostr verbinden</span>
+                     class="min-h-11 cursor-pointer">
+            <span x-show="!nostrLoginInProgress">{{ $label !== '' ? $label : 'Mit Nostr verbinden' }}</span>
             <span x-show="nostrLoginInProgress" x-cloak class="inline-flex items-center gap-2">
                 <flux:icon.arrow-path class="animate-spin size-4" aria-hidden="true"/>
                 Signiere…
@@ -95,8 +114,8 @@ new class extends Component
          x-bind:aria-busy="nostrLoginInProgress"
          aria-labelledby="nostr-login-progress-heading-{{ $location }}"
          aria-describedby="nostr-login-progress-description-{{ $location }}"
-         @keydown.window.escape="if (nostrLoginInProgress) { $event.preventDefault(); $event.stopPropagation(); }"
-         @keydown.window.tab="if (nostrLoginInProgress) { $event.preventDefault(); $event.stopPropagation(); }"
+         @keydown.window.escape="if (nostrLoginInProgress) { $event.preventDefault(); $event.stopPropagation(); cancelNostrLogin(); }"
+         @keydown.window.tab="if (nostrLoginInProgress) { $event.preventDefault(); $event.stopPropagation(); $refs.cancelLogin?.focus(); }"
          x-effect="document.body.style.overflow = nostrLoginInProgress ? 'hidden' : ''"
          class="fixed inset-0 z-[100] flex items-center justify-center bg-zinc-950/70 backdrop-blur-md">
         <div class="mx-4 w-full max-w-md rounded-2xl bg-white px-8 py-10 text-center shadow-2xl ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-800">
@@ -126,9 +145,12 @@ new class extends Component
                 Nostr-Dialog über dieser Seite. Danach geht es automatisch weiter.
             </flux:text>
 
-            <flux:text size="sm" class="mt-6 text-zinc-500 dark:text-zinc-500">
-                Schließe dieses Fenster nicht.
-            </flux:text>
+            {{-- A way out: a signer that never answers (a bunker without a
+                 reachable relay, a dialog closed without connecting) used to
+                 leave this overlay up with Escape and Tab swallowed. --}}
+            <flux:button variant="ghost" x-ref="cancelLogin" x-on:click="cancelNostrLogin()" class="mt-6 min-h-11">
+                Abbrechen
+            </flux:button>
         </div>
     </div>
 </div>
