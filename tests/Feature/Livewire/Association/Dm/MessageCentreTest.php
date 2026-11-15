@@ -594,3 +594,25 @@ it('shows a repeated sending within the lock as skipped and creates no new deliv
 
     messageCentre()->call('showTab', 'history')->assertSee('3 übersprungen');
 });
+
+/*
+ * The preview header and {name} in the text name a recipient the same way:
+ * display name before name. Mutation: the header back on
+ * MemberProposal::authorNameOf (name first) → red.
+ */
+it('names a recipient in the preview header as the text does, display name first', function () {
+    [, $members] = messageCentreBoard(1);
+    $members[0]->profile()->create(['pubkey' => $members[0]->pubkey, 'name' => 'satoshi_n', 'display_name' => 'Satoshi Nakamoto']);
+
+    messageCentre()
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('audience', DmAudience::Members->value)
+        ->set('text', 'Hallo {name}, bis Freitag.')
+        ->assertSee('An Satoshi Nakamoto, von EINUNDZWANZIG')
+        ->assertSee('Hallo Satoshi Nakamoto, bis Freitag.')
+        ->assertDontSee('An satoshi_n, von EINUNDZWANZIG')
+        // The board member has no profile: the header keeps the npub, only the text says „Mitglied“.
+        ->assertSee('Hallo Mitglied, bis Freitag.')
+        ->assertDontSee('An Mitglied, von EINUNDZWANZIG');
+});

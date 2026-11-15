@@ -127,8 +127,19 @@ final class DirectMessageText
 
     private function nameOf(EinundzwanzigPleb $recipient): string
     {
+        return $this->profileNameOf($recipient) ?? self::FALLBACK_NAME;
+    }
+
+    /**
+     * The name `{name}` is filled with: the profile's display name, else its
+     * name, cleaned and bounded. Null for an erased member or one without a
+     * usable profile name. Whoever shows a recipient next to the text (the
+     * preview header) uses this, so both say the same name.
+     */
+    public function profileNameOf(EinundzwanzigPleb $recipient): ?string
+    {
         if ($recipient->isErased()) {
-            return self::FALLBACK_NAME;
+            return null;
         }
 
         $profile = $recipient->profile;
@@ -139,7 +150,7 @@ final class DirectMessageText
         $name = trim((string) preg_replace('/[\s\p{Cc}]+/u', ' ', $name));
 
         if ($name === '') {
-            return self::FALLBACK_NAME;
+            return null;
         }
 
         return mb_substr($name, 0, self::MAX_NAME_LENGTH);
