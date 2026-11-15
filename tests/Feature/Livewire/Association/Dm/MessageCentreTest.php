@@ -416,6 +416,29 @@ it('shows the state per recipient of a run, with the relays that took it', funct
         ->assertSee('0 von 1 Relays haben angenommen');
 });
 
+/*
+ * Jury run 1, L1 / board F9: a delivery no relay was tried for reads as what
+ * it is, in red, counts as failed and is offered for the re-send.
+ */
+it('shows a delivery that was not sent for want of a key as such, not as refused by relays', function () {
+    messageCentreBoard();
+    $anna = EinundzwanzigPleb::factory()->active()->create();
+    $anna->profile()->create(['pubkey' => $anna->pubkey, 'name' => 'Anna']);
+    $run = DmMessage::factory()->create()->freezeRun([$anna], DmAudience::Members);
+    $delivery = DmDelivery::query()->create(['dm_run_id' => $run->id, 'einundzwanzig_pleb_id' => $anna->id, 'status' => DmDeliveryStatus::NoSenderKey]);
+
+    $page = messageCentre()
+        ->assertSee('1 fehlgeschlagen')
+        ->call('toggleRun', $run->id)
+        ->assertSee('Nicht gesendet: Absenderschlüssel fehlt oder ist ungültig')
+        ->assertDontSee('Kein Relay hat angenommen')
+        ->assertSee('Fehlgeschlagene erneut senden (1)');
+
+    preg_match('/<li[^>]*data-test="delivery-'.$delivery->id.'".*?<\/li>/s', $page->html(), $row);
+
+    expect($row[0] ?? '')->toContain('text-danger');
+});
+
 it('adds a planned row in German time, says to how many it would go today, and removes it again', function () {
     Queue::fake();
     $this->travelTo(Carbon::parse('2027-02-01 08:00:00'));

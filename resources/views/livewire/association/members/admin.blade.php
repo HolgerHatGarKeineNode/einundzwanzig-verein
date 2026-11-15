@@ -652,7 +652,7 @@ new class extends Component
                                     <span class="text-base font-bold text-text-primary">{{ $delivery->run?->message?->type->label() }}</span>
                                     <time datetime="{{ $delivery->created_at->toIso8601String() }}" class="text-sm text-text-tertiary">{{ $delivery->created_at->copy()->timezone('Europe/Berlin')->locale('de')->isoFormat('D. MMM YYYY, HH:mm') }}</time>
                                 </p>
-                                <p @class(['text-sm', 'text-danger' => $delivery->status === \App\Enums\DmDeliveryStatus::Failed, 'text-text-secondary' => $delivery->status !== \App\Enums\DmDeliveryStatus::Failed])>
+                                <p @class(['text-sm', 'text-danger' => $delivery->status->isFailure(), 'text-text-secondary' => ! $delivery->status->isFailure()])>
                                     {{ $delivery->status->label() }}@if ($delivery->seen_at){{ __(', im Portal geöffnet') }}@endif
                                 </p>
                             </li>

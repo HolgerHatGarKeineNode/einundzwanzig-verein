@@ -65,7 +65,7 @@ class DmDelivery extends Model
     public function scopeWithWorkLeft(Builder $query, CarbonInterface $now): void
     {
         $query->where(fn (Builder $query) => $query
-            ->whereIn('status', [DmDeliveryStatus::Pending->value, DmDeliveryStatus::Failed->value])
+            ->whereIn('status', DmDeliveryStatus::claimableValues())
             ->orWhere(fn (Builder $query) => $query
                 ->where('status', DmDeliveryStatus::Claimed->value)
                 ->where('claimed_at', '<', $now->copy()->subSeconds(SendDirectMessage::CLAIM_EXPIRES_AFTER_SECONDS))));
