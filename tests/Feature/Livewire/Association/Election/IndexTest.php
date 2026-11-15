@@ -265,14 +265,26 @@ it('shows outsiders the members-only notice', function () {
         ->assertDontSee('Vorstandswahl 2027');
 });
 
-it('offers the way back to the election on the membership page', function () {
-    NostrAuth::login(electionVoter()->pubkey);
+it('offers a guest the login on the page itself, with German signer help and the nsec warning', function () {
+    Livewire::test('association.election.index')
+        ->assertSeeLivewire('auth-button')
+        ->assertSee('Mit Nostr anmelden')
+        ->assertSee('Noch kein Nostr-Signer?')
+        ->assertSee('Am Android-Telefon')
+        ->assertSee('Gib nie deinen nsec in eine Webseite ein');
+});
 
-    $this->get(route('association.profile', ['from' => 'election']))
-        ->assertOk()
-        ->assertSee('Zurück zur Wahl');
+it('logs in only through the auth-button whose button started the login', function () {
+    $sidebar = Livewire::test('auth-button', ['location' => 'sidebar']);
 
-    $this->get(route('association.profile'))
-        ->assertOk()
-        ->assertDontSee('Zurück zur Wahl');
+    // The election page's login reaches the sidebar instance too; it leaves
+    // the event alone, so the spent challenge is not verified a second time.
+    $sidebar->dispatch('nostrLoggedIn', signedEvent: ['id' => 'not-signed'], location: 'election')
+        ->assertHasNoErrors();
+
+    expect(NostrAuth::check())->toBeFalse();
+
+    // Its own login is verified (and this unsigned one refused).
+    $sidebar->dispatch('nostrLoggedIn', signedEvent: ['id' => 'not-signed'], location: 'sidebar')
+        ->assertHasErrors('nostr');
 });
