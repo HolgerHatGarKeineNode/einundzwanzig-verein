@@ -153,7 +153,10 @@
                         @else
                             <p class="text-lg text-text-primary">
                                 <span class="font-bold">{{ trans_choice('Ein Empfänger.|:count Empfänger.', $dryRun['count'], ['count' => $dryRun['count']]) }}</span>
-                                @if ($dryRun['unreachable_count'] === 0)
+                                @if ($dryRun['count'] === 0 && ($dryRun['skipped'] ?? 0) > 0)
+                                    {{-- Nobody left: the inbox sentence would speak of nobody. --}}
+                                    {{ __('Alle haben diese Nachricht in den letzten :hours Stunden schon bekommen.', ['hours' => $dryRun['lock_hours']]) }}
+                                @elseif ($dryRun['unreachable_count'] === 0)
                                     {{ __('Alle haben einen Nostr-Posteingang.') }}
                                 @else
                                     {{ trans_choice('Einer davon hat keinen Nostr-Posteingang und liest die Nachricht nur im Portal.|:count davon haben keinen Nostr-Posteingang und lesen die Nachricht nur im Portal.', $dryRun['unreachable_count'], ['count' => $dryRun['unreachable_count']]) }}

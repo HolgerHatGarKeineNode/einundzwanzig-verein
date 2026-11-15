@@ -9,6 +9,7 @@ use App\Exceptions\ElectionCandidateBlockedException;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -44,23 +45,7 @@ class OpenRound
             }
 
             $this->assertOpenable($round);
-
-            if ($round->mode === ElectionRoundMode::Live) {
-                $round->opens_at = $now;
-                $round->closes_at = $now->copy()->addMinutes(self::LIVE_MAX_MINUTES);
-            }
-
-            if ($round->opens_at === null || $round->closes_at === null) {
-                throw new ElectionRoundStateException('A window round needs a beginning and an end before it can be opened.');
-            }
-
-            if ($round->closes_at->lte($round->opens_at) || $round->closes_at->lte($now)) {
-                throw new ElectionRoundStateException('The end of a round must lie after its beginning and in the future.');
-            }
-
-            if ($round->reveal_at !== null && $round->reveal_at->lt($round->closes_at)) {
-                throw new ElectionRoundStateException('The result of a round cannot be revealed before the round ends.');
-            }
+            [$round->opens_at, $round->closes_at] = $this->schedule($round, $now);
 
             $round->opened_at = $now;
             $round->save();
@@ -78,17 +63,50 @@ class OpenRound
      */
     public function refusal(ElectionRound $round): ?ElectionRoundStateException
     {
-        if ($round->stateAt(now()) !== ElectionRoundState::Draft) {
+        $now = now();
+
+        if ($round->stateAt($now) !== ElectionRoundState::Draft) {
             return new ElectionRoundStateException('Only a draft round can be opened.');
         }
 
         try {
             $this->assertOpenable($round);
+            $this->schedule($round, $now);
         } catch (ElectionRoundStateException $refusal) {
             return $refusal;
         }
 
         return null;
+    }
+
+    /**
+     * When the round will take ballots once it is opened at `$now`: a live
+     * round from now for LIVE_MAX_MINUTES, a window round its own times.
+     * Nothing is written.
+     *
+     * @return array{0: CarbonInterface, 1: CarbonInterface} opens_at, closes_at
+     *
+     * @throws ElectionRoundStateException
+     */
+    protected function schedule(ElectionRound $round, CarbonInterface $now): array
+    {
+        [$opensAt, $closesAt] = $round->mode === ElectionRoundMode::Live
+            ? [$now, $now->copy()->addMinutes(self::LIVE_MAX_MINUTES)]
+            : [$round->opens_at, $round->closes_at];
+
+        if ($opensAt === null || $closesAt === null) {
+            throw new ElectionRoundStateException('A window round needs a beginning and an end before it can be opened.');
+        }
+
+        if ($closesAt->lte($opensAt) || $closesAt->lte($now)) {
+            throw new ElectionRoundStateException('The end of a round must lie after its beginning and in the future.');
+        }
+
+        if ($round->reveal_at !== null && $round->reveal_at->lt($closesAt)) {
+            throw new ElectionRoundStateException('The result of a round cannot be revealed before the round ends.');
+        }
+
+        return [$opensAt, $closesAt];
     }
 
     /**

@@ -662,11 +662,18 @@ class extends Component
             $this->text,
         );
         $names = EinundzwanzigPleb::query()->with('profile')->whereKey(array_column($result->previews, 'recipient_id'))->get()->keyBy('id');
+        $text = app(DirectMessageText::class);
 
-        return array_map(fn (array $preview): array => [
-            'name' => MemberProposal::authorNameOf($names->get($preview['recipient_id'])),
-            'text' => $preview['text'],
-        ], $result->previews);
+        // The header names the recipient as {name} in the text does (display name first);
+        // without a profile name it falls back to the npub, not to „Mitglied“.
+        return array_map(function (array $preview) use ($names, $text): array {
+            $recipient = $names->get($preview['recipient_id']);
+
+            return [
+                'name' => ($recipient === null ? null : $text->profileNameOf($recipient)) ?? MemberProposal::authorNameOf($recipient),
+                'text' => $preview['text'],
+            ];
+        }, $result->previews);
     }
 
     /**

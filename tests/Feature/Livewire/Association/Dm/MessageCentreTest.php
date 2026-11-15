@@ -579,7 +579,11 @@ it('shows a repeated sending within the lock as skipped and creates no new deliv
     $first = DmRun::query()->sole();
     (new DispatchBulkDirectMessages($first->id))->handle();
 
+    // Nobody is left, so nothing may claim that "all" have an inbox.
     $page = $send()
+        ->assertSee('0 Empfänger.')
+        ->assertSee('Alle haben diese Nachricht in den letzten 24 Stunden schon bekommen.')
+        ->assertDontSee('Alle haben einen Nostr-Posteingang.')
         ->assertSee('Übersprungen: 3 Mitglieder, sie haben diese Nachricht für diese Zielgruppe in den letzten 24 Stunden schon bekommen.')
         ->assertSee('Alle schon erreicht, nichts zu senden');
 
@@ -593,4 +597,101 @@ it('shows a repeated sending within the lock as skipped and creates no new deliv
     expect(DmDelivery::query()->count())->toBe(3);
 
     messageCentre()->call('showTab', 'history')->assertSee('3 übersprungen');
+});
+
+/*
+ * The preview header and {name} in the text name a recipient the same way:
+ * display name before name. Mutation: the header back on
+ * MemberProposal::authorNameOf (name first) → red.
+ */
+it('names a recipient in the preview header as the text does, display name first', function () {
+    [, $members] = messageCentreBoard(1);
+    $members[0]->profile()->create(['pubkey' => $members[0]->pubkey, 'name' => 'satoshi_n', 'display_name' => 'Satoshi Nakamoto']);
+
+    messageCentre()
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('audience', DmAudience::Members->value)
+        ->set('text', 'Hallo {name}, bis Freitag.')
+        ->assertSee('An Satoshi Nakamoto, von EINUNDZWANZIG')
+        ->assertSee('Hallo Satoshi Nakamoto, bis Freitag.')
+        ->assertDontSee('An satoshi_n, von EINUNDZWANZIG')
+        // The board member has no profile: the header keeps the npub, only the text says „Mitglied“.
+        ->assertSee('Hallo Mitglied, bis Freitag.')
+        ->assertDontSee('An Mitglied, von EINUNDZWANZIG');
+});
+
+/*
+ * Two board pages dry-run the same message; page A confirms, then page B.
+ * B's difference to its dry run is only the repeat lock: it says the members
+ * were skipped because the message just went out, not that the audience
+ * changed, and nobody gets the message twice. Mutation: drop the repeat-lock
+ * exemption in StartDirectMessageRun::freeze() → B reads „Die Zielgruppe hat
+ * sich … geändert“ → red.
+ */
+it('tells a second board page that confirms after the first that everyone was skipped, and sends nothing twice', function () {
+    Queue::fake();
+    messageCentreBoard(2);
+
+    $draft = fn (): Testable => messageCentre()
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('audience', DmAudience::Members->value)
+        ->set('text', 'Hallo {name}, morgen ist Wahl.')
+        ->call('runDryRun');
+
+    $pageA = $draft();
+    $pageB = $draft();
+    expect($pageA->get('dryRun')['count'])->toBe(3)->and($pageB->get('dryRun')['count'])->toBe(3);
+
+    $pageA->call('confirmSend')->assertSet('tab', 'history');
+    $first = DmRun::query()->sole();
+
+    $pageB->call('confirmSend')
+        ->assertNotDispatched('toast-show', fn (string $event, array $params): bool => str_contains($params['slots']['text'], 'Zielgruppe hat sich'))
+        ->assertDispatched('toast-show', fn (string $event, array $params): bool => ($params['dataset']['variant'] ?? null) === 'warning'
+            && $params['slots']['text'] === 'Nichts gesendet: Alle 3 Mitglieder haben diese Nachricht in den letzten 24 Stunden schon bekommen und sind übersprungen.')
+        ->assertSet('tab', 'history');
+
+    $second = DmRun::query()->whereKeyNot($first->id)->sole();
+
+    expect($second->recipient_ids)->toBe([])
+        ->and($second->recipient_count)->toBe(0)
+        ->and($second->skipped_ids)->toBe($first->recipient_ids);
+
+    foreach (DmRun::query()->pluck('id') as $runId) {
+        (new DispatchBulkDirectMessages($runId))->handle();
+    }
+
+    expect(DmDelivery::query()->count())->toBe(3)
+        ->and(DmDelivery::query()->distinct()->count('einundzwanzig_pleb_id'))->toBe(3)
+        ->and(DmDelivery::query()->where('dm_run_id', $second->id)->count())->toBe(0);
+
+    messageCentre()->call('showTab', 'history')->assertSee('3 übersprungen');
+});
+
+/*
+ * The repeat-lock exemption above covers members the lock skips, nobody
+ * else. Mutation: accept any confirmed member missing now as a skip → a
+ * member who left goes unnoticed → red.
+ */
+it('still refuses to send when a member left after the dry run and nobody was skipped', function () {
+    Queue::fake();
+    [, $others] = messageCentreBoard(3);
+
+    $page = messageCentre()
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('audience', DmAudience::Members->value)
+        ->set('text', 'Hallo {name}, eine Nachricht.')
+        ->call('runDryRun');
+
+    $others[0]->forceFill(['association_status' => AssociationStatus::DEFAULT])->save();
+
+    $page->call('confirmSend')
+        ->assertDispatched('toast-show', fn (string $event, array $params): bool => ($params['dataset']['variant'] ?? null) === 'danger'
+            && $params['slots']['text'] === 'Die Zielgruppe hat sich seit dem Probelauf geändert: jetzt 3 Mitglieder statt 4. Es wurde nichts gesendet. Starte den Probelauf neu.');
+
+    expect(DmRun::query()->count())->toBe(0);
+    Queue::assertNothingPushed();
 });
