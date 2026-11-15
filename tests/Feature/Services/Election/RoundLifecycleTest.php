@@ -83,7 +83,11 @@ it('refuses to open a round that is not ready', function (string $kind) {
         'a run-off of an unsealed round' => draftElectionRound(['parent_round_id' => openElectionRound()->id]),
     };
 
-    expect(fn () => app(OpenRound::class)->handle($round))->toThrow(ElectionRoundStateException::class);
+    // The board card asks refusal() whether to offer the step; it has to say no to every case handle() refuses.
+    $refusal = app(OpenRound::class)->refusal($round);
+
+    expect($refusal)->toBeInstanceOf(ElectionRoundStateException::class)
+        ->and(fn () => app(OpenRound::class)->handle($round))->toThrow(ElectionRoundStateException::class, $refusal?->getMessage() ?? '');
 
     expect($round->fresh()->opened_at)->toBeNull()
         ->and($round->rollEntries()->count())->toBe(0);
