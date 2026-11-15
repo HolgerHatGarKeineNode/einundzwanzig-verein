@@ -33,6 +33,9 @@ enum DmMessageType: string
 
     case FeeReminder = 'fee_reminder';
 
+    /** On the day of the assembly: the live election in the video call begins. */
+    case ElectionStartsNow = 'election_starts_now';
+
     case RoundOpened = 'round_opened';
 
     case RoundClosingSoon = 'round_closing_soon';
@@ -49,6 +52,7 @@ enum DmMessageType: string
             self::ElectionAnnouncement => __('Ankündigung der Wahl'),
             self::NominationDeadline => __('Frist für Kandidaturen'),
             self::FeeReminder => __('Erinnerung an den Mitgliedsbeitrag'),
+            self::ElectionStartsNow => __('Die Wahl beginnt jetzt'),
             self::RoundOpened => __('Wahlgang geöffnet'),
             self::RoundClosingSoon => __('Wahlgang schließt bald'),
             self::ElectionResult => __('Ergebnis liegt vor'),
@@ -67,6 +71,7 @@ enum DmMessageType: string
             self::ElectionAnnouncement => ['assembly_date', 'link'],
             self::NominationDeadline => ['deadline', 'link'],
             self::FeeReminder => ['year', 'link'],
+            self::ElectionStartsNow => ['link'],
             self::RoundOpened, self::RoundClosingSoon => ['round', 'closes_at', 'link'],
             self::ElectionResult => ['round', 'link'],
         };
@@ -98,6 +103,9 @@ enum DmMessageType: string
                 .'Ohne bezahlten Beitrag kannst du bei der Vorstandswahl nicht abstimmen. '
                 ."Bezahlen kannst du nach der Anmeldung im Portal: {link}\n\n"
                 .'Per Nachricht fragen wir nie nach Schlüsseln oder Zahlungsdaten.',
+            self::ElectionStartsNow => "Hallo {name},\n\n"
+                .'die Wahl des neuen Vorstands beginnt jetzt in der Mitgliederversammlung im Video-Call. '
+                .'Abstimmen kannst du nach der Anmeldung im Vereinsportal: {link}',
             self::RoundOpened => "Hallo {name},\n\n"
                 .'der Wahlgang „{round}“ ist geöffnet und läuft bis {closes_at}. '
                 .'Abstimmen kannst du nach der Anmeldung im Vereinsportal: {link}',

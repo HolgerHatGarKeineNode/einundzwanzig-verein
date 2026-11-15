@@ -6,6 +6,7 @@ use App\Enums\DmDeliveryStatus;
 use App\Models\DmDelivery;
 use App\Models\DmDeliveryRelay;
 use App\Models\EinundzwanzigPleb;
+use App\Services\Dm\DirectMessagePause;
 use App\Services\Dm\DirectMessageText;
 use App\Services\Dm\DirectMessageTextInvalid;
 use App\Services\Nostr\DirectMessageNotBuildable;
@@ -81,8 +82,14 @@ class SendDirectMessage implements ShouldQueue
 
     public function __construct(public int $deliveryId) {}
 
-    public function handle(RelayTransport $transport, DirectMessageSigner $signer, DirectMessageText $text): void
+    public function handle(RelayTransport $transport, DirectMessageSigner $signer, DirectMessageText $text, DirectMessagePause $pause): void
     {
+        // Paused after this job was queued: the delivery stays `pending`, and
+        // DirectMessagePause::resume() queues it again through the fan-out.
+        if ($pause->isPaused()) {
+            return;
+        }
+
         if (! $this->claim()) {
             // Another worker holds a live claim. Returning would let the queue
             // delete this job as done; if that worker then dies, nothing would
