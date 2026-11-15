@@ -11,14 +11,14 @@
  * asked whether it arrived, and "Noch einmal senden" re-sends the SAME event —
  * the server recognises it and reports it as counted, never twice.
  */
+import { signerKind, withTimeout } from './nostrSigner.js'
+
 const ANSWER_TIMEOUT_MS = 20000
 
-function withTimeout(promise, ms) {
-    return Promise.race([
-        promise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
-    ])
-}
+// A signer that never answers (a bunker whose relay is gone) would leave the
+// step at "Warte auf deinen Signer …" until a reload. One minute is enough to
+// switch to a signer app and approve.
+const SIGNER_TIMEOUT_MS = 60000
 
 export default ({ roundId, pubkey, rule, max, messages }) => ({
     // fill | review | signing | sending | checking | lost
@@ -33,6 +33,10 @@ export default ({ roundId, pubkey, rule, max, messages }) => ({
     signed: null,
     error: '',
     notice: '',
+    // No usable signer on this device: the German help is shown.
+    needsSigner: false,
+    // Counts signing attempts; a signer answer for an older attempt is dropped.
+    signAttempt: 0,
 
     /** What goes to the server: candidate id => for|yes|no; empty is a blank vote. */
     picked() {
@@ -73,6 +77,10 @@ export default ({ roundId, pubkey, rule, max, messages }) => ({
     },
 
     async review() {
+        if (this.busy) {
+            return
+        }
+
         this.error = ''
         this.notice = ''
         this.busy = true
@@ -88,7 +96,8 @@ export default ({ roundId, pubkey, rule, max, messages }) => ({
             this.template = answer.event
             this.content = answer.event.content
             this.step = 'review'
-            this.$nextTick(() => this.$refs.reviewHeading?.focus())
+            // After x-show has revealed the review: the heading names the step.
+            this.$nextTick(() => requestAnimationFrame(() => this.$refs.reviewHeading?.focus()))
         } catch (error) {
             this.error = messages.noAnswer
         } finally {
@@ -99,28 +108,43 @@ export default ({ roundId, pubkey, rule, max, messages }) => ({
     back() {
         this.step = 'fill'
         this.error = ''
+        this.needsSigner = false
         this.$nextTick(() => this.$refs.sheet?.focus())
     },
 
     fail(message) {
+        // A late signer answer of this attempt no longer counts.
+        this.signAttempt++
         this.step = 'review'
         this.error = message
     },
 
-    async sign() {
+    /**
+     * @param {boolean} force  the member chose "Signer-App verbinden" in the
+     *                         help and expects the window.nostr.js dialog
+     */
+    async sign(force = false) {
         this.error = ''
 
-        if (!window.nostr || typeof window.nostr.signEvent !== 'function') {
+        // window.nostr.js always defines window.nostr; without a real signer
+        // its English dialog with an nsec field would open here.
+        if ((!force && signerKind() === 'none') || !window.nostr || typeof window.nostr.signEvent !== 'function') {
+            this.needsSigner = true
             this.fail(messages.noSigner)
             return
         }
 
+        this.needsSigner = false
         this.step = 'signing'
+        const attempt = ++this.signAttempt
         let signed
 
         try {
             if (pubkey && typeof window.nostr.getPublicKey === 'function') {
-                const key = await window.nostr.getPublicKey()
+                const key = await withTimeout(window.nostr.getPublicKey(), SIGNER_TIMEOUT_MS)
+                if (attempt !== this.signAttempt) {
+                    return
+                }
                 if (key && key !== pubkey) {
                     this.fail(messages.otherAccount)
                     return
@@ -128,9 +152,16 @@ export default ({ roundId, pubkey, rule, max, messages }) => ({
             }
 
             // Extensions may hand back proxies Livewire cannot serialise.
-            signed = JSON.parse(JSON.stringify(await window.nostr.signEvent({ ...this.template, tags: this.template.tags.map((tag) => [...tag]) })))
+            signed = JSON.parse(JSON.stringify(await withTimeout(window.nostr.signEvent({ ...this.template, tags: this.template.tags.map((tag) => [...tag]) }), SIGNER_TIMEOUT_MS)))
         } catch (error) {
-            this.fail(messages.cancelled)
+            if (attempt !== this.signAttempt) {
+                return
+            }
+            this.fail(error?.message === 'timeout' ? messages.signerTimeout : messages.cancelled)
+            return
+        }
+
+        if (attempt !== this.signAttempt) {
             return
         }
 

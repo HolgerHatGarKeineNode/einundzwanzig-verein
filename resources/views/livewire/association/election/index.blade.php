@@ -532,6 +532,35 @@ new class extends Component
         return (int) $round->getKey();
     }
 
+    /**
+     * What became of a round's run-offs, for its result card: 'decided' when
+     * a run-off below it, at any depth, elected somebody; 'pending' while
+     * there is one without that; null when there is none. An annulled
+     * run-off does not count.
+     */
+    public function runOffOf(ElectionRound $round): ?string
+    {
+        $byId = $this->allRounds->keyBy('id');
+        $isBelow = function (ElectionRound $each) use ($byId, $round): bool {
+            for ($steps = 0; $each->parent_round_id !== null && $steps < $byId->count(); $steps++) {
+                if ($each->parent_round_id === $round->getKey()) {
+                    return true;
+                }
+
+                $each = $byId->get($each->parent_round_id) ?? $each;
+            }
+
+            return false;
+        };
+        $runOffs = $this->allRounds->filter(fn (ElectionRound $each): bool => $each->annulled_at === null && $isBelow($each));
+
+        if ($runOffs->isEmpty()) {
+            return null;
+        }
+
+        return $runOffs->contains(fn (ElectionRound $each): bool => ($this->results[$each->getKey()]->elected ?? []) !== []) ? 'decided' : 'pending';
+    }
+
     public function candidateName(ElectionRound $round, int $candidateId): string
     {
         return MemberProposal::authorNameOf($round->candidates->firstWhere('id', $candidateId)?->pleb);
@@ -815,7 +844,7 @@ new class extends Component
      at the bottom of the viewport; the last line must scroll clear of it. --}}
 <div class="mx-auto w-full max-w-5xl pb-32" @if ($this->election !== null) wire:poll.5s="syncRounds" @endif>
     @if (! $this->isMember)
-        <div class="mx-auto max-w-2xl">
+        <div class="mx-auto max-w-2xl space-y-6">
             <flux:callout variant="warning" icon="exclamation-circle">
                 <flux:callout.heading>{{ __('Die Wahl ist nur für Mitglieder sichtbar') }}</flux:callout.heading>
                 <flux:callout.text>
@@ -825,16 +854,32 @@ new class extends Component
                         {{ __('Zu deinem Nostr-Konto gibt es noch keine Mitgliedschaft.') }}
                     @endif
                 </flux:callout.text>
-                @if (\App\Support\NostrAuth::check())
-                    <x-slot name="actions">
+                <x-slot name="actions">
+                    @if (\App\Support\NostrAuth::check())
                         <flux:button :href="route('association.profile')" class="min-h-11" wire:navigate>{{ __('Meine Mitgliedschaft') }}</flux:button>
-                    </x-slot>
-                @endif
+                    @else
+                        {{-- The sidebar's login sits behind the menu on a phone; the page asks for it here. --}}
+                        <livewire:auth-button location="election" :label="__('Mit Nostr anmelden')" :key="'election-login'" />
+                    @endif
+                </x-slot>
             </flux:callout>
+
+            @if (! \App\Support\NostrAuth::check())
+                {{-- Shown to every guest: the login button above reveals it on a
+                     device without a signer instead of the vendor's English dialog. --}}
+                <div x-data="{ missing: false }"
+                     x-on:nostr-signer-missing.window="missing = true; $nextTick(() => { $refs.help.scrollIntoView({ block: 'start' }); $refs.help.focus({ preventScroll: true }) })">
+                    <p role="status" class="text-base leading-normal text-text-primary">
+                        <span x-show="missing" x-cloak class="mb-3 block">{{ __('Auf diesem Gerät ist noch kein Nostr-Signer eingerichtet. So bekommst du einen:') }}</span>
+                    </p>
+                    <x-election-signer-help id="guest-signer-help" x-ref="help"
+                                            connect="window.dispatchEvent(new CustomEvent('nostr-login-start', { detail: { location: 'election' } }))" />
+                </div>
+            @endif
         </div>
     @else
         <header class="mb-8 max-w-2xl">
-            <h1 class="text-3xl font-bold leading-tight text-text-primary sm:text-4xl">
+            <h1 class="hyphens-auto break-words text-3xl font-bold leading-tight text-text-primary sm:text-4xl">
                 {{ $this->election?->name ?? __('Wahl') }}
             </h1>
             <p class="mt-2 text-base leading-normal text-text-secondary">
@@ -890,8 +935,14 @@ new class extends Component
         @else
             <div class="grid gap-x-10 gap-y-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
                 {{-- Your standing: first on a phone, the right column on a desk. --}}
-                {{-- While a ballot is open the ballot comes first on a phone too. --}}
-                <aside @class(['space-y-6 lg:col-start-2 lg:row-start-1', 'order-last lg:order-none' => $this->ballotRounds->isNotEmpty()]) aria-label="{{ __('Dein Stand') }}">
+                {{-- While a ballot is open, and while the receipt of a vote just
+                     cast waits for its result, the round comes first on a phone
+                     too: the receipt must not jump below the standing box. --}}
+                @php
+                    $roundFirst = $this->ballotRounds->isNotEmpty()
+                        || collect($this->standing)->contains(fn (array $each, int $id): bool => $each['eventId'] !== null && ! isset($this->results[$id]) && $each['state'] !== ElectionRoundState::Annulled);
+                @endphp
+                <aside @class(['space-y-6 lg:col-start-2 lg:row-start-1', 'order-last lg:order-none' => $roundFirst]) aria-label="{{ __('Dein Stand') }}">
                     <section aria-labelledby="eligibility" @class([
                         'rounded-lg border p-5',
                         'border-success/40 bg-bg-surface' => $this->isEntitled,
@@ -1186,8 +1237,13 @@ new class extends Component
                                                     @if ($isBallot)
                                                         <x-election-ballot :round="$round" :election="$this->election" :pubkey="$this->viewerPubkey" />
                                                     @elseif ($standing['eventId'] !== null && $result === null)
-                                                        <div role="status" class="mt-3 rounded-lg border border-success/50 bg-bg-surface p-4 sm:p-5">
-                                                            <p class="flex items-start gap-3 text-lg font-bold leading-snug text-text-primary">
+                                                        {{-- Cast on this page: bring the receipt into view and give it the focus. --}}
+                                                        <div role="status" class="mt-3 rounded-lg border border-success/50 bg-bg-surface p-4 sm:p-5"
+                                                             @if (in_array($note, ['now', 'late'], true))
+                                                                 x-data x-init="$nextTick(() => { $refs.receipt.scrollIntoView({ block: 'center' }); $refs.receipt.focus({ preventScroll: true }) })"
+                                                             @endif>
+                                                            <h5 x-ref="receipt" tabindex="-1" data-receipt
+                                                                class="flex items-start gap-3 rounded-sm text-lg font-bold leading-snug text-text-primary focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-orange-500">
                                                                 <flux:icon.check-circle class="mt-0.5 size-6 shrink-0 text-success" aria-hidden="true" />
                                                                 <span>
                                                                     @if ($note === 'late')
@@ -1198,9 +1254,10 @@ new class extends Component
                                                                         {{ __('Du hast in diesem Wahlgang schon gewählt. Deine Stimme ist gezählt.') }}
                                                                     @endif
                                                                 </span>
-                                                            </p>
+                                                            </h5>
                                                             <p class="mt-2 pl-9 text-sm leading-normal text-text-secondary">
                                                                 {{ __('Kennung deiner Stimme: :id', ['id' => $this->shortEventId($standing['eventId'])]) }}
+                                                                <span class="block">{{ __('Sie ist der Fingerabdruck deiner signierten Stimme und belegt, dass genau diese angekommen ist. Notieren musst du sie nicht.') }}</span>
                                                             </p>
                                                             <p class="mt-1 pl-9 text-sm leading-normal text-text-secondary">
                                                                 {{ $state === ElectionRoundState::Open ? __('Das Ergebnis steht hier, sobald der Vorstand den Wahlgang schließt.') : __('Der Wahlgang ist geschlossen. Das Ergebnis steht hier, sobald es ausgezählt ist.') }}
@@ -1208,8 +1265,19 @@ new class extends Component
                                                         </div>
                                                     @elseif ($state === ElectionRoundState::Open && ! $standing['onRoll'])
                                                         <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
-                                                            {{ __('Du stehst für diesen Wahlgang nicht im Wählerverzeichnis. Ins Verzeichnis kommt, wer beim Öffnen des Wahlgangs wählen darf. Melde dich im Call beim Vorstand, wenn das nicht stimmt.') }}
+                                                            {{ __('Du stehst für diesen Wahlgang nicht im Wählerverzeichnis.') }}
+                                                            @if ($this->ineligibleBecause === 'fee')
+                                                                {{ __('Wer den Beitrag bezahlt, solange der Wahlgang offen ist, kommt automatisch dazu. Danach erscheint hier dein Stimmzettel.') }}
+                                                            @else
+                                                                {{ __('Ins Verzeichnis kommt, wer beim Öffnen des Wahlgangs wählen darf oder seinen Beitrag bezahlt, solange er offen ist. Melde dich im Call beim Vorstand, wenn das nicht stimmt.') }}
+                                                            @endif
                                                         </p>
+                                                        @if ($this->ineligibleBecause === 'fee')
+                                                            <p class="mt-2">
+                                                                <a href="{{ route('association.profile', ['from' => 'election']) }}" wire:navigate
+                                                                   class="inline-flex min-h-11 items-center text-base font-semibold text-orange-500 underline underline-offset-4 hover:text-text-primary {{ $focus }}">{{ __('Jetzt Beitrag bezahlen') }}</a>
+                                                            </p>
+                                                        @endif
                                                     @elseif ($note === 'closed')
                                                         <p role="status" class="mt-2 max-w-prose text-base leading-normal text-text-primary">
                                                             {{ __('Der Vorstand hat diesen Wahlgang geschlossen, bevor deine Stimme ankam. Sie ist nicht gezählt.') }}
@@ -1233,7 +1301,7 @@ new class extends Component
                                                     @endif
 
                                                     @if ($result !== null)
-                                                        <x-election-round-result :round="$round" :result="$result" :ballots="$round->votes()->count()" :voted="$standing['eventId'] !== null" />
+                                                        <x-election-round-result :round="$round" :result="$result" :ballots="$round->votes()->count()" :voted="$standing['eventId'] !== null" :run-off="$this->runOffOf($round)" />
                                                     @endif
                                                 </li>
                                             @endforeach

@@ -3,6 +3,8 @@
     'result',
     'ballots' => 0,
     'voted' => false,
+    // 'decided' | 'pending' | null — what the run-off below this round did.
+    'runOff' => null,
 ])
 
 @use('App\Enums\ElectionCountingRule')
@@ -16,22 +18,34 @@
     $nameOf = fn (int $id): string => MemberProposal::authorNameOf($round->candidates->firstWhere('id', $id)?->pleb);
     $elected = array_map($nameOf, $result->elected);
     $tied = array_map($nameOf, $result->tied);
+    // A name may end in a full stop ("Erik E."); the sentence must not add a second one.
+    $sentence = fn (string $text): string => preg_replace('/(?<=\S)\.\.(?=\s|$)/u', '.', $text);
+    $next = match ($runOff) {
+        'decided' => __('Entschieden hat die Stichwahl darunter.'),
+        'pending' => __('Dazu gibt es eine Stichwahl, sie steht darunter.'),
+        default => __('Wie es weitergeht, sagt der Vorstand im Call.'),
+    };
 @endphp
 
 <div class="mt-3 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-5">
     <p class="max-w-prose wrap-anywhere text-base leading-normal text-text-primary">
         @if ($elected !== [])
-            {{ trans_choice('Gewählt ist :names.|Gewählt sind :names.', count($elected), ['names' => implode(', ', $elected)]) }}
+            {{ $sentence(trans_choice('Gewählt ist :names.|Gewählt sind :names.', count($elected), ['names' => implode(', ', $elected)])) }}
         @endif
         @switch($result->outcome)
             @case(ElectionOutcome::Tie)
-                {{ trans_choice('Gleichstand um :count Sitz zwischen :names. Wie es weitergeht, sagt der Vorstand im Call.|Gleichstand um :count Sitze zwischen :names. Wie es weitergeht, sagt der Vorstand im Call.', $result->tiedSeats, ['count' => $result->tiedSeats, 'names' => implode(', ', $tied)]) }}
+                {{ $sentence(trans_choice('Gleichstand um :count Sitz zwischen :names.|Gleichstand um :count Sitze zwischen :names.', $result->tiedSeats, ['count' => $result->tiedSeats, 'names' => implode(', ', $tied)])) }}
+                {{ $next }}
                 @break
             @case(ElectionOutcome::Understaffed)
                 @if ($result->rule === ElectionCountingRule::SingleMajority && $elected === [])
-                    {{ __('Niemand hat mehr als die Hälfte der Stimmen für Personen bekommen. Der Sitz ist nicht besetzt. Wie es weitergeht, sagt der Vorstand im Call.') }}
+                    {{ __('Niemand hat mehr als die Hälfte der Stimmen für Personen bekommen.') }}
+                    {{ match ($runOff) { 'decided' => __('Den Sitz hat die Stichwahl darunter besetzt.'), 'pending' => __('In diesem Wahlgang ist der Sitz nicht besetzt worden.').' '.$next, default => __('Der Sitz ist nicht besetzt.').' '.$next } }}
                 @else
                     {{ __('Besetzt sind :filled von :seats Sitzen.', ['filled' => count($elected), 'seats' => $result->seats]) }}
+                    @if ($runOff !== null)
+                        {{ $next }}
+                    @endif
                 @endif
                 @break
         @endswitch
