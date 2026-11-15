@@ -180,7 +180,9 @@ class ElectionStewardship
         $runOffs = $round->children()->whereNull('annulled_at')->lockForUpdate()->get();
 
         foreach ($runOffs as $runOff) {
-            $runOff->annulled_at = now();
+            // The same moment as the round that took it along, so no screen mistakes
+            // a run-off for the round the board annulled.
+            $runOff->annulled_at = $round->annulled_at ?? now();
             $runOff->save();
 
             $this->audit->append($round->election, ElectionAuditAction::RoundAnnulled, $actor, round: $runOff, details: [

@@ -709,3 +709,44 @@ it('treats a run-off annulled along with its round as void on the card, the live
         ->assertHasNoErrors()
         ->assertSee('„Vorsitz (Wiederholung)“ öffnen');
 });
+
+/*
+ * After the board annuls a round whose run-off was already held, the card and
+ * the share view name the round the board annulled, not the run-off taken
+ * along. Mutation that must turn this red: sort by `closed_at` first again.
+ */
+it('names the annulled round, not its run-off, as the last one on the card and the share view', function () {
+    $board = liveBoard();
+    $election = Election::factory()->announced()->create();
+    $voters = [electionVoter(), electionVoter()];
+    $chair = draftElectionRound(['title' => 'Vorsitz', 'position' => 1, 'counting_rule' => ElectionCountingRule::MostVotes], election: $election);
+    draftElectionRound(['title' => 'Kasse', 'position' => 2], election: $election);
+
+    $level = function (ElectionRound $round) use ($voters): ElectionRound {
+        $round = app(OpenRound::class)->handle($round);
+        $ids = $round->candidates()->orderBy('id')->pluck('id')->all();
+        castElectionBallot($round, $voters[0], [$ids[0] => 'for']);
+        castElectionBallot($round, $voters[1], [$ids[1] => 'for']);
+
+        return app(CloseRound::class)->handle($round);
+    };
+
+    $chair = $level($chair);
+    $this->travel(5)->minutes();
+    $level(app(CreateRunOff::class)->handle($chair, $board));
+    $this->travel(5)->minutes();
+
+    // The cascade crosses a second boundary right after the chair is stamped.
+    ElectionRound::saved(function (ElectionRound $round) use ($chair): void {
+        if ($round->is($chair) && $round->wasChanged('annulled_at')) {
+            $this->travel(1)->seconds();
+        }
+    });
+
+    livePage()
+        ->call('startRoundAction', $chair->id, 'annul')->set('roundReason', 'Falsche Liste')->call('confirmRoundAction')
+        ->assertHasNoErrors()
+        ->assertSee('„Vorsitz“ ist annulliert. Als Nächstes: „Kasse“.');
+
+    expect(Livewire::test('association.election.screen', ['election' => $election->id])->instance()->current['report']['round']->title)->toBe('Vorsitz');
+});

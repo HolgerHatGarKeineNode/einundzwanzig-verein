@@ -396,8 +396,19 @@ new class extends Component
 
         $runOffs = $rounds->whereNotNull('parent_round_id')->groupBy('parent_round_id');
 
+        // Each first-level round, followed by every run-off below it at any depth.
+        $withRunOffs = function (ElectionRound $round) use (&$withRunOffs, $runOffs): array {
+            $chain = [$round];
+
+            foreach ($runOffs->get($round->getKey())?->all() ?? [] as $runOff) {
+                array_push($chain, ...$withRunOffs($runOff));
+            }
+
+            return $chain;
+        };
+
         return $rounds->whereNull('parent_round_id')
-            ->flatMap(fn (ElectionRound $round): array => [$round, ...($runOffs->get($round->getKey())?->all() ?? [])])
+            ->flatMap(fn (ElectionRound $round): array => $withRunOffs($round))
             ->values();
     }
 
@@ -488,7 +499,7 @@ new class extends Component
         foreach ($this->allRounds->whereNull('parent_round_id') as $round) {
             $names = [];
 
-            foreach ($this->allRounds->filter(fn (ElectionRound $each): bool => $each->is($round) || $each->parent_round_id === $round->getKey()) as $each) {
+            foreach ($this->allRounds->filter(fn (ElectionRound $each): bool => $this->rootIdOf($each) === $round->getKey()) as $each) {
                 foreach ($this->results[$each->getKey()]->elected ?? [] as $candidateId) {
                     $names[] = $this->candidateName($each, $candidateId);
                 }
@@ -504,6 +515,21 @@ new class extends Component
         }
 
         return $rows;
+    }
+
+    /**
+     * The id of the first-level round a run-off belongs to, at any depth.
+     */
+    protected function rootIdOf(ElectionRound $round): int
+    {
+        $byId = $this->allRounds->keyBy('id');
+        $steps = 0;
+
+        while ($round->parent_round_id !== null && $byId->has($round->parent_round_id) && $steps++ < $byId->count()) {
+            $round = $byId->get($round->parent_round_id);
+        }
+
+        return (int) $round->getKey();
     }
 
     public function candidateName(ElectionRound $round, int $candidateId): string
@@ -1147,7 +1173,7 @@ new class extends Component
                                                 <li wire:key="round-{{ $round->id }}-{{ $state->value }}-{{ $standing['eventId'] ? 'voted' : 'open' }}">
                                                     <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
                                                         <h4 class="text-lg font-bold leading-snug text-text-primary">
-                                                            {{ $round->parent_round_id ? __('Stichwahl: :office', ['office' => $round->title]) : $round->title }}
+                                                            {{ $round->title }}
                                                             <span class="ml-1 text-base font-normal text-text-secondary">{{ trans_choice(':count Sitz|:count Sitze', $round->seats, ['count' => $round->seats]) }}</span>
                                                         </h4>
                                                         <flux:badge size="sm"

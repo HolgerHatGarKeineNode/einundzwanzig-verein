@@ -76,8 +76,8 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
         $report = $reports->first(fn (array $report): bool => $report['state'] === ElectionRoundState::Open)
             ?? $reports->first(fn (array $report): bool => $report['over_by_clock'])
             ?? $reports
-                ->filter(fn (array $report): bool => $report['round']->closed_at !== null || $report['round']->annulled_at !== null)
-                ->sortByDesc(fn (array $report): int => ($report['round']->closed_at ?? $report['round']->annulled_at)->getTimestamp())
+                ->filter(fn (array $report): bool => $report['round']->opened_at !== null && ($report['round']->closed_at !== null || $report['round']->annulled_at !== null))
+                ->sortByDesc(fn (array $report): int => ($report['round']->annulled_at ?? $report['round']->closed_at)->getTimestamp())
                 ->first()
             ?? $reports->first(fn (array $report): bool => $report['state'] === ElectionRoundState::Draft);
 
