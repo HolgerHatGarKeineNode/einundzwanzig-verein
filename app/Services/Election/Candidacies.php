@@ -82,6 +82,17 @@ class Candidacies
     }
 
     /**
+     * The member takes back their own candidacy. Written to the audit log
+     * like the board's withdrawal, with the member as the actor.
+     *
+     * @throws AuthorizationException
+     */
+    public function withdrawOwn(ElectionCandidate $candidate, EinundzwanzigPleb $member): ElectionCandidate
+    {
+        return $this->decide($candidate, $member, 'withdrawOwnCandidacy', ElectionCandidateStatus::Withdrawn, ElectionAuditAction::CandidacyWithdrawn, 'Vom Mitglied selbst zurückgezogen');
+    }
+
+    /**
      * @throws AuthorizationException
      * @throws ElectionActionRefusedException
      */

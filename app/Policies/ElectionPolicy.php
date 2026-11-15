@@ -82,6 +82,20 @@ class ElectionPolicy
             && $this->isBoard($user);
     }
 
+    /**
+     * A member takes back their own candidacy, pending or approved, as long
+     * as the round is a draft. Withdrawn stays withdrawn: `submitCandidacy`
+     * refuses a second candidacy in the same round.
+     */
+    public function withdrawOwnCandidacy(NostrUser $user, ElectionCandidate $candidate): bool
+    {
+        $pleb = $this->pleb($user);
+
+        return $pleb !== null
+            && (int) $candidate->einundzwanzig_pleb_id === (int) $pleb->getKey()
+            && $this->decidable($candidate, [ElectionCandidateStatus::Pending, ElectionCandidateStatus::Approved]);
+    }
+
     public function open(NostrUser $user, ElectionRound $round): bool
     {
         return $this->isBoard($user);
