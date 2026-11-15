@@ -913,6 +913,30 @@ it('mentions the pending repeat while the card moves on to the next round', func
 });
 
 /*
+ * Gate A (r1): the refusal of the next round returned before the waiting
+ * sentence, so a pending repeat vanished from the card. Mutation that must
+ * turn this red: drop the waiting sentence from the refusal step.
+ */
+it('mentions the pending repeat while the next round cannot open', function () {
+    liveBoard();
+    $election = Election::factory()->announced()->create();
+    $chair = draftElectionRound(['title' => 'Vorsitz', 'position' => 1], election: $election);
+    draftElectionRound(['title' => 'Kasse', 'position' => 2], candidates: 0, election: $election);
+
+    $page = livePage()
+        ->call('startRoundAction', $chair->id, 'open')->call('confirmRoundAction')
+        ->call('startRoundAction', $chair->id, 'annul')->set('roundReason', 'Falsche Liste')->call('confirmRoundAction')
+        ->assertHasNoErrors();
+
+    expect(liveNextStep($page->html()))->toContain('„Kasse“ lässt sich nicht öffnen. „Vorsitz“ wartet noch auf die Wiederholung.');
+
+    $page->call('startRoundAction', $chair->id, 'repeat')->call('confirmRoundAction')
+        ->assertHasNoErrors();
+
+    expect(liveNextStep($page->html()))->not->toContain('wartet noch auf die Wiederholung');
+});
+
+/*
  * Board F4: the close modal shows how many of the roll have voted before the
  * board confirms. Mutation that must turn this red: drop the turnout from
  * the close text.

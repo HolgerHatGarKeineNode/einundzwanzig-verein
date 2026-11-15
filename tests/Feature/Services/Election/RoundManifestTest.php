@@ -3,6 +3,7 @@
 use App\Enums\ElectionCountingRule;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
+use App\Models\Election;
 use App\Models\ElectionAuditEntry;
 use App\Models\ElectionManifest;
 use App\Models\ElectionRound;
@@ -400,6 +401,50 @@ it('fails verification when an audit line before the seal is deleted and the res
 
     expect($log->verify($round->election))->toBeTrue()
         ->and(ElectionAuditEntry::query()->where('hash', $anchor)->exists())->toBeFalse()
+        ->and($status)->toBe(1)
+        ->and($output)->toContain('MISMATCH: the audit log head the manifest anchored at the seal is no longer a line of the audit log.')
+        ->and($output)->not->toContain('OK round');
+});
+
+/*
+ * Gate A (r1): the anchor must be a line of THIS election's log, and a
+ * manifest without one is not anchored. Mutations that must turn these red:
+ * drop the election scope of the anchor lookup; treat a missing anchor as
+ * found (`! is_string($anchor) || (`).
+ */
+it('fails verification when the anchored audit head is only a line of another election\'s log', function () {
+    [$round, $anchor] = stewardedManifestRound();
+    $log = app(ElectionAuditLog::class);
+    $attributesOf = (new ReflectionMethod($log, 'attributesOf'))->getClosure($log);
+    $hashOf = (new ReflectionMethod($log, 'hashOf'))->getClosure($log);
+
+    DB::table('election_audit_entries')->where('election_event_id', $round->election_event_id)->where('sequence', 1)->delete();
+    $previous = ElectionAuditLog::GENESIS;
+    foreach (ElectionAuditEntry::query()->where('election_event_id', $round->election_event_id)->orderBy('sequence')->get() as $entry) {
+        DB::table('election_audit_entries')->where('id', $entry->id)->update(['sequence' => $entry->sequence - 1, 'previous_hash' => $previous]);
+        $previous = $hashOf($attributesOf($entry->fresh()));
+        DB::table('election_audit_entries')->where('id', $entry->id)->update(['hash' => $previous]);
+    }
+    $other = Election::factory()->create();
+    DB::table('election_audit_entries')->insert(['election_event_id' => $other->id, 'sequence' => 1, 'action' => 'round_opened', 'previous_hash' => ElectionAuditLog::GENESIS, 'hash' => $anchor, 'created_at' => now()]);
+
+    [$status, $output] = verifyRound($round);
+
+    expect($log->verify($round->election))->toBeTrue()
+        ->and(ElectionAuditEntry::query()->where('hash', $anchor)->value('election_event_id'))->toBe($other->id)
+        ->and($status)->toBe(1)
+        ->and($output)->toContain('MISMATCH: the audit log head the manifest anchored at the seal is no longer a line of the audit log.')
+        ->and($output)->not->toContain('OK round');
+});
+
+it('fails verification when the manifest carries no audit anchor', function () {
+    [$round] = stewardedManifestRound();
+    $body = app(RoundManifest::class)->body($round, null);
+    ElectionManifest::query()->where('election_round_id', $round->id)->update(['body' => $body, 'hash' => RoundManifest::hash($body)]);
+
+    [$status, $output] = verifyRound($round);
+
+    expect(json_decode($body, true)['audit_head_hash'])->toBeNull()
         ->and($status)->toBe(1)
         ->and($output)->toContain('MISMATCH: the audit log head the manifest anchored at the seal is no longer a line of the audit log.')
         ->and($output)->not->toContain('OK round');
