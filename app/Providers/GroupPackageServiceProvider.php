@@ -74,6 +74,9 @@ class GroupPackageServiceProvider extends ServiceProvider
         // Englisch mitten in einer deutschen Seite („Write a message…" unter
         // „Chat zum Antrag"). Ohne sie liefert __() den Key zurück — Deutsch,
         // unabhängig von der eingestellten Locale.
+        //
+        // Since 2026-11-14 the locale is pinned to `de` in config/app.php; the site is
+        // German only. The package translations stay unloaded for the reason above.
 
         // <x-group::nostr-avatar>, <x-group::profile-card>, …
         Blade::anonymousComponentPath($views.'/components', 'group');

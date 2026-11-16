@@ -7,6 +7,7 @@ use App\Support\Board;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use ParagonIE\CipherSweet\BlindIndex;
 use ParagonIE\CipherSweet\EncryptedRow;
@@ -121,6 +122,7 @@ class EinundzwanzigPleb extends Authenticatable implements CipherSweetEncrypted,
             'association_status' => AssociationStatus::class,
             'statutes_accepted_at' => 'datetime',
             'applied_at' => 'datetime',
+            'last_login_at' => 'datetime',
         ];
     }
 
@@ -139,6 +141,15 @@ class EinundzwanzigPleb extends Authenticatable implements CipherSweetEncrypted,
     public function paymentEvents()
     {
         return $this->hasMany(PaymentEvent::class);
+    }
+
+    /**
+     * The member's DM inbox relays (kind 10050, NIP-17); null means the
+     * member cannot receive a direct message.
+     */
+    public function dmRelays(): HasOne
+    {
+        return $this->hasOne(PlebDmRelay::class);
     }
 
     /**

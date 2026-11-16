@@ -3,6 +3,7 @@
 use App\Http\Middleware\ThrottleApiV1;
 use App\Models\EinundzwanzigPleb;
 use App\Support\ApiIdentity;
+use App\Support\NostrAuth;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Factory as HttpClientFactory;
 use Illuminate\Http\Request;
@@ -10,10 +11,14 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use Mdanter\Ecc\Crypto\Signature\SchnorrSignature;
+use ParagonIE\CipherSweet\CipherSweet;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use swentel\nostr\Event\Event;
 use swentel\nostr\Key\Key;
 use swentel\nostr\Sign\Sign;
+use Tests\Engine\EngineTestCase;
+use Tests\Support\CheapBlindIndexCrypto;
+use Tests\Support\RelayTripwire;
 use Tests\TestCase;
 
 /*
@@ -28,6 +33,14 @@ use Tests\TestCase;
 */
 
 pest()->extend(TestCase::class)->use(RefreshDatabase::class)->in('Feature');
+
+/*
+| tests/Engine is in no testsuite of phpunit.xml and therefore not part of
+| `php artisan test`: it needs a real database engine, which
+| scripts/test-engine.sh provides. Its base class refuses to touch any other
+| database (see Tests\Engine\EngineTestCase).
+*/
+pest()->extend(EngineTestCase::class)->in('Engine');
 
 /*
 |--------------------------------------------------------------------------
@@ -145,9 +158,19 @@ pest()->tia()
 |
 | tests/Feature/HttpStrayRequestTest.php proves all of this by effect.
 |
+| The layouts render @googlefonts, and spatie/laravel-google-fonts downloads
+| the CSS on the first render unless storage/app/public/fonts (ignored by
+| git) already holds it. Its fallback (a plain <link> to Google) is switched
+| on by `! env('APP_DEBUG')`, so with a local .env that sets APP_DEBUG=true a
+| fresh checkout threw the refused download as a 500 on every full-page test:
+| 28 red tests in a new worktree, green in one that had cached the fonts.
+| The fallback is pinned on here, as it is in production, so the outcome no
+| longer depends on .env or on what an earlier run left on disk.
+|
 */
 
 pest()->beforeEach(function (): void {
+    config(['google-fonts.fallback' => true]);
     Http::preventStrayRequests();
 
     app()->rebinding(
@@ -155,6 +178,69 @@ pest()->beforeEach(function (): void {
         fn ($app, HttpClientFactory $factory) => $factory->preventStrayRequests(),
     );
 })->in('Feature');
+
+/*
+|--------------------------------------------------------------------------
+| Blind index cost
+|--------------------------------------------------------------------------
+|
+| Every saved member computes the slow blind index of its e-mail, Argon2id at
+| 64 MiB (about 35 ms), whether or not it has an address. Tests\Support\
+| CheapBlindIndexCrypto runs the same construction at libsodium's minimum
+| cost, the way phpunit.xml sets BCRYPT_ROUNDS=4. The engine is rebuilt for
+| each test, and the model's cached encrypted row with it, so no test holds
+| an engine of another test's container.
+|
+| tests/Engine is left out on purpose: the suite against the real database
+| engine keeps the production backend.
+|
+*/
+
+pest()->beforeEach(function (): void {
+    config([
+        'ciphersweet.backend' => 'custom',
+        'ciphersweet.backends.custom' => CheapBlindIndexCrypto::class,
+    ]);
+    app()->forgetInstance(CipherSweet::class);
+    EinundzwanzigPleb::$cipherSweetEncryptedRow = null;
+})->in('Feature');
+
+/*
+|--------------------------------------------------------------------------
+| Relays
+|--------------------------------------------------------------------------
+|
+| The second half of "no test leaves the machine". Http::preventStrayRequests()
+| cannot see a relay: swentel\nostr\Relay\Relay opens its own WebSocket. Blank
+| relay URLs in phpunit.xml only cover code that reads them — the vendor's
+| NIP-17 path dials hard-wired public relays whatever the configuration says.
+|
+| The shadow file must be loaded before the first WebSocket dial of the
+| process, so it is required here and not from a test. See its header for why
+| a function in the vendor's namespace intercepts the vendor's sockets.
+|
+| The check after each test is the part that makes the guard report instead of
+| merely refuse: the vendor and three places in this application catch the
+| refusal and carry on with an empty result. Tests\Support\RelayTripwire
+| explains the layers; tests/Feature/RelayStrayConnectionTest.php proves them.
+|
+| tests/Unit has no application to bind a transport in, but a unit test of
+| event-building code can still wander into the vendor's network path, so the
+| socket ledger is checked there too.
+|
+*/
+
+require_once __DIR__.'/Support/phrity-net-socket-shadow.php';
+
+pest()
+    ->beforeEach(fn () => RelayTripwire::arm(app()))
+    ->afterEach(fn () => RelayTripwire::assertNothingAttempted())
+    ->in('Feature', 'Engine');
+
+pest()
+    ->beforeEach(fn () => RelayTripwire::reset())
+    ->afterEach(fn () => RelayTripwire::assertNothingAttempted())
+    ->in('Unit');
 
 /*
 |--------------------------------------------------------------------------
@@ -216,11 +302,13 @@ function testPrivateKey(): string
  * that has to reach the state "logged in the way a real browser does".
  *
  * Pass `$privkey` to sign a second, different challenge with the same identity —
- * that is what a returning member's browser does on the next login.
+ * that is what a returning member's browser does on the next login. Pass
+ * `$tags` to replace the default `challenge` + `u` pair, e.g. to sign the
+ * NIP-42 relay AUTH form of the same challenge.
  *
  * @return array{event: array<string, mixed>, pubkey: string, privkey: string}
  */
-function makeSignedLoginEvent(string $challenge, ?int $createdAt = null, ?string $privkey = null): array
+function makeSignedLoginEvent(string $challenge, ?int $createdAt = null, ?string $privkey = null, ?array $tags = null): array
 {
     $key = new Key;
     $privkey ??= testPrivateKey();
@@ -229,7 +317,7 @@ function makeSignedLoginEvent(string $challenge, ?int $createdAt = null, ?string
     $event = new Event;
     $event->setKind(22242);
     $event->setCreatedAt($createdAt ?? time());
-    $event->setTags([['challenge', $challenge]]);
+    $event->setTags($tags ?? [['challenge', $challenge], ['u', NostrAuth::loginUrl()]]);
     $event->setContent('');
 
     (new Sign)->signEvent($event, $privkey);

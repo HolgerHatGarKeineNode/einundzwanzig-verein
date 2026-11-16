@@ -19,6 +19,19 @@ class PaymentEvent extends Model
         'btc_pay_invoice',
     ];
 
+    /**
+     * `paid_at` is deliberately not fillable: only `MembershipService::markPaid()`
+     * writes it, at the moment `paid` turns true.
+     *
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'paid_at' => 'datetime',
+        ];
+    }
+
     public function pleb()
     {
         return $this->belongsTo(EinundzwanzigPleb::class, 'einundzwanzig_pleb_id');

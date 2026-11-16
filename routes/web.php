@@ -102,9 +102,26 @@ Route::livewire('/association/benefits', 'association.benefits')->name('associat
 
 Route::livewire('/association/members/admin', 'association.members.admin')->name('association.members.admin');
 
+Route::livewire('/association/election/admin', 'association.election.admin')->name('association.election.admin');
+Route::livewire('/association/election/admin/{election}/screen', 'association.election.screen')->name('association.election.admin.screen');
+Route::livewire('/association/election/admin/{election}/protocol', 'association.election.protocol')->name('association.election.admin.protocol');
+
 Route::livewire('/association/news', 'association.news')->name('association.news');
+
+Route::livewire('/association/election', 'association.election.index')->name('association.election');
+
+Route::livewire('/association/messages', 'association.messages')->name('association.messages');
+
+Route::livewire('/association/messages/admin', 'association.messages.admin')->name('association.messages.admin');
 
 Route::livewire('/association/project-support', 'association.project-support.index')->name('association.projectSupport');
 Route::livewire('/association/project-support/create', 'association.project-support.form.create')->name('association.projectSupport.create');
 Route::livewire('/association/project-support/{projectProposal:slug}', 'association.project-support.show')->name('association.projectSupport.item');
 Route::livewire('/association/project-support/edit/{projectProposal:slug}', 'association.project-support.form.edit')->name('association.projectSupport.edit');
+
+Route::livewire('/association/proposals', 'association.proposals.index')->name('association.proposals.index');
+Route::livewire('/association/proposals/archive', 'association.proposals.index')->defaults('archive', true)->name('association.proposals.archive');
+Route::livewire('/association/proposals/create', 'association.proposals.form')->name('association.proposals.create');
+Route::livewire('/association/proposals/board', 'association.proposals.board')->name('association.proposals.board');
+Route::livewire('/association/proposals/{memberProposal}', 'association.proposals.show')->whereNumber('memberProposal')->name('association.proposals.show');
+Route::livewire('/association/proposals/{memberProposal}/edit', 'association.proposals.form')->whereNumber('memberProposal')->name('association.proposals.edit');

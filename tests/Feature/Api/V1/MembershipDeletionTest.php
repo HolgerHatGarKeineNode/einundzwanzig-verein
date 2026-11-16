@@ -153,6 +153,8 @@ it('erases the person and keeps the books', function () {
 
 it('leaves no trace of the erased person anywhere in the database', function () {
     $subject = deletionSubject();
+    // A login time is a trace of the person too; set it so its erasure is seen.
+    $subject['pleb']->forceFill(['last_login_at' => now()->subDay()])->save();
 
     deleteCall($subject['privkey'])['response']->assertOk();
 
@@ -166,6 +168,7 @@ it('leaves no trace of the erased person anywhere in the database', function () 
     $raw = DB::table('einundzwanzig_plebs')->where('id', $subject['pleb']->id)->first();
 
     expect($raw->email)->toBeNull()
+        ->and($raw->last_login_at)->toBeNull()
         ->and($raw->application_text)->toBeNull()
         ->and($raw->archived_application_text)->toBeNull()
         ->and($raw->nip05_handle)->toBeNull()

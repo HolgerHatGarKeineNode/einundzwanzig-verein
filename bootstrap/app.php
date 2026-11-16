@@ -1,5 +1,6 @@
 <?php
 
+use App\Exceptions\ElectionBallotRefusedException;
 use App\Exceptions\Nip98Exception;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\ThrottleApiV1;
@@ -150,6 +151,17 @@ return Application::configure(basePath: dirname(__DIR__))
 
             return true;
         });
+
+        /*
+         * A refused ballot is an answer to the voter, not a fault. Its message
+         * carries the reason only, but a report would still put the moment of
+         * a vote attempt into Sentry/Nightwatch/log next to the request and
+         * the session — exactly the link the ballot secrecy keeps out of
+         * every other record. Subclasses are covered (instanceof).
+         */
+        $exceptions->dontReport([
+            ElectionBallotRefusedException::class,
+        ]);
 
         /*
          * Jede abgewiesene NIP-98-Pruefung hinterlaesst eine Spur.

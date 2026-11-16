@@ -80,6 +80,10 @@ class NostrAuth
             self::login($pubkey);
         }
 
+        // The board's electoral roll asks who has signed in since an
+        // election was announced; a working signer is what the vote needs.
+        EinundzwanzigPleb::query()->where('pubkey', $pubkey)->update(['last_login_at' => now()]);
+
         return $pubkey;
     }
 
@@ -112,9 +116,10 @@ class NostrAuth
     }
 
     /**
-     * Verify the cryptographic signature of a kind-22242 event and that its
-     * challenge tag matches the value stored on this session. Consumes the
-     * stored challenge on success so it cannot be reused.
+     * Verify the cryptographic signature of a kind-22242 event, that its
+     * challenge tag matches the value stored on this session, and that it is
+     * bound to this app (`u` tag, no `relay` tag — see isBoundToThisApp()).
+     * Consumes the stored challenge on success so it cannot be reused.
      *
      * @return string the verified pubkey
      */
@@ -148,6 +153,10 @@ class NostrAuth
         }
 
         if ($challengeFromEvent === null || $challengeFromEvent === '') {
+            throw ValidationException::withMessages(['nostr' => __('auth.failed')]);
+        }
+
+        if (! self::isBoundToThisApp($signedEvent['tags'])) {
             throw ValidationException::withMessages(['nostr' => __('auth.failed')]);
         }
 
@@ -199,6 +208,71 @@ class NostrAuth
         }
 
         throw ValidationException::withMessages(['nostr' => __('auth.failed')]);
+    }
+
+    /**
+     * The value a login event must carry in its `u` tag: the origin of
+     * config('app.url'), without a trailing slash.
+     *
+     * Taken from the configuration, not from the request's Host header, for
+     * the same reason as Nip98::expectedUrl(): nothing validates that header.
+     * Returns null when the configured URL has no scheme or host, which makes
+     * every login fail closed instead of accepting an unbound event.
+     */
+    public static function loginUrl(): ?string
+    {
+        $parts = parse_url((string) config('app.url'));
+
+        if (! is_array($parts) || ! isset($parts['scheme'], $parts['host'])) {
+            return null;
+        }
+
+        return strtolower($parts['scheme']).'://'.strtolower($parts['host'])
+            .(isset($parts['port']) ? ':'.$parts['port'] : '');
+    }
+
+    /**
+     * Kind 22242 with a `challenge` tag is also the NIP-42 relay AUTH event.
+     * Without a binding, an answer a member's client gave to a relay that
+     * passed our challenge on as its own AUTH challenge was an app login
+     * (jury run 1, B1). Two rules close that:
+     *
+     * - a `relay` tag means "this proves who I am to that relay", never to
+     *   this app, so any `relay` tag refuses the event;
+     * - exactly one `u` tag, equal to loginUrl(), says the signer meant this
+     *   app. A relay AUTH never carries it.
+     *
+     * @param  mixed  $tags  the event's tags as submitted
+     */
+    private static function isBoundToThisApp(mixed $tags): bool
+    {
+        $expectedUrl = self::loginUrl();
+
+        if ($expectedUrl === null || ! is_array($tags)) {
+            return false;
+        }
+
+        $urls = [];
+
+        foreach ($tags as $tag) {
+            if (! is_array($tag)) {
+                continue;
+            }
+
+            $name = $tag[0] ?? null;
+
+            if ($name === 'relay') {
+                return false;
+            }
+
+            if ($name === 'u') {
+                $urls[] = $tag[1] ?? null;
+            }
+        }
+
+        return count($urls) === 1
+            && is_string($urls[0])
+            && hash_equals($expectedUrl, $urls[0]);
     }
 
     public static function logout(): void

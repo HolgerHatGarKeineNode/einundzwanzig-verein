@@ -1,13 +1,16 @@
 <?php
 
 use App\Enums\AssociationStatus;
+use App\Models\DmDelivery;
 use App\Models\EinundzwanzigPleb;
+use App\Models\Election;
 use App\Models\PaymentEvent;
 use App\Support\Board;
 use App\Support\NostrAuth;
 use Flux\Flux;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
@@ -48,6 +51,9 @@ new class extends Component
 
     #[Locked]
     public ?int $confirmAcceptId = null;
+
+    #[Locked]
+    public ?int $messagesPlebId = null;
 
     #[Locked]
     public ?int $confirmDeleteId = null;
@@ -219,6 +225,15 @@ new class extends Component
         Flux::modal('payment-details')->show();
     }
 
+    public function openMessages(int $plebId): void
+    {
+        $this->ensureAuthorized();
+
+        $this->messagesPlebId = EinundzwanzigPleb::query()->notErased()->findOrFail($plebId)->id;
+        unset($this->messagesPleb, $this->memberDeliveries);
+        Flux::modal('member-messages')->show();
+    }
+
     public function accept($rowId): void
     {
         $this->ensureAuthorized();
@@ -247,12 +262,26 @@ new class extends Component
      *   stale application row must not demote an honorary member back to
      *   passive; a demotion is a deliberate act, not a side effect of
      *   confirming an application.
+     *
+     * Refused while a real election is announced and not finished
+     * (`Election::lockingMemberStatus()`): its roll rests on the categories,
+     * so the Wahlleitung enters a voter there, with a reason in the audit log.
      */
     public function acceptPleb(): void
     {
         $this->ensureAuthorized();
 
         if (! $this->confirmAcceptId) {
+            return;
+        }
+
+        $election = Election::lockingMemberStatus();
+
+        if ($election !== null) {
+            $this->confirmAcceptId = null;
+            Flux::modal('confirm-accept-pleb')->close();
+            Flux::toast(__('Die Wahl „:name“ ist angekündigt und noch nicht abgeschlossen. Bis dahin ändert ihr hier keinen Mitgliedsstatus, denn das Wählerverzeichnis hängt daran. Den Antrag nehmt ihr nach der Wahl an. Hat ein Aktiv- oder Ehrenmitglied bar bezahlt, tragt ihr es auf der Wahlseite unter „Wählerverzeichnis“ mit Grund als wahlberechtigt ein.', ['name' => $election->name]), variant: 'danger');
+
             return;
         }
 
@@ -371,6 +400,33 @@ new class extends Component
 
         return EinundzwanzigPleb::with(['paymentEvents'])->find($this->selectedPlebId);
     }
+
+    #[Computed]
+    public function messagesPleb(): ?EinundzwanzigPleb
+    {
+        $this->ensureAuthorized();
+
+        return $this->messagesPlebId === null ? null : EinundzwanzigPleb::with('profile')->find($this->messagesPlebId);
+    }
+
+    /**
+     * The direct messages that went to the member in the messages dialog,
+     * newest first, with where each one stands.
+     *
+     * @return EloquentCollection<int, DmDelivery>
+     */
+    #[Computed]
+    public function memberDeliveries(): EloquentCollection
+    {
+        $this->ensureAuthorized();
+
+        return $this->messagesPlebId === null ? new EloquentCollection : DmDelivery::query()
+            ->with('run.message')
+            ->where('einundzwanzig_pleb_id', $this->messagesPlebId)
+            ->orderByDesc('id')
+            ->limit(20)
+            ->get();
+    }
 };
 ?>
 
@@ -488,7 +544,15 @@ new class extends Component
                         </flux:table.cell>
 
                         <flux:table.cell align="end">
-                            <div class="flex gap-2">
+                            <div class="flex items-center gap-2">
+                                <flux:button
+                                    wire:click="openMessages({{ $pleb->id }})"
+                                    variant="ghost"
+                                    icon="envelope"
+                                    class="min-h-11 min-w-11"
+                                    :aria-label="__('Nachrichten an :name', ['name' => $pleb->profile?->name ?: ($pleb->profile?->display_name ?: __('dieses Mitglied'))])"
+                                    data-test="member-messages-{{ $pleb->id }}"
+                                />
                                 <flux:button
                                     wire:click="delete({{ $pleb->id }})"
                                     variant="ghost"
@@ -580,6 +644,40 @@ new class extends Component
                 <div class="flex gap-2">
                     <flux:spacer/>
                     <flux:button wire:click="closePaymentModal" variant="primary">Schließen</flux:button>
+                </div>
+            </div>
+        @endif
+    </flux:modal>
+
+    {{-- Which direct messages went to one member, and where each stands. Small on purpose: the full picture is in the message centre. --}}
+    <flux:modal name="member-messages" :closable="false" class="w-full max-w-lg">
+        @if ($isAllowed && $messagesPlebId && $this->messagesPleb)
+            <div class="space-y-6" data-test="member-messages">
+                <div>
+                    <flux:heading size="lg" class="break-words">{{ __('Nachrichten an :name', ['name' => \App\Models\MemberProposal::authorNameOf($this->messagesPleb)]) }}</flux:heading>
+                    <flux:text class="mt-2">{{ __('Die letzten Direktnachrichten des Vereins an dieses Mitglied. Alles Weitere steht unter „Nachrichten an Mitglieder“.') }}</flux:text>
+                </div>
+                @if ($this->memberDeliveries->isEmpty())
+                    <p class="text-base text-text-secondary">{{ __('Noch keine Nachricht an dieses Mitglied.') }}</p>
+                @else
+                    <ul class="divide-y divide-border-default border-y border-border-default">
+                        @foreach ($this->memberDeliveries as $delivery)
+                            <li wire:key="member-delivery-{{ $delivery->id }}" class="py-3" data-test="member-delivery-{{ $delivery->id }}">
+                                <p class="flex flex-wrap items-baseline justify-between gap-x-4">
+                                    <span class="text-base font-bold text-text-primary">{{ $delivery->run?->message?->type->label() }}</span>
+                                    <time datetime="{{ $delivery->created_at->toIso8601String() }}" class="text-sm text-text-tertiary">{{ $delivery->created_at->copy()->timezone('Europe/Berlin')->locale('de')->isoFormat('D. MMM YYYY, HH:mm') }}</time>
+                                </p>
+                                <p @class(['text-sm', 'text-danger' => $delivery->status->isFailure(), 'text-text-secondary' => ! $delivery->status->isFailure()])>
+                                    {{ $delivery->status->label() }}@if ($delivery->seen_at){{ __(', im Portal geöffnet') }}@endif
+                                </p>
+                            </li>
+                        @endforeach
+                    </ul>
+                @endif
+                <div class="flex justify-end">
+                    <flux:modal.close>
+                        <flux:button variant="ghost" class="min-h-11">{{ __('Schließen') }}</flux:button>
+                    </flux:modal.close>
                 </div>
             </div>
         @endif

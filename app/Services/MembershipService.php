@@ -7,12 +7,16 @@ use App\Enums\MembershipStatus;
 use App\Enums\PaymentReviewReason;
 use App\Exceptions\MembershipUnavailableException;
 use App\Jobs\PublishPaymentEventToNostr;
+use App\Models\DmDelivery;
+use App\Models\DmDeliveryRelay;
 use App\Models\EinundzwanzigPleb;
+use App\Models\MemberProposalVote;
 use App\Models\MembershipGrant;
 use App\Models\PaymentEvent;
 use App\Models\PaymentReversal;
 use App\Models\PaymentReview;
 use App\Models\Profile;
+use App\Services\Election\ElectoralRoll;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Client\HttpClientException;
 use Illuminate\Support\Carbon;
@@ -81,7 +85,7 @@ class MembershipService
      */
     public const LIGHTNING_PAYMENT_METHOD_ID = 'BTC-LN';
 
-    public function __construct(protected BtcPayClient $btcPay) {}
+    public function __construct(protected BtcPayClient $btcPay, protected ElectoralRoll $electoralRoll) {}
 
     /**
      * Annual fee, in the configured currency. Never a request value.
@@ -542,14 +546,50 @@ class MembershipService
          * ever goes looking for and nothing ever repairs.
          */
         DB::transaction(function () use ($paymentEvent, $settlement): void {
+            // `paid_at` is the moment of settlement and is written on the
+            // flip only: a redelivery on a paid row must not move it, or a
+            // fee settled before a round opened would look like a late payment.
             if (! $paymentEvent->paid) {
-                $paymentEvent->update(['paid' => true]);
+                $paymentEvent->forceFill(['paid' => true, 'paid_at' => now()])->save();
             }
 
             $this->grantMembershipOnPayment($paymentEvent, $settlement);
+
+            $this->enrolOnOpenElectoralRolls($paymentEvent);
         });
 
         return ['payment_event' => $paymentEvent, 'settled' => true, 'review' => null];
+    }
+
+    /**
+     * A settled fee puts its payer on the electoral roll of every round that
+     * is open right now, if it makes them entitled — somebody who pays during
+     * an election must be able to vote without anyone doing anything.
+     *
+     * Runs for a redelivered settlement too (`markPaid()` on a record that is
+     * already paid), which is what repairs an enrolment that failed once.
+     *
+     * The direction of a failure is decided, not incidental: the BOOKING
+     * wins. An error in here must never be able to undo a payment or turn a
+     * webhook into a retry loop, so the enrolment runs in a transaction of its
+     * own — a savepoint inside the caller's — and whatever it throws is
+     * reported and swallowed. The member is then paid and NOT on the roll,
+     * which refuses a ballot instead of admitting one, and the report says
+     * so.
+     */
+    protected function enrolOnOpenElectoralRolls(PaymentEvent $paymentEvent): void
+    {
+        $pleb = $paymentEvent->pleb;
+
+        if ($pleb === null) {
+            return;
+        }
+
+        try {
+            DB::transaction(fn () => $this->electoralRoll->enrolLatePayer($pleb, now()));
+        } catch (Throwable $exception) {
+            report($exception);
+        }
     }
 
     /**
@@ -1123,6 +1163,13 @@ class MembershipService
      *    discriminating that is depends on how many fees are booked within the
      *    same seconds and is UNMEASURED — recorded as a known unknown, not as
      *    an assessed low risk.
+     *  - Election votes (`election_votes`). The row keeps the original
+     *    pubkey, the signed vote event and the choices, still linked to the
+     *    anonymised record by `einundzwanzig_pleb_id`. They are the evidence
+     *    `election:verify` re-checks a sealed round against; deleting or
+     *    rewriting them would turn that round's result unverifiable.
+     *    `election:verify` checks such a vote against the key that signed it
+     *    instead of the tombstoned member pubkey.
      *
      * @return array{retained_payments: int}
      */
@@ -1130,6 +1177,33 @@ class MembershipService
     {
         return DB::transaction(function () use ($pleb): array {
             Profile::query()->where('pubkey', $pleb->pubkey)->delete();
+
+            // Inbox relays name where this person reads; the row would outlive
+            // the anonymised member, whose record is updated, never deleted.
+            $pleb->dmRelays()->delete();
+
+            /*
+             * DIRECT MESSAGES TO THIS MEMBER. The delivery row stays so a
+             * run's counts still add up; everything on it that points at the
+             * person goes. The stored wrap names the pubkey in its `p` tag,
+             * the filled-in text carries the name, the rumor id is a hash
+             * over that pubkey, and the relay rows say where the member
+             * reads. A delivery still waiting is refused by SendDirectMessage
+             * for an erased recipient, so nothing is rebuilt afterwards.
+             * `seen_at` is when the person read it in the portal inbox.
+             */
+            $deliveries = DmDelivery::query()->where('einundzwanzig_pleb_id', $pleb->id);
+
+            DmDeliveryRelay::query()->whereIn('dm_delivery_id', (clone $deliveries)->select('id'))->delete();
+
+            $deliveries->update([
+                'plaintext' => null,
+                'rumor_id' => null,
+                'rumor_created_at' => null,
+                'wrap' => null,
+                'error' => null,
+                'seen_at' => null,
+            ]);
 
             // Images the member embedded in project descriptions are theirs.
             $pleb->clearMediaCollection(EinundzwanzigPleb::DESCRIPTION_IMAGES);
@@ -1142,6 +1216,7 @@ class MembershipService
             $pleb->application_text = null;
             $pleb->archived_application_text = null;
             $pleb->application_for = null;
+            $pleb->last_login_at = null;
             $pleb->save();
 
             /*
@@ -1171,6 +1246,21 @@ class MembershipService
                 'event_id' => null,
                 'btc_pay_invoice' => null,
             ]);
+
+            /*
+             * MEMBER PROPOSALS. A vote row is nothing but "this member, this
+             * proposal, for or against" — there is no part of it that could
+             * stay without the person, so the rows go and the two counts drop
+             * accordingly.
+             *
+             * Proposals and comments stay, like project proposals do: they
+             * hang on this row by its primary key, and with the profile
+             * deleted and pubkey and npub replaced above there is no name
+             * left for them to carry — the pages print "Ehemaliges Mitglied"
+             * for an erased author. What the member TYPED stays as typed; a
+             * name written into a title or a comment is not found here.
+             */
+            MemberProposalVote::query()->where('einundzwanzig_pleb_id', $pleb->id)->delete();
 
             /*
              * After the save, never before: saving re-upserts the blind index

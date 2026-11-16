@@ -95,7 +95,7 @@ $classes = Flux::classes()
         'primary' => $color ? 'bg-accent hover:bg-accent/90' : 'bg-orange-primary hover:bg-orange-light',
         'filled' => 'bg-bg-elevated hover:bg-bg-surface',
         'outline' => 'bg-transparent hover:bg-bg-elevated',
-        'danger' => 'bg-red-500 hover:bg-red-600',
+        'danger' => 'bg-red-600 hover:bg-red-700', // red-500 under white text is 3.81:1 (WCAG 1.4.3 asks 4.5:1)
         'ghost' => 'bg-transparent hover:bg-bg-elevated',
         'subtle' => 'bg-transparent hover:bg-bg-elevated',
     })

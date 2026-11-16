@@ -1,5 +1,7 @@
 <?php
 
+use App\Support\SentryElectionFilter;
+
 /**
  * Sentry Laravel SDK configuration file.
  *
@@ -43,6 +45,12 @@ return [
         // Ignore Laravel's default health URL
         '/up',
     ],
+
+    // E23: no Livewire argument, state or request body of an election component reaches Sentry.
+    // Array callables, not closures, so `config:cache` keeps working. See App\Support\SentryElectionFilter.
+    'before_breadcrumb' => [SentryElectionFilter::class, 'beforeBreadcrumb'],
+    'before_send' => [SentryElectionFilter::class, 'beforeSend'],
+    'before_send_transaction' => [SentryElectionFilter::class, 'beforeSendTransaction'],
 
     // Breadcrumb specific configuration
     'breadcrumbs' => [

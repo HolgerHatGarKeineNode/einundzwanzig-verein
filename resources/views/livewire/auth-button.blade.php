@@ -1,6 +1,7 @@
 <?php
 
 use App\Support\NostrAuth;
+use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Locked;
 use Livewire\Attributes\On;
 use Livewire\Component;
@@ -11,14 +12,33 @@ new class extends Component
     public bool $isLoggedIn = false;
 
     #[Locked]
-    public string $location = 'sidebar'; // 'sidebar' or 'navbar'
+    public string $location = 'sidebar'; // 'sidebar', 'navbar' or a page ('election')
+
+    /**
+     * The login button's text. A page that asks a guest to log in names the
+     * action plainly ("Mit Nostr anmelden"); the sidebar keeps its own.
+     */
+    #[Locked]
+    public string $label = '';
 
     #[Locked]
     public ?string $nostrChallenge = null;
 
+    /**
+     * Whether the login button carries the primary variant. A page that asks
+     * for the login itself owns the one primary action of the screen, so the
+     * sidebar's button steps back to a secondary one there.
+     */
+    #[Locked]
+    public bool $isPrimary = true;
+
+    /** Routes whose page shows its own login button (location other than the sidebar). */
+    public const PAGES_WITH_OWN_LOGIN = ['association.election'];
+
     public function mount(): void
     {
         $this->isLoggedIn = NostrAuth::check();
+        $this->isPrimary = $this->location !== 'sidebar' || ! request()->routeIs(...self::PAGES_WITH_OWN_LOGIN);
 
         if (! $this->isLoggedIn) {
             // Sidebar + navbar mount the same component on the same page; using
@@ -29,22 +49,47 @@ new class extends Component
     }
 
     /**
-     * JS-driven fallback: re-issue the challenge if the client cannot find
-     * one in the rendered snapshot (e.g. after a long-lived tab where the
-     * Volt component snapshot drifted out of sync with the session).
+     * A fresh challenge for one login attempt. nostrLogin.js asks for it on
+     * every attempt instead of trusting the rendered one, which expires 300 s
+     * after the page was rendered while a guest tab stays open far longer.
+     *
+     * No re-render: the client uses the returned value, and morphing the
+     * component while its progress overlay is up gains nothing.
      */
     public function requestNostrChallenge(): string
     {
         $challenge = NostrAuth::issueChallenge();
         $this->nostrChallenge = $challenge;
+        $this->skipRender();
 
         return $challenge;
     }
 
+    /**
+     * Every mounted auth-button hears the browser event. Only the one whose
+     * button started the login answers it: the challenge is spent by the
+     * first verification, so a second instance would fail on the same event.
+     */
     #[On('nostrLoggedIn')]
-    public function handleNostrLoggedIn($signedEvent = null): void
+    public function handleNostrLoggedIn($signedEvent = null, ?string $location = null): void
     {
-        NostrAuth::loginWithSignedEvent($signedEvent);
+        if ($location !== null && $location !== $this->location) {
+            $this->skipRender();
+
+            return;
+        }
+
+        try {
+            NostrAuth::loginWithSignedEvent($signedEvent);
+        } catch (ValidationException $exception) {
+            // Livewire answers a refusal with HTTP 200. Without a signal the
+            // client kept its overlay up and the member saw nothing
+            // (jury run 2, H-1); nostrLogin.js ends the attempt on this event.
+            $this->setErrorBag($exception->errors());
+            $this->dispatch('nostr-login-refused')->self();
+
+            return;
+        }
 
         $this->js('window.location.reload(true);');
     }
@@ -57,7 +102,9 @@ new class extends Component
 }
 ?>
 
-<div x-data="nostrLogin" data-nostr-challenge="{{ $nostrChallenge ?? '' }}">
+<div x-data="nostrLogin" data-nostr-challenge="{{ $nostrChallenge ?? '' }}" data-nostr-login-url="{{ \App\Support\NostrAuth::loginUrl() ?? '' }}" data-location="{{ $location }}"
+     x-on:nostr-login-refused="nostrLoginRefused()"
+     x-on:nostr-login-start.window="if ($event.detail?.location === $root.dataset.location) openNostrLogin({ force: true })">
     @if($isLoggedIn)
         {{-- Vor dem Absenden den Klartext-Cache des Chats vom Geraet raeumen.
              Der Handler laedt dafuer NICHTS nach; ohne Chat auf der Seite ist es
@@ -69,13 +116,13 @@ new class extends Component
             <flux:button variant="ghost" icon="arrow-right-start-on-rectangle" type="submit" wire:click="$dispatch('nostrLoggedOut')">Logout</flux:button>
         </form>
     @else
-        <flux:button variant="primary"
+        <flux:button :variant="$isPrimary ? 'primary' : 'filled'"
                      icon="user"
                      @click="openNostrLogin"
                      x-bind:disabled="nostrLoginInProgress"
                      x-bind:aria-busy="nostrLoginInProgress"
-                     class="cursor-pointer">
-            <span x-show="!nostrLoginInProgress">Mit Nostr verbinden</span>
+                     class="min-h-11 cursor-pointer">
+            <span x-show="!nostrLoginInProgress">{{ $label !== '' ? $label : 'Mit Nostr verbinden' }}</span>
             <span x-show="nostrLoginInProgress" x-cloak class="inline-flex items-center gap-2">
                 <flux:icon.arrow-path class="animate-spin size-4" aria-hidden="true"/>
                 Signiere…
@@ -95,8 +142,8 @@ new class extends Component
          x-bind:aria-busy="nostrLoginInProgress"
          aria-labelledby="nostr-login-progress-heading-{{ $location }}"
          aria-describedby="nostr-login-progress-description-{{ $location }}"
-         @keydown.window.escape="if (nostrLoginInProgress) { $event.preventDefault(); $event.stopPropagation(); }"
-         @keydown.window.tab="if (nostrLoginInProgress) { $event.preventDefault(); $event.stopPropagation(); }"
+         @keydown.window.escape="if (nostrLoginInProgress) { $event.preventDefault(); $event.stopPropagation(); cancelNostrLogin(); }"
+         @keydown.window.tab="if (nostrLoginInProgress) { $event.preventDefault(); $event.stopPropagation(); $refs.cancelLogin?.focus(); }"
          x-effect="document.body.style.overflow = nostrLoginInProgress ? 'hidden' : ''"
          class="fixed inset-0 z-[100] flex items-center justify-center bg-zinc-950/70 backdrop-blur-md">
         <div class="mx-4 w-full max-w-md rounded-2xl bg-white px-8 py-10 text-center shadow-2xl ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-800">
@@ -126,9 +173,12 @@ new class extends Component
                 Nostr-Dialog über dieser Seite. Danach geht es automatisch weiter.
             </flux:text>
 
-            <flux:text size="sm" class="mt-6 text-zinc-500 dark:text-zinc-500">
-                Schließe dieses Fenster nicht.
-            </flux:text>
+            {{-- A way out: a signer that never answers (a bunker without a
+                 reachable relay, a dialog closed without connecting) used to
+                 leave this overlay up with Escape and Tab swallowed. --}}
+            <flux:button variant="ghost" x-ref="cancelLogin" x-on:click="cancelNostrLogin()" class="mt-6 min-h-11">
+                Abbrechen
+            </flux:button>
         </div>
     </div>
 </div>

@@ -68,6 +68,12 @@ return [
     'timezone' => env('APP_TIMEZONE', 'UTC'),
 
     /*
+     * The zone times are SHOWN in — and read from forms in. Stored values
+     * stay in `timezone` (UTC); the association meets in German time.
+     */
+    'display_timezone' => 'Europe/Berlin',
+
+    /*
     |--------------------------------------------------------------------------
     | Application Locale Configuration
     |--------------------------------------------------------------------------
@@ -78,7 +84,8 @@ return [
     |
     */
 
-    'locale' => env('APP_LOCALE', 'de'),
+    // The association's site is German only; the locale is pinned, not read from the env.
+    'locale' => 'de',
 
     'fallback_locale' => env('APP_FALLBACK_LOCALE', 'en'),
 
