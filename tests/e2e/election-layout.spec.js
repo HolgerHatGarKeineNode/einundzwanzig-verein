@@ -469,6 +469,7 @@ function textBlocks() {
             text: text.trim().slice(0, 50),
             aside: block.closest('aside') !== null,
             prose: block.closest('p, dd') !== null,
+            afterElection: block.closest('[data-test="after-election"] dd') !== null,
             longestLine: Math.max(...perLine),
             capacity: Math.floor((block.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) / advance),
             sentenceLines,
@@ -484,14 +485,14 @@ function textBlocks() {
 // open); a round that cannot be counted; and a member who paid after the
 // round opened, so the side column says she is not on its roll.
 const LINE_STATES = [
-    { name: 'tie-decided', ready: '[data-test^="casting-vote-"]', viewer: (data) => data.voters.voter1 },
+    { name: 'tie-decided', afterElection: true, ready: '[data-test^="casting-vote-"]', viewer: (data) => data.voters.voter1 },
     { name: 'measure', ready: '[data-test="receipt-id"]', viewer: (data) => data.voters.voter1 },
-    { name: 'runoff-pending', ready: '[data-test="after-election-pending"]', viewer: (data) => data.voters.voter1 },
-    { name: 'unreadable', ready: '[data-test^="unreadable-"]', viewer: (data) => data.voters.voter1 },
+    { name: 'runoff-pending', afterElection: true, ready: '[data-test="after-election-pending"]', viewer: (data) => data.voters.voter1 },
+    { name: 'unreadable', afterElection: true, ready: '[data-test^="unreadable-"]', viewer: (data) => data.voters.voter1 },
     { name: 'off-roll', ready: '[data-test="eligibility-off-roll"]', viewer: (data) => data.late },
 ]
 
-for (const { name, ready, viewer } of LINE_STATES) {
+for (const { name, ready, viewer, afterElection } of LINE_STATES) {
 test(`sentences run at most 3 lines at 390 px, and lines hold 45 to 75 characters from 820 px (${name})`, async ({ page }) => {
     const data = scenario(name)
 
@@ -519,6 +520,16 @@ test(`sentences run at most 3 lines at 390 px, and lines hold 45 to 75 character
             const span = (list) => list.length === 0 ? null : { min: Math.min(...list.map((block) => block.capacity)), max: Math.max(...list.map((block) => block.capacity)), blocks: list.length }
 
             keep({ page: 'member-lines', scenario: name, viewport: { width, height: 900 }, main_p_dd_capacity: span(prose), aside_capacity: span(aside) })
+
+            // The bounds below hold vacuously over an empty list, and blocks
+            // under 20 characters are skipped: require that each state still
+            // measures main-column prose and a side column, and, where the
+            // after-election list renders, at least one of its values.
+            expect(prose.length, `${at}: main column p/dd measured`).toBeGreaterThan(0)
+            expect(aside.length, `${at}: side column measured`).toBeGreaterThan(0)
+            if (afterElection) {
+                expect(prose.some((block) => block.afterElection), `${at}: an after-election value measured`).toBe(true)
+            }
 
             expect.soft(aside.filter((block) => block.capacity < 45).map((block) => `${block.capacity}: ${block.text}`), `${at}: side column under 45 characters`).toEqual([])
             expect.soft(prose.filter((block) => block.capacity < 45).map((block) => `${block.capacity}: ${block.text}`), `${at}: main column p/dd under 45 characters`).toEqual([])
