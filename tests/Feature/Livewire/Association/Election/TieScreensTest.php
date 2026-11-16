@@ -293,3 +293,21 @@ it('gives no per-row verdict in the void result of an annulled round, but keeps 
         ->not->toContain('Alice Ambrosius: 2 Stimmen, gewählt')
         ->toContain('Ausgezähltes Ergebnis (ungültig): gewählt ist Alice Ambrosius');
 });
+
+/*
+ * Member jury M1: a member page already open kept saying the chair would
+ * decide, three polls after the casting vote was recorded, because the poll
+ * fingerprint left the casting vote out. Mutation that must turn this red:
+ * drop the casting vote from `currentFingerprint()`.
+ */
+it('brings the casting vote to a member page that is already open within one poll', function () {
+    [$board, , $round, $ids] = tiedEvening();
+    $page = tieMemberPage()->assertDontSeeHtml('data-test="casting-vote-'.$round->id.'"');
+    $before = $page->get('fingerprint');
+
+    app(RecordCastingVote::class)->handle($round, $board, [$ids['alice']], 'Erika Mustermann');
+    $page->call('syncRounds');
+
+    expect($page->get('fingerprint'))->not->toBe($before);
+    $page->assertSeeHtml('data-test="casting-vote-'.$round->id.'"')->assertSee('Erika Mustermann');
+});
