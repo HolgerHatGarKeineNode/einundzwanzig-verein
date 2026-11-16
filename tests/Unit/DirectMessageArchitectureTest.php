@@ -800,51 +800,52 @@ it('sees a vote read in a page', function (string $source, array $reads) {
  */
 it('finds the model methods that read votes, transitively', function () {
     expect(dmVoteReaders(ElectionVote::class))->toBe([
+        'ElectionRound::publishedVoteEventIds' => ['publishedVoteEventIds'],
         'ElectionRound::voteEventIdOf' => ['voteEventIdOf'],
         'ElectionRound::votes' => ['votes'],
-    ])->and(dmVoteRelations(ElectionVote::class))->toBe(['voteEventIdOf', 'votes']);
+    ])->and(dmVoteRelations(ElectionVote::class))->toBe(['publishedVoteEventIds', 'voteEventIdOf', 'votes']);
 });
 
 it('derives a vote reader however a model writes it', function (array $sources, array $readers) {
     expect(array_keys(dmDeriveVoteReaders([...dmModelSources(), ...$sources], ElectionVote::class)))->toBe($readers);
 })->with([
-    'today' => [[], ['ElectionRound::voteEventIdOf', 'ElectionRound::votes']],
+    'today' => [[], ['ElectionRound::publishedVoteEventIds', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes']],
     // R9: the lookbehind before 2026-11-16 skipped `\App\Models\ElectionVote::class`.
     'fully qualified relation' => [
         ['Plant' => dmPlant('class Plant { public function ballots(): HasMany { return $this->hasMany(\App\Models\ElectionVote::class); } }')],
-        ['ElectionRound::voteEventIdOf', 'ElectionRound::votes', 'Plant::ballots'],
+        ['ElectionRound::publishedVoteEventIds', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes', 'Plant::ballots'],
     ],
     'aliased import' => [
         ['Plant' => dmPlant('use App\Models\ElectionVote as Ballot;', 'class Plant { public function ballots(): HasMany { return $this->hasMany(Ballot::class); } }')],
-        ['ElectionRound::voteEventIdOf', 'ElectionRound::votes', 'Plant::ballots'],
+        ['ElectionRound::publishedVoteEventIds', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes', 'Plant::ballots'],
     ],
     'class name in a string' => [
         ['Plant' => dmPlant('class Plant { public function ballots() { return $this->hasMany(\'App\Models\ElectionVote\'); } }')],
-        ['ElectionRound::voteEventIdOf', 'ElectionRound::votes', 'Plant::ballots'],
+        ['ElectionRound::publishedVoteEventIds', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes', 'Plant::ballots'],
     ],
     'a query, not a relation' => [
         ['Plant' => dmPlant('class Plant { public function voters() { return ElectionVote::query()->pluck(\'einundzwanzig_pleb_id\'); } }')],
-        ['ElectionRound::voteEventIdOf', 'ElectionRound::votes', 'Plant::voters'],
+        ['ElectionRound::publishedVoteEventIds', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes', 'Plant::voters'],
     ],
     'a wrapper and its caller' => [
         ['ElectionRound' => dmModelSources()['ElectionRound'].'class Extra { public function ballots() { return $this->votes(); } public function hasBallots() { return $this->ballots()->exists(); } }'],
-        ['ElectionRound::ballots', 'ElectionRound::hasBallots', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes'],
+        ['ElectionRound::ballots', 'ElectionRound::hasBallots', 'ElectionRound::publishedVoteEventIds', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes'],
     ],
     'another model through a reader' => [
         ['Election' => dmPlant('class Election { public function rounds() { return $this->hasMany(ElectionRound::class); } public function hasVoted($pleb): bool { return $this->rounds->contains(fn ($round) => $round->voteEventIdOf($pleb) !== null); } }')],
-        ['Election::hasVoted', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes'],
+        ['Election::hasVoted', 'ElectionRound::publishedVoteEventIds', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes'],
     ],
     'a dotted relation path' => [
         ['Election' => dmPlant('class Election { public function withBallots() { return $this->load(\'rounds.votes\'); } }')],
-        ['Election::withBallots', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes'],
+        ['Election::withBallots', 'ElectionRound::publishedVoteEventIds', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes'],
     ],
     'an own relation in a string' => [
         ['ElectionRound' => dmModelSources()['ElectionRound'].'class Extra { public function scopeBallotsCounted($query) { return $query->withCount(\'votes as ballots\'); } }'],
-        ['ElectionRound::scopeBallotsCounted', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes'],
+        ['ElectionRound::publishedVoteEventIds', 'ElectionRound::scopeBallotsCounted', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes'],
     ],
     'static' => [
         ['ElectionRound' => dmModelSources()['ElectionRound'].'class Extra { public static function allBallots() { return static::votes(); } }'],
-        ['ElectionRound::allBallots', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes'],
+        ['ElectionRound::allBallots', 'ElectionRound::publishedVoteEventIds', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes'],
     ],
     'clean: another votes relation, comments, prose, another class' => [
         ['Proposal' => dmPlant(
@@ -858,7 +859,7 @@ it('derives a vote reader however a model writes it', function (array $sources, 
             '    public function guard() { throw new RuntimeException(\'votes voteEventIdOf\'); }',
             '}',
         )],
-        ['ElectionRound::voteEventIdOf', 'ElectionRound::votes'],
+        ['ElectionRound::publishedVoteEventIds', 'ElectionRound::voteEventIdOf', 'ElectionRound::votes'],
     ],
 ]);
 
