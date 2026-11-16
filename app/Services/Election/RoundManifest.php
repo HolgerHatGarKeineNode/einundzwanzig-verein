@@ -9,9 +9,10 @@ use App\Models\ElectionRound;
 /**
  * The manifest of a sealed round: one canonical JSON text and its SHA-256.
  *
- * What goes in: the rule, the numbers per option, who is elected, how many
- * were on the roll, how many votes there are, and a hash over the sorted
- * event ids of those votes. Neither members nor choices of a single vote.
+ * What goes in: the rule, the candidates who were on the ballot (approved
+ * candidacies only, since version 4), the numbers per option, who is
+ * elected, how many were on the roll, how many votes there are, and a hash
+ * over the sorted event ids of those votes. Neither members nor choices of a single vote.
  *
  * The raw count, as it stood at the seal: a tie stays a tie here. The chair's
  * casting vote comes later and has its own row and audit line;
@@ -29,7 +30,7 @@ class RoundManifest
      * Raise whenever the content of `body()` changes, so an old manifest is
      * never compared with a text built by different rules.
      */
-    public const VERSION = 3;
+    public const VERSION = 4;
 
     public function __construct(protected TallyRound $tally) {}
 

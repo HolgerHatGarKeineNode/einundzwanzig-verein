@@ -2,6 +2,7 @@
 
 namespace App\Services\Election;
 
+use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionOutcome;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\ElectionCastingVote;
@@ -67,7 +68,14 @@ class TallyRound
 
     /**
      * Count `$selections` (each candidate id => choice value, empty for a
-     * blank vote) by the rule and against the candidates of `$round`.
+     * blank vote) by the rule and against the candidates of `$round` who
+     * were on its ballot: the approved candidacies, as `CastBallot` and
+     * `election:verify` take them. A pending, rejected or withdrawn
+     * candidacy is in no result, not even as zero.
+     *
+     * A selection that names such a candidacy does not fit the round, like
+     * any other corrupted vote: the round is not counted at all, rather
+     * than counted without that vote.
      *
      * @param  iterable<mixed>  $selections
      *
@@ -94,7 +102,7 @@ class TallyRound
         return $this->tally->count(
             $round->counting_rule,
             $round->seats,
-            $round->candidates()->pluck('id')->map(fn (mixed $id): int => (int) $id)->all(),
+            $round->candidates()->where('status', ElectionCandidateStatus::Approved)->pluck('id')->map(fn (mixed $id): int => (int) $id)->all(),
             $rows,
         );
     }

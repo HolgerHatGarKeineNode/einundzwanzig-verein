@@ -73,7 +73,7 @@ it('writes the manifest of a round when it is sealed, with every field written o
 
     expect($manifest->hash)->toBe(hash('sha256', $manifest->body))
         ->and(json_decode($manifest->body, true))->toBe([
-            'version' => 3,
+            'version' => 4,
             'election' => $round->election_event_id,
             'round' => $round->id,
             'counting_rule' => 'most_votes',
