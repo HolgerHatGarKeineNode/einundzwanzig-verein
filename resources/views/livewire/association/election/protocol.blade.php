@@ -144,6 +144,10 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
                 array_push($lines, ...$this->resultLines($round->counting_rule, $report['void_result']['result'], $report, void: true));
             }
 
+            if ($report['unreadable']) {
+                $lines[] = '   '.$this->unreadableText($round);
+            }
+
             $manifest = $report['manifest'] ?? $report['void_result']['manifest'] ?? null;
 
             // Annulled after its count: result and checksum first, then the annulment with its reason.
@@ -295,6 +299,15 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
         }
 
         return $report['run_off_resolved'] ? ElectionTieText::runOffResolved() : ElectionTieText::pending();
+    }
+
+    /**
+     * The mark of a round whose stored votes do not fit it: no result is
+     * shown, the count is refused until `election:verify` has been run.
+     */
+    protected function unreadableText(ElectionRound $round): string
+    {
+        return __('Ergebnis nicht lesbar: Die gespeicherten Stimmen passen nicht zu diesem Wahlgang. Prüfen mit „php artisan election:verify :round“.', ['round' => $round->id]);
     }
 
     /**
@@ -451,6 +464,13 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
                             @endif
                         @endif
                     @endforeach
+
+                    @if ($report['unreadable'])
+                        <p class="mt-4 inline-flex items-start gap-2 text-base font-bold text-danger break-words print:text-black" data-test="protocol-unreadable-{{ $round->id }}">
+                            <flux:icon.exclamation-triangle variant="mini" class="mt-0.5 size-5 shrink-0" aria-hidden="true" />
+                            <span>{{ $this->unreadableText($round) }}</span>
+                        </p>
+                    @endif
 
                     @if ($report['reason'] && $report['void_result'] === null)
                         <p class="mt-2 text-base break-words">{{ __('Grund: :reason', ['reason' => $report['reason']]) }}</p>

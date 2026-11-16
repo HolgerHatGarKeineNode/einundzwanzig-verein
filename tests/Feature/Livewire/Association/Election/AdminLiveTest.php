@@ -2,6 +2,8 @@
 
 use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
+use App\Exceptions\ElectionActionRefusedException;
+use App\Exceptions\ElectionCandidateBlockedException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionAuditEntry;
@@ -14,6 +16,7 @@ use App\Services\Election\CloseRound;
 use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\OpenRound;
+use App\Services\Election\RoundReport;
 use App\Support\NostrAuth;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -1075,4 +1078,59 @@ it('shows the turnout in the close modal before the board confirms', function ()
 
     $page->call('startRoundAction', $round->id, 'close')
         ->assertSee('Abgestimmt haben bisher 1 von 4 Wahlberechtigten.');
+});
+
+/*
+ * Security jury L1: one corrupted vote row in a sealed round made the board
+ * page, the share view and the minutes answer 500 for the whole election.
+ * The count of that round stays refused; everything else renders. Mutation
+ * that must turn this red: let `RoundReport::of()` call
+ * `TallyRound::effective()` without catching the refusal again.
+ */
+it('shows a round with an unreadable count as such and renders every other round on every screen', function () {
+    $board = liveBoard();
+    $election = Election::factory()->announced()->create(['name' => 'Wahl mit kaputter Zeile']);
+    $voters = [electionVoter(), electionVoter()];
+    $broken = openElectionRound(['title' => 'Präsidium', 'position' => 1], election: $election);
+    castElectionBallot($broken, $voters[0], [$broken->candidates()->value('id') => 'for']);
+    app(CloseRound::class)->handle($broken);
+    $fine = openElectionRound(['title' => 'Kasse', 'position' => 2], candidates: 1, election: $election);
+    castElectionBallot($fine, $voters[1], [$fine->candidates()->value('id') => 'for']);
+    app(CloseRound::class)->handle($fine);
+    $unrelated = draftElectionRound(['title' => 'Beisitz', 'position' => 3], candidates: 1, election: $election);
+    $alongside = draftElectionRound(['title' => 'Ersatz', 'position' => 4], candidates: 0, election: $election);
+    $brokenMember = (int) $broken->candidates()->value('einundzwanzig_pleb_id');
+    ElectionCandidate::factory()->create(['election_round_id' => $alongside->id, 'einundzwanzig_pleb_id' => $brokenMember, 'status' => ElectionCandidateStatus::Approved]);
+
+    DB::table('election_votes')->where('election_round_id', $broken->id)->update(['choices' => json_encode(['999999' => 'for'])]);
+
+    $reports = app(RoundReport::class)->forElection($election)->keyBy(fn (array $report): int => $report['round']->id);
+
+    expect($reports[$broken->id]['unreadable'])->toBeTrue()
+        ->and($reports[$broken->id]['result'])->toBeNull()
+        ->and($reports[$broken->id]['run_off'])->toBeNull()
+        ->and($reports[$fine->id]['unreadable'])->toBeFalse()
+        ->and($reports[$fine->id]['result'])->not->toBeNull();
+
+    $this->get(route('association.election.admin.protocol', $election))->assertOk()
+        ->assertSeeHtml('data-test="protocol-unreadable-'.$broken->id.'"')
+        ->assertSee('Ergebnis nicht lesbar')
+        ->assertSee('election:verify '.$broken->id)
+        ->assertSeeHtml('data-test="protocol-outcome-'.$fine->id.'"')
+        ->assertDontSeeHtml('data-test="protocol-outcome-'.$broken->id.'"');
+
+    expect(Livewire::test('association.election.protocol', ['election' => $election])->instance()->plainText)
+        ->toContain('Ergebnis nicht lesbar')
+        ->toContain('election:verify '.$broken->id);
+
+    Livewire::test('association.election.screen', ['election' => $election->id])->assertOk();
+    livePage()->assertOk()->assertSee('Kasse');
+
+    // Fail-closed where the unreadable count matters, nowhere else.
+    $refusal = app(OpenRound::class)->refusal($alongside->fresh());
+
+    expect(app(OpenRound::class)->refusal($unrelated->fresh()))->toBeNull()
+        ->and($refusal)->toBeInstanceOf(ElectionCandidateBlockedException::class)
+        ->and($refusal->memberId)->toBe($brokenMember)
+        ->and(fn () => app(CreateRunOff::class)->handle($broken->fresh(), $board))->toThrow(ElectionActionRefusedException::class, 'cannot be counted');
 });
