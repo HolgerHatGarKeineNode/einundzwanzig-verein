@@ -54,14 +54,18 @@ function sealedRoundWith(array $ballots, array $attributes = [], int $candidates
 }
 
 it('counts a sealed round with every number written out', function () {
+    // Ballots in another round of another election must not leak in. Blank
+    // ones: they fit every round, so a leak changes `blank` and fails the
+    // comparison below, instead of tripping the guard against a ballot row of
+    // foreign candidates (M6b, jury run 2: red only by that exception). Sealed
+    // first, because sealing counts too.
+    sealedRoundWith([[], [], []]);
+
     $round = sealedRoundWith([
         [0 => 'for'], [0 => 'for'], [0 => 'for'],
         [1 => 'for'], [1 => 'for'],
         [], [],
     ]);
-
-    // Ballots in another round of another election must not leak in.
-    sealedRoundWith([[0 => 'for'], [1 => 'for'], [1 => 'for']]);
 
     [$a, $b, $c] = $round->candidates()->orderBy('id')->pluck('id')->all();
 
@@ -220,7 +224,9 @@ it('lets the level candidates of a tie stand in its run-off, and nowhere else', 
     $runOff = draftElectionRound(['position' => 3, 'parent_round_id' => $parent->id], candidates: 0, election: $election);
     standAgain($runOff, $first, $second);
 
-    expect(app(OpenRound::class)->handle($runOff)->opened_at)->not->toBeNull();
+    // A refusal here fails as an assertion, not as an error (B1-E2).
+    expect(fn () => app(OpenRound::class)->handle($runOff))->not->toThrow(Throwable::class)
+        ->and($runOff->fresh()->opened_at)->not->toBeNull();
 });
 
 it('treats the round of a run-off as earlier whatever its position', function () {

@@ -5,7 +5,6 @@ use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionOutcome;
 use App\Enums\ElectionTieKind;
-use App\Exceptions\ElectionActionRefusedException;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
@@ -83,12 +82,16 @@ function castingVote(ElectionRound $round, EinundzwanzigPleb $actor, array $cand
 
 /**
  * The message of the refusal `$act` ends with.
+ *
+ * Any throwable, not only the expected refusals: an unexpected one (a unique
+ * index answering for a missing check, K7) then fails the comparison with the
+ * expected message as an assertion instead of erroring out.
  */
 function castingRefusal(Closure $act): string
 {
     try {
         $act();
-    } catch (ElectionActionRefusedException|ElectionRoundStateException|AuthorizationException $exception) {
+    } catch (Throwable $exception) {
         return $exception::class.': '.$exception->getMessage();
     }
 
