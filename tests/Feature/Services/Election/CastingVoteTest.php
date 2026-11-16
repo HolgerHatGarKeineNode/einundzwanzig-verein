@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\ElectionAuditAction;
 use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionOutcome;
@@ -14,6 +15,7 @@ use App\Models\ElectionCastingVote;
 use App\Models\ElectionRound;
 use App\Services\Election\CloseRound;
 use App\Services\Election\CreateRunOff;
+use App\Services\Election\ElectionAuditLog;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\OpenRound;
 use App\Services\Election\RecordCastingVote;
@@ -413,4 +415,32 @@ it('verifies the casting vote against its audit line and prints the effective re
 
     expect($status)->toBe(1)
         ->and(Artisan::output())->toContain('MISMATCH: the recorded casting vote differs from its line in the audit log.');
+});
+
+/*
+ * Row and audit line agree with each other but name both candidates of a
+ * one-seat tie: only the fits() check of election:verify can see it.
+ */
+it('reports a casting vote that agrees with its audit line but does not fit the tie', function () {
+    [$board] = electionBoard(1);
+    [$round, [$a, $b]] = evenSplitRound();
+
+    ElectionCastingVote::query()->create([
+        'election_round_id' => $round->id,
+        'candidate_ids' => [$a, $b],
+        'chair_name' => 'Erika Vorsitz',
+        'recorded_by_pleb_id' => $board->id,
+    ]);
+    app(ElectionAuditLog::class)->append($round->election, ElectionAuditAction::CastingVoteRecorded, $board, round: $round, details: [
+        'chair' => 'Erika Vorsitz',
+        'decided_for' => $a.','.$b,
+    ]);
+
+    $status = Artisan::call('election:verify', ['round' => $round->id]);
+    $output = Artisan::output();
+
+    expect($status)->toBe(1)
+        ->and($output)->toContain('MISMATCH: the recorded casting vote does not fit the tie of the count.')
+        ->not->toContain('differs from its line in the audit log')
+        ->not->toContain('no longer holds its hash chain');
 });
