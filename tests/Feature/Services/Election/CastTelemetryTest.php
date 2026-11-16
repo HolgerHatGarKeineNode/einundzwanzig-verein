@@ -197,7 +197,7 @@ it('keeps choice, signature and pubkey out of the messages of a failed and of a 
         }
     }
 
-    expect(collect($messages)->first(fn (string $message) => str_starts_with($message, ElectionBallotWriteException::class)))->toContain('SQLSTATE')
+    expect(collect($messages)->first(fn (string $message) => str_starts_with($message, ElectionBallotWriteException::class)))->toBeString()->toContain('SQLSTATE')
         ->and(collect($messages)->contains(fn (string $message) => str_contains($message, 'vote refused')))->toBeFalse()
         ->and(collect($messages)->contains(fn (string $message) => str_contains($message, 'Ballot refused: '.ElectionBallotRefusal::InvalidChoices->value)))->toBeTrue();
 

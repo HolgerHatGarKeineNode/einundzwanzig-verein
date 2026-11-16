@@ -21,7 +21,11 @@ use Sentry\SentrySdk;
  * Mutation M0a: delete the SENTRY_LARAVEL_DSN line from phpunit.xml. On a
  * machine whose .env sets that variable, the first case goes red. On a machine
  * without it the case is green either way — it then guards nothing, which is
- * exactly the state a fresh checkout is in.
+ * exactly the state a fresh checkout is in. So the mutation runner
+ * (docs/plans/…/mutations/run-mutations.py, option env=fake-sentry-dsn) gives
+ * this run a .env with a DSN: a temporary .env.testing that is .env plus a
+ * loopback DSN, removed afterwards. Measured 2026-11-16: red by assertion
+ * („Failed asserting that a string is empty“), green without the mutation.
  */
 
 it('gives the error tracker no destination to send to', function () {
