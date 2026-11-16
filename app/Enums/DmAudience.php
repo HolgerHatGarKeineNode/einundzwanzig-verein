@@ -11,7 +11,7 @@ namespace App\Enums;
  */
 enum DmAudience: string
 {
-    /** Active and honorary members, i.e. the categories that have a vote. */
+    /** Every active and honorary member, paid or not. Not the right to vote: that is `EntitledVoters`. */
     case Members = 'members';
 
     /** Members entitled to vote in the election. */
@@ -29,7 +29,7 @@ enum DmAudience: string
     public function label(): string
     {
         return match ($this) {
-            self::Members => __('Alle Mitglieder mit Stimmrecht'),
+            self::Members => __('Alle Aktiv- und Ehrenmitglieder'),
             self::EntitledVoters => __('Stimmberechtigte der Wahl'),
             self::FeeOutstanding => __('Mitglieder mit offenem Beitrag'),
             self::Candidates => __('Kandidierende der Wahl'),

@@ -37,7 +37,21 @@ it('resolves "all members" to active and honorary members, never passive, non-me
 
     expect(audienceIds(DmAudience::Members))->toBe([$active->id, $honorary->id])
         ->and(app(DirectMessageAudience::class)->describe(DmAudience::Members))
-        ->toBe('2 Mitglieder mit Stimmrecht (aktiv oder Ehrenmitglied)');
+        ->toBe('2 Aktiv- und Ehrenmitglieder, Beitrag bezahlt oder nicht');
+});
+
+/*
+ * Board jury L6: „Alle Mitglieder mit Stimmrecht“ counted an unpaid active
+ * member the roll does not count. The audience is every active and honorary
+ * member, paid or not; neither its label nor its sentence may promise a vote.
+ * Who may vote in an election is `EntitledVoters`.
+ */
+it('names "all members" for what it is, without promising a vote', function () {
+    audienceMember(AssociationStatus::ACTIVE);
+
+    expect(DmAudience::Members->label())->toBe('Alle Aktiv- und Ehrenmitglieder')
+        ->and(app(DirectMessageAudience::class)->describe(DmAudience::Members))->toBe('1 Aktiv- oder Ehrenmitglied, Beitrag bezahlt oder nicht')
+        ->and(DmAudience::Members->label().app(DirectMessageAudience::class)->describe(DmAudience::Members))->not->toContain('Stimmrecht');
 });
 
 it('resolves the entitled voters through the electoral roll, including members enrolled by hand', function () {
