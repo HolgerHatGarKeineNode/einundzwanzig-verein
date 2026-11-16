@@ -405,7 +405,7 @@ it('ends a run-off chain with the casting vote on a tie in the run-off', functio
     $runOff = castingChainVoteAndSeal($runOff, $voters, [$memberA, $memberB]);
     $runOffB = (int) $runOff->candidates()->where('einundzwanzig_pleb_id', $memberB)->value('id');
 
-    castingVote($runOff, $board, [$runOffB]);
+    expect(castingRefusal(fn () => castingVote($runOff, $board, [$runOffB])))->toBe('recorded');
 
     $treasurer = draftElectionRound(['position' => 5, 'title' => 'Kasse'], candidates: 0, election: $election);
     castingChainStand($treasurer, $memberA);
@@ -652,8 +652,8 @@ it('leaves no deadlock: the refused earlier round opens once the tie is decided 
     expect(castingChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('tie');
 
     match ($way) {
-        'casting vote for B' => castingVote($tied, $board, [$tiedB]),
-        'casting vote for A' => castingVote($tied, $board, [$tiedA]),
+        'casting vote for B' => expect(castingRefusal(fn () => castingVote($tied, $board, [$tiedB])))->toBe('recorded'),
+        'casting vote for A' => expect(castingRefusal(fn () => castingVote($tied, $board, [$tiedA])))->toBe('recorded'),
         'withdrawn' => app(Candidacies::class)->withdraw($treasurer->candidates()->where('einundzwanzig_pleb_id', $a)->firstOrFail(), $board, 'Steht im Gleichstand'),
     };
 
@@ -723,8 +723,8 @@ function castingTwiceElectedElsewhere(string $seats, string $how = 'count'): arr
     $treasurer = app(CloseRound::class)->handle($treasurer);
 
     if ($how === 'casting vote') {
-        expect(app(TallyRound::class)->handle($treasurer)->elected)->toBe([]);
-        castingVote($treasurer, $board, [$treasurerA]);
+        expect(app(TallyRound::class)->handle($treasurer)->elected)->toBe([])
+            ->and(castingRefusal(fn () => castingVote($treasurer, $board, [$treasurerA])))->toBe('recorded');
     }
 
     expect(app(TallyRound::class)->effective($treasurer->fresh())->elected)->toBe([$treasurerA]);
