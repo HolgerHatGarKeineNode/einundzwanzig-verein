@@ -121,6 +121,10 @@
                                         @if ($electedNames->isNotEmpty())
                                             <span class="block text-base font-normal text-text-primary">{{ $sentence(trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $electedNames->count(), ['names' => $electedNames->join(', ', ' und ')])) }}</span>
                                         @endif
+                                        {{-- No run-off follows (one candidate, or a yes/no round): say that the seat stays empty and how to vote again. --}}
+                                        @if ($report['run_off'] === null && ! $report['has_run_off'] && ($freeSeats = $round->seats - $electedNames->count()) > 0)
+                                            <span class="block text-base font-normal text-text-primary" data-test="live-seats-open-{{ $round->id }}">{{ trans_choice('{1} Der Sitz bleibt frei.|[2,*] :count Sitze bleiben frei.', $freeSeats, ['count' => $freeSeats]) }} {{ __('Neu abstimmen geht nur über „Wahlgang annullieren“ und danach „Wahlgang wiederholen“.') }}</span>
+                                        @endif
                                 @endswitch
                                 @if ($result['casting_vote'] !== null)
                                     <span class="mt-1 block text-base font-normal text-text-primary" data-test="live-casting-vote-{{ $round->id }}">{{ $sentence(\App\Support\ElectionTieText::decided($result['tie_kind'], $result['casting_vote']['chair'], $result['casting_vote']['elected'], $result['casting_vote']['tied'])) }}@if ($result['casting_vote']['note']) {{ __('Anmerkung: :note', ['note' => $result['casting_vote']['note']]) }}@endif</span>
@@ -178,6 +182,9 @@
                             <p class="mt-4 text-base text-text-primary break-words">
                                 @if ($round->opened_at === null)
                                     {{ __('Nicht geöffnet, annulliert.') }}
+                                @elseif ($round->closed_at !== null)
+                                    {{-- Counted before it was annulled: the minutes keep the result, marked as void. --}}
+                                    {{ trans_choice('{0} Ausgezählt ohne Stimme, dann annulliert. Das Ergebnis ist ungültig und steht so im Beschlussprotokoll.|{1} 1 Stimme ausgezählt, dann annulliert. Das Ergebnis ist ungültig und steht so im Beschlussprotokoll.|[2,*] :count Stimmen ausgezählt, dann annulliert. Das Ergebnis ist ungültig und steht so im Beschlussprotokoll.', $report['cast']) }}
                                 @else
                                     {{ trans_choice('{0} Keine Stimme abgegeben, nicht ausgezählt.|{1} 1 Stimme abgegeben, nicht ausgezählt.|[2,*] :count Stimmen abgegeben, nicht ausgezählt.', $report['cast']) }}
                                 @endif

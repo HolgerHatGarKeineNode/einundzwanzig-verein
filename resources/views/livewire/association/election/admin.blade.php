@@ -1027,7 +1027,13 @@ new class extends Component
                 );
             }
 
-            $without = $rounds->first(fn (ElectionRound $round): bool => $round->candidates->where('status', ElectionCandidateStatus::Approved)->isEmpty());
+            $without = $rounds->filter(fn (ElectionRound $round): bool => $round->candidates->where('status', ElectionCandidateStatus::Approved)->isEmpty());
+            $first = $rounds->sortBy('position')->first();
+
+            // Candidacies stay open until the meeting: only the round that is opened first is a dead end before the evening.
+            // A later round without a candidacy is mentioned on the ready step below, without the offer to strike it.
+            $laterWithout = $without->reject(fn (ElectionRound $round): bool => $round->is($first))->sortBy('position')->values();
+            $without = $without->first(fn (ElectionRound $round): bool => $round->is($first));
 
             if ($without !== null) {
                 return $this->step(
@@ -1144,10 +1150,14 @@ new class extends Component
                     default => __('Bereit. Zuerst: „:round“.', ['round' => $next->title]),
                 }.($awaiting === null ? '' : ' '.__('„:round“ wartet noch auf die Wiederholung.', ['round' => $awaiting->title])),
                 match (true) {
-                    $last?->isSealed() === true => __('Zeigt zuerst das Ergebnis im Call, dann öffnet den nächsten Wahlgang.'),
+                    $last?->isSealed() === true => $this->seatsLeftOpenText($last).__('Zeigt zuerst das Ergebnis im Call, dann öffnet den nächsten Wahlgang.'),
                     $election->is_test => __('Probewahl: öffnet den Wahlgang, wann immer ihr üben wollt.'),
                     default => __('Öffnet ihn erst in der Sitzung. Ab dann können die Wahlberechtigten abstimmen.'),
-                },
+                }.(($laterWithout ?? collect())->isEmpty() ? '' : ' '.trans_choice(
+                    '{1} „:rounds“ hat noch keine freigegebene Kandidatur. Kandidieren geht bis zur Sitzung.|[2,*] „:rounds“ haben noch keine freigegebene Kandidatur. Kandidieren geht bis zur Sitzung.',
+                    $laterWithout->count(),
+                    ['rounds' => $laterWithout->pluck('title')->join('“, „', '“ und „')],
+                )),
                 label: __('„:round“ öffnen', ['round' => $next->title]),
                 click: "startRoundAction({$next->id}, 'open')",
             );
@@ -1166,7 +1176,7 @@ new class extends Component
 
         return $this->step(
             __('Alle Wahlgänge sind abgeschlossen.'),
-            __('Das Beschlussprotokoll fasst Wahlgänge, Zahlen und Prüfsummen für die Niederschrift zusammen.'),
+            $this->seatsLeftOpenText($all->filter(fn (ElectionRound $round): bool => $round->isSealed())->sortByDesc('closed_at')->first()).__('Das Beschlussprotokoll fasst Wahlgänge, Zahlen und Prüfsummen für die Niederschrift zusammen.'),
             label: __('Beschlussprotokoll öffnen'),
             href: route('association.election.admin.protocol', $election),
         );
@@ -1301,6 +1311,8 @@ new class extends Component
 
         return match (true) {
             $action === 'open' && str_contains($message, 'without approved candidates') => __('Dieser Wahlgang hat keine freigegebene Kandidatur. Gebt unter „Kandidaturen“ eine frei, oder streicht den Wahlgang, wenn niemand mehr antreten kann.'),
+            // Before the run-off arm, so a future message that also says "run-off" still lands here.
+            $action === 'open' && $name !== null && str_contains($message, 'second ballot is owed') => __(':name gehört zu den Bestplatzierten eines früheren Wahlgangs ohne Mehrheit, und dessen Stichwahl steht noch aus. Legt zuerst die Stichwahl an.', ['name' => $name]),
             $action === 'open' && str_contains($message, 'run-off') => __('Die Stichwahl lässt sich erst öffnen, wenn ihr Wahlgang ausgezählt ist.'),
             $action === 'open' && $name !== null && str_contains($message, 'not sealed yet') => __(':name kandidiert auch in einem früheren Wahlgang, der noch nicht ausgezählt ist. Zählt ihn zuerst aus, oder zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück.', ['name' => $name]),
             $action === 'open' && $name !== null && str_contains($message, 'has been elected') => __(':name ist in einem früheren Wahlgang schon gewählt. Zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück, dann lässt sich der Wahlgang öffnen. Kann danach niemand mehr antreten, streicht den Wahlgang.', ['name' => $name]),
@@ -1314,6 +1326,35 @@ new class extends Component
     }
 
     /**
+     * "Ein Sitz bleibt frei." for a counted round that left seats empty with
+     * no run-off to follow (one candidate short of the majority, 0 votes, a
+     * yes/no round with more no than yes), plus the only way to vote again.
+     * Empty for any other round, so it can lead a hint.
+     */
+    protected function seatsLeftOpenText(?ElectionRound $round): string
+    {
+        if ($round === null || ! $round->isSealed()) {
+            return '';
+        }
+
+        $report = app(RoundReport::class)->of($round);
+        $result = $report['result'];
+
+        if ($result === null || $result['outcome'] !== ElectionOutcome::Understaffed || $report['run_off'] !== null || $report['has_run_off']) {
+            return '';
+        }
+
+        $free = $round->seats - collect($result['rows'])->where('elected', true)->count();
+
+        if ($free < 1) {
+            return '';
+        }
+
+        return trans_choice('{1} In „:round“ bleibt ein Sitz frei.|[2,*] In „:round“ bleiben :count Sitze frei.', $free, ['round' => $round->title, 'count' => $free])
+            .' '.__('Neu abstimmen geht nur über „Wahlgang annullieren“ und danach „Wahlgang wiederholen“.').' ';
+    }
+
+    /**
      * The confirm text of the round modal: what happens, in numbers.
      */
     protected function pendingRoundText(ElectionRound $round): string
@@ -1321,7 +1362,10 @@ new class extends Component
         return match ($this->pendingRoundAction) {
             'close' => $this->turnoutText($round).' '.__('Danach nimmt der Wahlgang keine Stimmen mehr an und wird sofort ausgezählt. Das lässt sich nicht zurücknehmen.'),
             'strike' => __('„:round“ wird nie geöffnet und zählt wie ein annullierter Wahlgang: Niemand stimmt darüber ab. Das lässt sich nicht zurücknehmen. Der Grund steht im Protokoll.', ['round' => $round->title]),
-            'annul' => __('Die abgegebenen Stimmen werden nie ausgezählt, und der Wahlgang lässt sich nicht wieder öffnen. Der Grund steht im Protokoll.'),
+            // A counted round keeps its result in the minutes, marked as void: "never counted" would be false there.
+            'annul' => $round->isSealed()
+                ? __('Das ausgezählte Ergebnis wird ungültig. Es bleibt im Beschlussprotokoll stehen, markiert als „ungültig“, mit dem Grund. Der Wahlgang lässt sich nicht wieder öffnen.')
+                : __('Die abgegebenen Stimmen werden nie ausgezählt, und der Wahlgang lässt sich nicht wieder öffnen. Der Grund steht im Protokoll.'),
             'repeat' => __('Legt „:title“ als neuen Wahlgang an, mit denselben freigegebenen Kandidaturen, derselben Zählregel und denselben Sitzen. Abgestimmt wird erst, wenn ihr ihn öffnet.', ['title' => ElectionStewardship::repeatTitle($round->title)]),
             default => __('Ab jetzt können :count Wahlberechtigte abstimmen. Kandidaturen und Zählregel sind danach fest. Schließt ihn niemand, nimmt er nach :minutes Minuten keine Stimmen mehr an.', [
                 'count' => $round->parent_round_id !== null
