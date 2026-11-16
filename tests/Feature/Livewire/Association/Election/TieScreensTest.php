@@ -312,7 +312,7 @@ it('refuses in the dialog a casting vote for a person standing in another opened
         ->set('castingChair', 'Erika Vorsitz')
         ->call('recordCastingVote')
         ->assertHasErrors(['castingCandidates'])
-        ->assertSee('Alice Ambrosius kandidiert auch im Wahlgang „Kasse“, der noch nicht ausgezählt ist. Entscheidet für eine andere Person aus dem Gleichstand, oder zählt „Kasse“ zuerst aus.');
+        ->assertSee('Alice Ambrosius kandidiert auch im Wahlgang „Kasse“, der noch nicht ausgezählt ist. Entscheidet für eine andere Person aus dem Gleichstand, oder entscheidet, nachdem „Kasse“ ausgezählt ist.');
 
     expect(ElectionCastingVote::query()->where('election_round_id', $round->id)->exists())->toBeFalse();
 

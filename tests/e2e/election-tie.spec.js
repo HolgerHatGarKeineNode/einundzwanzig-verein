@@ -173,7 +173,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 
         await dialog.locator('[data-test="casting-chair"]').fill('Erika Vorsitz')
         await dialog.locator('[data-test="confirm-casting-vote"]').click()
 
-        const text = `${data.long.name} kandidiert auch im Wahlgang „Kassenprüfung und Revision“, der noch nicht ausgezählt ist. Entscheidet für eine andere Person aus dem Gleichstand, oder zählt „Kassenprüfung und Revision“ zuerst aus.`
+        const text = `${data.long.name} kandidiert auch im Wahlgang „Kassenprüfung und Revision“, der noch nicht ausgezählt ist. Entscheidet für eine andere Person aus dem Gleichstand, oder entscheidet, nachdem „Kassenprüfung und Revision“ ausgezählt ist.`
         const error = dialog.getByText(text)
         await expect(error).toBeVisible()
         await page.evaluate(() => document.fonts.ready)

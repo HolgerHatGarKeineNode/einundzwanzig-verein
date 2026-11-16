@@ -34,6 +34,7 @@
 
 use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
+use App\Enums\ElectionRoundMode;
 use App\Exceptions\ElectionActionRefusedException;
 use App\Exceptions\ElectionCandidateBlockedException;
 use App\Exceptions\ElectionRoundStateException;
@@ -55,6 +56,22 @@ require_once __DIR__.'/helpers.php';
 const INVARIANT_OPENED_REFUSAL = 'The chair cannot decide for a candidate who also stands in the opened round "Kasse" of the election, which is not sealed, so nobody knows yet whether they are elected there; decide for another candidate level in the tie, or seal that round first.';
 
 const INVARIANT_ELECTED_REFUSAL = 'The chair cannot decide for a candidate who is elected in the round "Kasse" of the election already; decide for another candidate level in the tie.';
+
+/**
+ * `RecordCastingVote`'s refusal for a member standing in the opened, unsealed round `$title`.
+ */
+function invariantOpenedRefusal(string $title): string
+{
+    return str_replace('"Kasse"', '"'.$title.'"', INVARIANT_OPENED_REFUSAL);
+}
+
+/**
+ * `RecordCastingVote`'s refusal for a member elected in the sealed round `$title`.
+ */
+function invariantElectedRefusal(string $title): string
+{
+    return str_replace('"Kasse"', '"'.$title.'"', INVARIANT_ELECTED_REFUSAL);
+}
 
 const INVARIANT_OPEN_REFUSAL = 'A candidate of this round has been elected in an earlier round of the election.';
 
@@ -139,7 +156,17 @@ function expectNobodyElectedTwice(Election $election): void
 {
     $elected = invariantElected($election);
 
-    expect($elected)->not->toBeEmpty();
+    // Counted independently of invariantElected(): every member who stands
+    // anywhere in the election is in the map, so no round was skipped.
+    $standing = ElectionCandidate::query()
+        ->whereIn('election_round_id', ElectionRound::query()->where('election_event_id', $election->id)->select('id'))
+        ->distinct()
+        ->pluck('einundzwanzig_pleb_id')
+        ->map(fn (mixed $id): int => (int) $id)
+        ->sort()
+        ->values()
+        ->all();
+    expect(collect(array_keys($elected))->sort()->values()->all())->toBe($standing);
 
     foreach ($elected as $member => $titles) {
         expect(count($titles))->toBeLessThanOrEqual(1, "member {$member} is elected in: ".implode(', ', $titles));
@@ -151,14 +178,18 @@ function expectNobodyElectedTwice(Election $election): void
  * (position 2, two seats, sealed): A, B and C two votes each, a tie of three
  * for two seats. The chair names A together with B; `$chosenAt` puts A's
  * candidacy in „Vorsitz“ at the lowest or the highest id of the two.
+ * `$kasseAttributes` override those of „Kasse“ (a window round, say);
+ * `$bWithdrawnFirstInKasse` gives B a withdrawn candidacy in „Kasse“ with a
+ * lower id than A's.
  *
+ * @param  array<string, mixed>  $kasseAttributes
  * @return array{board: EinundzwanzigPleb, election: Election, kasse: ElectionRound, vorsitz: ElectionRound, a: EinundzwanzigPleb, b: EinundzwanzigPleb, d: EinundzwanzigPleb, chosen: list<EinundzwanzigPleb>, voters: list<EinundzwanzigPleb>}
  */
-function invariantEvening(string $chosenAt): array
+function invariantEvening(string $chosenAt, array $kasseAttributes = [], bool $bWithdrawnFirstInKasse = false): array
 {
     [$board] = electionBoard(1);
     $election = Election::factory()->create();
-    $kasse = draftElectionRound(['position' => 1, 'title' => 'Kasse', 'counting_rule' => ElectionCountingRule::MostVotes, 'seats' => 1], candidates: 0, election: $election);
+    $kasse = draftElectionRound(['position' => 1, 'title' => 'Kasse', 'counting_rule' => ElectionCountingRule::MostVotes, 'seats' => 1, ...$kasseAttributes], candidates: 0, election: $election);
     $vorsitz = draftElectionRound(['position' => 2, 'title' => 'Vorsitz', 'counting_rule' => ElectionCountingRule::MostVotes, 'seats' => 2], candidates: 0, election: $election);
 
     // Created in this order, so the candidate ids in „Vorsitz“ run low, mid, high.
@@ -188,6 +219,12 @@ function invariantEvening(string $chosenAt): array
     expect((int) invariantCandidate($vorsitz, $a)->id)->toBe($chosenAt === 'lowest' ? min($ids) : max($ids));
 
     $d = electionVoter();
+
+    // B's candidacy in „Kasse“ first, so it has the lower id there; withdrawn while a draft.
+    if ($bWithdrawnFirstInKasse) {
+        app(Candidacies::class)->withdraw(invariantStand($kasse, $mid, $board), $board, 'tritt nur im Vorsitz an');
+    }
+
     invariantStand($kasse, $a, $board);
     invariantStand($kasse, $d, $board);
 
@@ -432,3 +469,71 @@ it('A standing in an opened, unsealed round of another election does not hold ba
         ->and(invariantElected($election)[$a->id])->toBe(['Vorsitz']);
     expectNobodyElectedTwice($election);
 });
+
+it('K a window round, over by the clock and not sealed: RecordCastingVote refuses the casting vote for A, and K sealed elects A once', function (string $chosenAt) {
+    $evening = invariantEvening($chosenAt, ['mode' => ElectionRoundMode::Window, 'opens_at' => now()->addHour(), 'closes_at' => now()->addHours(2)]);
+    ['board' => $board, 'election' => $election, 'kasse' => $kasse, 'vorsitz' => $vorsitz, 'a' => $a] = $evening;
+
+    $runOff = app(CreateRunOff::class)->handle($vorsitz->fresh(), $board, resolvedByAssembly: true);
+    $voters = [electionVoter(), electionVoter()];
+    $kasse = app(OpenRound::class)->handle($kasse->fresh());
+    app(Candidacies::class)->withdraw(invariantCandidate($runOff, $a), $board, 'steht in der Kasse');
+    app(ElectionStewardship::class)->annul(app(OpenRound::class)->handle($runOff->fresh()), $board, 'zurück an die Vorsitzende');
+
+    $this->travel(90)->minutes();
+    foreach ($voters as $voter) {
+        castElectionBallot($kasse->fresh(), $voter, [invariantCandidate($kasse, $a)->id => 'for']);
+    }
+    $this->travel(2)->hours();
+
+    $kasse = $kasse->fresh();
+    expect($kasse->closes_at->isPast())->toBeTrue()
+        ->and($kasse->closed_at)->toBeNull()
+        ->and(invariantCast($vorsitz, $board, $evening['chosen']))->toBe(['blocked', $a->id, 'Kasse', invariantOpenedRefusal('Kasse')]);
+
+    app(CloseRound::class)->handle($kasse);
+
+    expect(invariantElected($election)[$a->id])->toBe(['Kasse'])
+        ->and(invariantCast($vorsitz, $board, $evening['chosen']))->toBe(['blocked', $a->id, 'Kasse', invariantElectedRefusal('Kasse')]);
+    expectNobodyElectedTwice($election);
+})->with('chosen position');
+
+it('a run-off of K, placed after the tie, opened and not sealed: RecordCastingVote refuses the casting vote for A, and the run-off elects A once', function (string $chosenAt) {
+    $evening = invariantEvening($chosenAt);
+    ['board' => $board, 'election' => $election, 'kasse' => $kasse, 'vorsitz' => $vorsitz, 'a' => $a, 'd' => $d] = $evening;
+
+    $runOffV = app(CreateRunOff::class)->handle($vorsitz->fresh(), $board, resolvedByAssembly: true);
+    $voters = [electionVoter(), electionVoter()];
+    $kasse = app(OpenRound::class)->handle($kasse->fresh());
+    castElectionBallot($kasse, $voters[0], [invariantCandidate($kasse, $a)->id => 'for']);
+    castElectionBallot($kasse, $voters[1], [invariantCandidate($kasse, $d)->id => 'for']);
+    $kasse = app(CloseRound::class)->handle($kasse);
+    expect(app(TallyRound::class)->effective($kasse)->tied)->toHaveCount(2);
+
+    $runOffK = app(OpenRound::class)->handle(app(CreateRunOff::class)->handle($kasse, $board, resolvedByAssembly: true));
+    expect($runOffK->title)->toBe('Stichwahl Kasse')
+        ->and($runOffK->position)->toBeGreaterThan($vorsitz->fresh()->position);
+
+    app(Candidacies::class)->withdraw(invariantCandidate($runOffV, $a), $board, 'steht in der Stichwahl Kasse');
+    app(ElectionStewardship::class)->annul(app(OpenRound::class)->handle($runOffV->fresh()), $board, 'zurück an die Vorsitzende');
+
+    expect(invariantCast($vorsitz, $board, $evening['chosen']))->toBe(['blocked', $a->id, 'Stichwahl Kasse', invariantOpenedRefusal('Stichwahl Kasse')]);
+
+    castElectionBallot($runOffK, $voters[0], [invariantCandidate($runOffK, $a)->id => 'for']);
+    app(CloseRound::class)->handle($runOffK);
+
+    expect(invariantElected($election)[$a->id])->toBe(['Stichwahl Kasse'])
+        ->and(invariantCast($vorsitz, $board, $evening['chosen']))->toBe(['blocked', $a->id, 'Stichwahl Kasse', invariantElectedRefusal('Stichwahl Kasse')]);
+    expectNobodyElectedTwice($election);
+})->with('chosen position');
+
+it('K opened with B withdrawn there at a lower candidate id: the refusal names A, who stands, not B', function (string $chosenAt) {
+    $evening = invariantEvening($chosenAt, bWithdrawnFirstInKasse: true);
+    ['board' => $board, 'election' => $election, 'vorsitz' => $vorsitz, 'a' => $a, 'b' => $b] = $evening;
+    $kasse = invariantOpenKasse($evening, $a);
+
+    expect(invariantCandidate($kasse, $b)->id)->toBeLessThan(invariantCandidate($kasse, $a)->id)
+        ->and(invariantCandidate($kasse, $b)->status)->toBe(ElectionCandidateStatus::Withdrawn)
+        ->and(invariantCast($vorsitz, $board, $evening['chosen']))->toBe(['blocked', $a->id, 'Kasse', invariantOpenedRefusal('Kasse')]);
+    expectNobodyElectedTwice($election);
+})->with('chosen position');
