@@ -61,18 +61,33 @@ use Symfony\Component\Finder\Finder;
  *    runs the confirmed start and `dm:send-due` through the fan-out and every
  *    SendDirectMessage, with only the relay faked, and holds everything an
  *    observer sees of each member's delivery to be the same before and after
- *    that member votes: the board (recipients, skips, status, error,
- *    attempts, relay answers), the relay operator (every publish in order,
- *    and the wrap's kind, tags and ciphertext length), the member's client
- *    (the seal's pubkey, kind and tags, the rumor's pubkey, kind, tags and
- *    text), the inbox page (the stored text and rumor) and the send time
- *    (the delay of each send job). Every field of wrap, seal and rumor is
- *    compared except a named list of random ones (ids, signatures, the wrap
- *    key, created_at, ciphertext bytes), which are replaced by checks: id and
- *    signature verify, the wrap key was never used before, created_at lies
- *    in its window. Text and delay were unseen until 2026-11-16 (jury gate
- *    j2f, round 3: O6, O9, O12), the seal, the wrap's kind and tags and the
- *    number of publishes until gate j2h, round 1 (O3, O4, O5, O5b, O8).
+ *    that member votes. Compared by default is everything; dropped are only
+ *    named fields, each replaced by a check:
+ *     - rows: every row of every table a sending inserts, updates or deletes,
+ *       found by comparing the whole database before and after it (today:
+ *       dm_runs, dm_deliveries, dm_delivery_relays, dm_schedules). Every
+ *       column is compared except ids and keys to rows made per sending
+ *       (replaced by labels: run, member, relay), wall-clock columns
+ *       (replaced by in/outside the sending's window or null; `seen_at`
+ *       stays null), and the delivery's wrap, text, rumor id and rumor time
+ *       (replaced by "stored", the text relative to the message, and "is the
+ *       rumor inside the stored wrap"). A column added later is compared
+ *       without anyone naming it; a second test adds one to the test
+ *       database, writes it for voters only and sees the sendings differ.
+ *     - the relay operator: every publish in order, and the wrap's kind,
+ *       tags and ciphertext length;
+ *     - the member's client: every field of wrap, seal and rumor except a
+ *       named list of random ones (ids, signatures, the wrap key, created_at,
+ *       ciphertext bytes), replaced by checks: id and signature verify, the
+ *       wrap key was never used before, created_at lies in its window (for
+ *       seal and wrap: 1 s to two days before the rumor's own time, so one
+ *       delivery decides "not backdated");
+ *     - the send time: the delay of each send job.
+ *    Text and delay were unseen until 2026-11-16 (jury gate j2f, round 3:
+ *    O6, O9, O12), the seal, the wrap's kind and tags and the number of
+ *    publishes until gate j2h, round 1 (O3, O4, O5, O5b, O8), every row
+ *    column not on an allow-list and a wrap that was not backdated until
+ *    gate j2h, round 2 (M6b, M7b, M9c).
  *
  *    What it does not see:
  *     - A choice inside a random field that a single sample cannot tell
@@ -82,6 +97,17 @@ use Symfony\Component\Finder\Finder;
  *       fresh but derived from something a third party knows; ciphertext
  *       bytes chosen rather than random at the same length. Each member is
  *       sent one message per run, so a bias shows only over many messages.
+ *     - A time moved inside the sending's own window: a voter's sent_at
+ *       or created_at a few seconds later stays "in window". The window is
+ *       the sending (seconds here), not the row's own moment.
+ *     - A value written and overwritten again within one sending: rows are
+ *       compared as they stand after it, which is what the board reads.
+ *     - A re-wrap of a stored rumor (seal and wrap dated from the re-wrap,
+ *       not from the rumor); this fixture only makes first builds.
+ *     - A read through the run's own election in the members and board
+ *       audiences: those runs store no election, so the gate's route
+ *       `$delivery->run->election` finds no vote there (M6b, M7b, R1-R3 are
+ *       red in the entitled-voters and candidates datasets only).
  *     - Anything below the RelayTransport seam: NIP-42 AUTH, connections,
  *       timing and frames on the wire of the real NostrRelayTransport.
  *     - Other paths and audiences: a read that changes only the random
