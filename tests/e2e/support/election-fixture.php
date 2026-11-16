@@ -498,7 +498,11 @@ function e2eScenario(string $name, string $state): array
                 DmInboxMessage::query()->create(['einundzwanzig_pleb_id' => $author['id'], 'direction' => DmInboxMessage::IN, 'body' => $body, 'sent_at' => now()->subMinutes($minutesAgo)]);
             }
 
-            return [...$result, 'ida' => $ida];
+            // Someone without a portal account wrote too.
+            $strangerPubkey = (new Key)->getPublicKey(EventSigning::freshSecret());
+            DmInboxMessage::query()->create(['counterparty_pubkey' => $strangerPubkey, 'direction' => DmInboxMessage::IN, 'body' => 'Wie werde ich Mitglied im Verein?', 'sent_at' => now()->subMinutes(10)]);
+
+            return [...$result, 'ida' => [...$ida, 'pubkey' => EinundzwanzigPleb::query()->whereKey($ida['id'])->value('pubkey')], 'bernd' => EinundzwanzigPleb::query()->whereKey($bernd['id'])->value('pubkey'), 'stranger' => $strangerPubkey];
 
         case 'measure':
             // Every page with content: a counted round with a result, an open

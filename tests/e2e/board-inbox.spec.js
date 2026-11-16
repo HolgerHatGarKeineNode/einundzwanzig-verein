@@ -6,8 +6,9 @@ import { keep, measure } from './support/measure.js'
  * check on the profile page, in a real browser with every channel of
  * support/channels.js watched and the network guard on.
  *
- * The fixture (scenario "board-inbox") stores three replies: two from Ida,
- * who has an inbox relay, one long one from Bernd, who has none. The reply
+ * The fixture (scenario "board-inbox") stores four messages: two from Ida,
+ * who has an inbox relay, one long one from Bernd, who has none, and one
+ * from someone without a portal account. The reply
  * goes through the sync queue to the in-memory relay of e2e-server.php.
  */
 
@@ -29,13 +30,15 @@ test('the board reads a reply, the unread mark goes, and the answer is delivered
 
     await login(page, data.board.secret, '/association/messages/inbox')
 
-    const ida = page.locator(`[data-test="conversation-${data.ida.id}"]`)
+    const ida = page.locator(`[data-test="conversation-${data.ida.pubkey}"]`)
     await expect(ida).toBeVisible()
-    await expect(page.locator(`[data-test="unread-${data.ida.id}"]`)).toHaveText('2 neu')
+    await expect(page.locator(`[data-test="unread-${data.ida.pubkey}"]`)).toHaveText('2 neu')
+    await expect(page.locator(`[data-test="conversation-${data.stranger}"] [data-test="not-member"]`)).toBeVisible()
+    await expect(page.locator(`[data-test="conversation-${data.ida.pubkey}"] [data-test="not-member"]`)).toHaveCount(0)
 
     await ida.click()
     await expect(page.locator('[data-test="thread"] > li')).toHaveCount(2)
-    await expect(page.locator(`[data-test="unread-${data.ida.id}"]`)).toHaveCount(0)
+    await expect(page.locator(`[data-test="unread-${data.ida.pubkey}"]`)).toHaveCount(0)
 
     await page.locator('[data-test="reply"]').fill('Ja, der Link kommt mit der Einladung.')
     await page.locator('[data-test="send-reply"]').click()
@@ -52,10 +55,10 @@ test('the board inbox and the profile inbox check keep their limits at 390 and 1
     for (const width of WIDTHS) {
         await page.setViewportSize({ width, height: 900 })
         await page.goto('/association/messages/inbox')
-        await expect(page.locator(`[data-test="conversation-${data.ida.id}"]`)).toBeVisible()
+        await expect(page.locator(`[data-test="conversation-${data.ida.pubkey}"]`)).toBeVisible()
         await measured(page, 'board inbox', '/association/messages/inbox')
 
-        await page.goto(`/association/messages/inbox?mitglied=${data.candidates.bernd.id}`)
+        await page.goto(`/association/messages/inbox?kontakt=${data.bernd}`)
         await expect(page.locator('[data-test="thread"] > li')).toHaveCount(1)
         await expect(page.locator('[data-test="no-member-inbox"]')).toBeVisible()
         await measured(page, 'board inbox (thread open)', '/association/messages/inbox')
@@ -75,7 +78,7 @@ test('the board inbox and the profile inbox check keep their limits at 390 and 1
         expect.soft(buttonBox.height, `profile at ${width}: re-check button height`).toBeGreaterThanOrEqual(44)
         if (process.env.E2E_SHOTS) {
             await card.screenshot({ path: `${process.env.E2E_SHOTS}/profile-card-${width}.png` })
-            await page.goto(`/association/messages/inbox?mitglied=${data.candidates.bernd.id}`)
+            await page.goto(`/association/messages/inbox?kontakt=${data.bernd}`)
             await page.screenshot({ path: `${process.env.E2E_SHOTS}/board-inbox-${width}.png`, fullPage: true })
         }
     }

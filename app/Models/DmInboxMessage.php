@@ -29,8 +29,22 @@ class DmInboxMessage extends Model
     public const string STATUS_FAILED = 'failed';
 
     /** @var list<string> */
+    /**
+     * A row written for a member without an explicit pubkey takes the member's:
+     * conversations are keyed by the other side's pubkey.
+     */
+    protected static function booted(): void
+    {
+        static::creating(function (self $message): void {
+            if ($message->counterparty_pubkey === null && $message->einundzwanzig_pleb_id !== null) {
+                $message->counterparty_pubkey = EinundzwanzigPleb::query()->whereKey($message->einundzwanzig_pleb_id)->value('pubkey');
+            }
+        });
+    }
+
     protected $fillable = [
         'einundzwanzig_pleb_id',
+        'counterparty_pubkey',
         'direction',
         'rumor_id',
         'body',

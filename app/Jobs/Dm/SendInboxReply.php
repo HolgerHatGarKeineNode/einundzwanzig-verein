@@ -2,9 +2,12 @@
 
 namespace App\Jobs\Dm;
 
+use App\Console\Commands\Nostr\SyncDmRelays;
 use App\Models\DmInboxMessage;
+use App\Models\EinundzwanzigPleb;
 use App\Services\Nostr\DirectMessageNotBuildable;
 use App\Services\Nostr\DirectMessageSigner;
+use App\Services\Nostr\EventVerification;
 use App\Services\Nostr\NotificationKeyUnavailable;
 use App\Services\Nostr\RelayPublishStatus;
 use App\Services\Nostr\RelayTransport;
@@ -44,16 +47,25 @@ class SendInboxReply implements ShouldQueue
 
         $message = DmInboxMessage::query()->with('member.dmRelays')->findOrFail($this->messageId);
         $member = $message->member;
-        $relays = $member?->dmRelays?->relays ?? [];
+        $pubkey = (string) $message->counterparty_pubkey;
 
-        if ($member === null || $member->isErased() || $relays === []) {
+        if ($member?->isErased() || preg_match('/^[0-9a-f]{64}$/', $pubkey) !== 1) {
+            $message->update(['status' => DmInboxMessage::STATUS_NO_INBOX]);
+
+            return;
+        }
+
+        // A member's list is synced; anyone else's is read now from the relays the key reads.
+        $relays = $member?->dmRelays?->relays ?? self::inboxRelaysOf($transport, $pubkey);
+
+        if ($relays === []) {
             $message->update(['status' => DmInboxMessage::STATUS_NO_INBOX]);
 
             return;
         }
 
         try {
-            $wrapped = $signer->wrapFor($member, $message->body);
+            $wrapped = $signer->wrapFor($member ?? new EinundzwanzigPleb(['pubkey' => $pubkey]), $message->body);
         } catch (DirectMessageNotBuildable|NotificationKeyUnavailable) {
             $message->update(['status' => DmInboxMessage::STATUS_FAILED]);
 
@@ -74,6 +86,42 @@ class SendInboxReply implements ShouldQueue
             'rumor_id' => $wrapped->rumorId,
             'status' => $accepted ? DmInboxMessage::STATUS_SENT : DmInboxMessage::STATUS_FAILED,
         ]);
+    }
+
+    /**
+     * The newest authentic kind 10050 list of `$pubkey` on the profile and inbox relays.
+     *
+     * @return list<string>
+     */
+    protected static function inboxRelaysOf(RelayTransport $transport, string $pubkey): array
+    {
+        $sources = array_values(array_unique([
+            ...config('einundzwanzig.config.profile_relays', []),
+            ...config('einundzwanzig.config.dm_inbox_relays', []),
+        ]));
+        $newest = null;
+
+        foreach ($sources as $url) {
+            try {
+                $events = $transport->fetch($url, ['kinds' => [SyncDmRelays::KIND_DM_RELAYS], 'authors' => [$pubkey], 'limit' => 5])->events;
+            } catch (Throwable) {
+                continue;
+            }
+
+            foreach ($events as $event) {
+                if (is_array($event)
+                    && ($event['pubkey'] ?? null) === $pubkey
+                    && ($event['kind'] ?? null) === SyncDmRelays::KIND_DM_RELAYS
+                    && is_int($event['created_at'] ?? null)
+                    && $event['created_at'] <= time() + SyncDmRelays::MAX_FUTURE_SECONDS
+                    && ($newest === null || $event['created_at'] > $newest['created_at'])
+                    && EventVerification::isAuthentic($event)) {
+                    $newest = $event;
+                }
+            }
+        }
+
+        return $newest === null ? [] : SyncDmRelays::inboxRelays($newest['tags'] ?? []);
     }
 
     public function failed(?Throwable $exception): void
