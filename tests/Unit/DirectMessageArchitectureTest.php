@@ -24,12 +24,25 @@ use Symfony\Component\Finder\Finder;
  *      future name included — fails until someone adds it here on purpose,
  *      after checking it against this rule.
  *
+ *   4. No relation that reaches the vote model, in the DM code and the DM
+ *      pages: `->votes`, `votes()`, and the relation name in a string
+ *      (`whereHas('votes')`, `with('rounds.votes')`, `withCount('votes')`).
+ *      Layers 1 to 3 see names only, and the allowed `Election` reaches the
+ *      votes through `rounds()` → `votes()` with neither the vote model nor
+ *      its table written down (jury gate j2f, D1: G2b dropped every voter
+ *      from the frozen run and the whole suite stayed green). The relation
+ *      names are taken from app/Models, so this does not lean on `votes`
+ *      also being the table of proposal votes.
+ *
  * The DM pages (Livewire, Blade) are held to the vote model, the vote table
- * and the `votes` relation by a text scan; their inventory is not pinned.
+ * and the vote relations by a text scan; their inventory is not pinned.
  *
  * Behaviour, the layer no rename can dodge:
  * tests/Feature/Services/Dm/DirectMessageAudienceTest.php keeps members who
- * already voted in every audience.
+ * already voted in every audience, and
+ * tests/Feature/Services/Dm/DirectMessageDryRunTest.php freezes the same
+ * recipients whether or not a member voted, on the started and the scheduled
+ * path.
  */
 
 /** Directories whose PHP is the direct message code, relative to the project root. */
@@ -224,6 +237,73 @@ function dmVoteReadsIn(string $source, string $voteClass, string $voteTable): ar
     return $reads;
 }
 
+/**
+ * The relations through which a model reaches the vote model: every method in
+ * app/Models (outside the vote model itself) whose body names it. Today that
+ * is ElectionRound::votes(); a through-relation added later is found the same
+ * way.
+ *
+ * @return list<string>
+ */
+function dmVoteRelations(string $voteClass): array
+{
+    $short = class_basename($voteClass);
+    $relations = [];
+
+    foreach (glob(dmProjectRoot().'/app/Models/*.php') as $model) {
+        if (basename($model, '.php') === $short) {
+            continue;
+        }
+
+        preg_match_all('/function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)[^{;]*(\{(?:[^{}]++|(?2))*\})/', (string) file_get_contents($model), $methods, PREG_SET_ORDER);
+
+        foreach ($methods as $method) {
+            if (preg_match('/(?<![A-Za-z0-9_\\\\])'.preg_quote($short, '/').'::class/', $method[2]) === 1) {
+                $relations[] = $method[1];
+            }
+        }
+    }
+
+    $relations = array_values(array_unique($relations));
+    sort($relations);
+
+    return $relations;
+}
+
+/**
+ * Where a source reads one of `$relations`: `->name` or `?->name` (property,
+ * call, higher order proxy), or the name as a word in a string literal, the
+ * way Eloquent takes relation names (`whereHas('votes')`, `'rounds.votes'`,
+ * `'votes as n'`). Comments do not count. A table name such as
+ * `election_votes` is not a relation name: the underscore joins it.
+ *
+ * @param  list<string>  $relations
+ * @return list<string>
+ */
+function dmVoteRelationReadsIn(string $source, array $relations): array
+{
+    $code = implode('', array_map(
+        fn (PhpToken $token): string => $token->text,
+        array_filter(PhpToken::tokenize($source), fn (PhpToken $token): bool => ! $token->is([T_COMMENT, T_DOC_COMMENT])),
+    ));
+    $literals = implode("\n", dmStringLiteralsIn($source));
+    $reads = [];
+
+    foreach ($relations as $relation) {
+        $word = preg_quote($relation, '/');
+
+        if (preg_match('/->\s*'.$word.'(?![A-Za-z0-9_])/', $code) === 1) {
+            $reads[] = "->{$relation}";
+        }
+
+        if (preg_match('/(?<![A-Za-z0-9_$\\\\])'.$word.'(?![A-Za-z0-9_])/', $literals) === 1) {
+            $reads[] = "'{$relation}'";
+        }
+    }
+
+    return $reads;
+}
+
 /*
  * The vote model as the application defines it today. If this fails, the
  * vote model was renamed or removed: point the import at the top of this
@@ -309,6 +389,29 @@ it('lets no direct message page read votes', function () {
         ->and($reads)->toBe([]);
 });
 
+it('lets no direct message code or page reach the votes through a relation', function () {
+    $root = dmProjectRoot();
+    $relations = dmVoteRelations(ElectionVote::class);
+    $files = dmCodeFiles();
+    $reads = [];
+
+    foreach (DM_PAGES as $page) {
+        $path = "{$root}/{$page}";
+        array_push($files, ...(is_dir($path) ? array_map(fn ($file): string => $file->getRealPath(), iterator_to_array(Finder::create()->files()->name('*.php')->in($path), false)) : [$path]));
+    }
+
+    foreach ($files as $file) {
+        if (($found = dmVoteRelationReadsIn((string) file_get_contents($file), $relations)) !== []) {
+            $reads[substr($file, strlen($root) + 1)] = $found;
+        }
+    }
+
+    // ElectionRound::votes() on 2026-11-16; 23 code files and 5 page files.
+    expect($relations)->toContain('votes')
+        ->and(count($files))->toBeGreaterThanOrEqual(25)
+        ->and($reads)->toBe([]);
+});
+
 /*
  * Negative controls for the scanners: each must see a plant, or "nothing
  * found" above could also mean "nothing looked".
@@ -339,4 +442,23 @@ it('sees a vote read in a page', function (string $source, array $reads) {
     'table' => ["<?php DB::table('election_votes')->count();", ['names election_votes']],
     'relation' => ['<?php $round->votes()->pluck("einundzwanzig_pleb_id");', ['reads a votes relation']],
     'clean' => ['<?php $round->rollEntries()->count();', []],
+]);
+
+it('finds the relations that reach the vote model in the models', function () {
+    expect(dmVoteRelations(ElectionVote::class))->toBe(['votes']);
+});
+
+it('sees a vote relation read however the DM code writes it', function (string $source, array $reads) {
+    expect(dmVoteRelationReadsIn($source, ['votes']))->toBe($reads);
+})->with([
+    'property through rounds' => ['<?php $election->rounds->flatMap(fn ($round) => $round->votes->pluck("einundzwanzig_pleb_id"));', ['->votes']],
+    'call' => ['<?php $round->votes()->pluck("einundzwanzig_pleb_id");', ['->votes']],
+    'nullsafe' => ['<?php $round?->votes;', ['->votes']],
+    'higher order proxy' => ['<?php $election->rounds->flatMap->votes;', ['->votes']],
+    'whereHas' => ["<?php \$election->rounds()->whereHas('votes', fn (\$votes) => \$votes->where('einundzwanzig_pleb_id', 1));", ["'votes'"]],
+    'whereDoesntHave' => ["<?php \$q->whereDoesntHave('rounds.votes');", ["'votes'"]],
+    'withCount alias' => ["<?php \$election->rounds()->withCount('votes as cast');", ["'votes'"]],
+    'eager load' => ["<?php \$election->load(['rounds.votes' => fn (\$q) => \$q]);", ["'votes'"]],
+    'has' => ['<?php $election->rounds()->has("votes")->exists();', ["'votes'"]],
+    'clean: table name, comment, other relation, variable' => ["<?php\n// \$round->votes\n/** whereHas('votes') */\n\$round->rollEntries()->count();\nDB::table('election_votes');\n\$votes = 1;", []],
 ]);

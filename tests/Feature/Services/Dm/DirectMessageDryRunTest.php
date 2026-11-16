@@ -7,12 +7,15 @@ use App\Enums\ElectionFeeRule;
 use App\Jobs\Dm\DispatchBulkDirectMessages;
 use App\Models\DmDelivery;
 use App\Models\DmMessage;
+use App\Models\DmRun;
+use App\Models\DmSchedule;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\PlebDmRelay;
 use App\Models\Profile;
 use App\Services\Dm\DirectMessageDryRun;
 use App\Services\Dm\StartDirectMessageRun;
+use App\Services\Election\OpenRound;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
@@ -238,3 +241,58 @@ it('holds the start lock while it checks the repeat lock and creates the run', f
         ->and(array_unique($freeDuringStart))->toBe([false])
         ->and(Cache::lock(StartDirectMessageRun::START_LOCK, 1)->get())->toBeTrue();
 });
+
+/*
+ * DoD 464 / E20 on the real send path: the frozen recipients of a sending do
+ * not depend on who voted. Jury gate j2f (D1, G2b) let StartDirectMessageRun
+ * drop every member with a row in `$round->votes()` — reached through the
+ * allowed Election::rounds(), no vote model or table named — after the dry
+ * run had confirmed them, and the whole suite stayed green. The same sending
+ * is frozen once before and once after a member votes: dry run, the start
+ * the board confirms, and a scheduled reminder started by `dm:send-due`. All
+ * three must be the same both times. tests/Unit/DirectMessageArchitectureTest.php
+ * scans for such reads; this holds the outcome, however they are written.
+ */
+it('freezes the same recipients whether or not a member already voted', function (DmAudience $audience) {
+    Queue::fake();
+    $voted = electionVoter();
+    electionVoter(); // entitled, never votes
+    $round = draftElectionRound(['seats' => 1]);
+    $round->candidates()->orderBy('id')->firstOrFail()->update(['einundzwanzig_pleb_id' => $voted->id]);
+    $round = app(OpenRound::class)->handle($round);
+    $election = $round->election;
+
+    $frozen = function (string $text) use ($audience, $election): array {
+        $message = fn (): DmMessage => DmMessage::factory()->create(['type' => DmMessageType::Individual, 'plaintext' => $text, 'variables' => []]);
+        $dryRun = app(DirectMessageDryRun::class)->handle(DmMessageType::Individual, $audience, $election, plaintext: $text);
+        $started = app(StartDirectMessageRun::class)->handle($message(), $audience, $election, $dryRun->recipientIds);
+        $schedule = DmSchedule::factory()->create([
+            'election_event_id' => $election->id,
+            'dm_message_id' => $message()->id,
+            'audience' => $audience,
+            'send_at' => now()->subMinute(),
+        ]);
+
+        test()->artisan('dm:send-due')->assertSuccessful();
+
+        return [
+            'dry run' => $dryRun->recipientIds,
+            'started' => $started->fresh()->recipient_ids,
+            'scheduled' => DmRun::query()->findOrFail($schedule->fresh()->dm_run_id)->recipient_ids,
+        ];
+    };
+
+    $before = $frozen('Erinnerung, bevor jemand abgestimmt hat.');
+    castElectionBallot($round, $voted);
+    $after = $frozen('Erinnerung, nachdem jemand abgestimmt hat.');
+
+    expect(electionVoteCount($round))->toBe(1)
+        ->and($before['dry run'])->toContain($voted->id)
+        ->and($before['started'])->toBe($before['dry run'])
+        ->and($before['scheduled'])->toBe($before['dry run'])
+        ->and($after)->toBe($before);
+})->with([
+    'entitled voters' => DmAudience::EntitledVoters,
+    'members' => DmAudience::Members,
+    'candidates' => DmAudience::Candidates,
+]);
