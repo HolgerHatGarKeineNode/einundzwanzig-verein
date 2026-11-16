@@ -103,3 +103,9 @@ it('leaves the name on the ballot plain, so a click on it still selects the cand
         ->and($html)->toContain('<span class="min-w-0 wrap-anywhere">Anna</span>');
     expect(substr($html, strpos($html, 'data-test="nostr-profile"'), strpos($html, '</button>') - strpos($html, 'data-test="nostr-profile"')))->not->toContain('Anna</span>');
 });
+
+it('keeps the chip free of block elements, so it stays whole inside a paragraph', function () {
+    $html = (string) $this->blade('<x-nostr-profile :pubkey="$p" name="Anna" />', ['p' => str_repeat('c', 64)]);
+
+    expect($html)->not->toMatch('/<(div|p|ul|ol|li|section|table)\b/');
+});

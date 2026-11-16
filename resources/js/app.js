@@ -7,6 +7,7 @@ import projectChatRoom from "./projectChatRoom.js";
 import projectChatFeed from "./projectChatFeed.js";
 import nostrLogout from "./nostrLogout.js";
 import electionBallot from "./electionBallot.js";
+import nostrProfileChip from "./nostrProfileChip.js";
 import { signerKind, withTimeout } from "./nostrSigner.js";
 
 /*
@@ -55,6 +56,7 @@ Alpine.data('projectChatFeed', projectChatFeed);
 // Import des SDK — der Knopf steht auf jeder Seite (siehe nostrLogout.js).
 Alpine.data('nostrLogout', nostrLogout);
 Alpine.data('electionBallot', electionBallot);
+Alpine.data('nostrProfileChip', nostrProfileChip);
 // For inline x-data (election signer check): tells a real extension apart
 // from the always-present window.nostr.js fallback (see nostrSigner.js).
 window.nostrSigner = { signerKind, withTimeout };

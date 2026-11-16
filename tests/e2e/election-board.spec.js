@@ -174,3 +174,20 @@ test('the board enters the chair\'s casting vote on a tie, and the share view sh
     await expect(screen.locator('[data-test="share-casting-vote"]')).toHaveText('Entschieden durch Stichentscheid der/des Vorsitzenden Erika Vorsitz.')
     await expect(screen.locator('[data-test="share-tie-next"]')).toHaveCount(0)
 })
+
+test('a name chip opens its profile card after the sections are switched by Livewire', async ({ page }) => {
+    const data = scenario('board-close')
+
+    await login(page, data.board.secret, ADMIN)
+
+    for (const key of ['candidacies', 'roll', 'candidacies']) {
+        await openSection(page, key)
+        const chip = page.locator('[data-test="nostr-profile"]').first()
+        await expect(chip).toBeVisible()
+        await chip.click()
+        const card = page.locator('[data-test="nostr-profile-card"]:visible')
+        await expect(card, `card after switching to ${key}`).toHaveCount(1)
+        await page.keyboard.press('Escape')
+        await expect(card).toHaveCount(0)
+    }
+})
