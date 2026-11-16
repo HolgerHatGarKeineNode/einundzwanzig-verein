@@ -59,15 +59,20 @@ use Symfony\Component\Finder\Finder;
  *    `dm:send-due`), under Queue::fake(): it does not run the fan-out.
  *  - tests/Feature/Services/Dm/DirectMessageSendPathBallotSecrecyTest.php
  *    runs the confirmed start and `dm:send-due` through the fan-out and every
- *    SendDirectMessage, with only the relay faked, and holds the deliveries
- *    and each delivery's outcome to be the same before and after a member
- *    votes. It sees a vote read however it is written, but only on these two
- *    paths, for the four audiences it runs, and only where the read changes
- *    who gets a delivery or how that delivery ends. It does NOT compare the
- *    text a member receives, and the sync queue ignores `->delay()`, so a read
- *    that changes only the wording or the send time for voters passes it
- *    (jury gate j2f, round 3: O6, O9, O12). A read whose effect needs another
- *    fixture (a second round, a vote in a parent election) passes it too.
+ *    SendDirectMessage, with only the relay faked, and holds the deliveries,
+ *    each delivery's outcome, the text the member opens from the wrap and the
+ *    text stored for the inbox (byte for byte, with only the sentence that
+ *    differs between two sendings masked), and the delay each send job is
+ *    dispatched with, to be the same before and after a member votes. Text
+ *    and delay were unseen until 2026-11-16 (jury gate j2f, round 3: O6, O9,
+ *    O12). It sees a vote read however it is written, but only on these two
+ *    paths and for the four audiences it runs, none of which spreads its jobs
+ *    over time: a read that changes only the random spread of a targeted
+ *    audience (fee outstanding) passes it. So does a read whose effect needs
+ *    another fixture (a second round, a vote in a parent election, a member
+ *    without a profile name, a relay that fails and so a retry's backoff or
+ *    release), and one that changes only the parts of a wrap that are random
+ *    by design (its ephemeral key, its created_at, the rumor's created_at).
  */
 
 /** Directories whose PHP is the direct message code, relative to the project root. */
