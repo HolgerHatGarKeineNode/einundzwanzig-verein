@@ -39,7 +39,9 @@ use App\Models\ElectionRound;
 use App\Models\PlebDmRelay;
 use App\Models\Profile;
 use App\Services\Dm\ComposeDirectMessage;
+use App\Services\Election\Candidacies;
 use App\Services\Election\CastBallot;
+use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\RecordCastingVote;
 use App\Services\Election\VoteEvent;
@@ -420,6 +422,32 @@ function e2eScenario(string $name, string $state): array
             $election->forceFill(['call_url' => 'https://call.e2e.invalid/vorstandswahl'])->save();
 
             return [...$result, 'election' => $election->id, 'round' => $cash->id, 'sealed' => $chairRound->id, 'bare' => $bare];
+
+        case 'tie-opened-elsewhere':
+            // The tie of „Vorsitz“ is the chair's again while the 63-character
+            // name stands in the opened „Kassenprüfung und Revision“: the
+            // assembly resolved a run-off, the other round opened while that
+            // run-off was a draft, and the run-off — the name withdrawn from
+            // it — was opened and annulled (DoubleElectionInvariantTest, D2).
+            $long = e2eMember('Maximiliane Theodora Freifrau von Hohenzollern-Sigmaringen-Wied');
+            $election = e2eElection();
+            // The other round comes first: an earlier round's tie holds back a
+            // later one even with a run-off. The name stands there only once
+            // „Vorsitz“ is counted, through the member's candidacy and the board's approval.
+            $other = e2eRound($election, 'Kassenprüfung und Revision', 1, [$carla]);
+            $round = e2eRound($election, 'Vorsitz', 2, [$long, $anna]);
+            $stewardship->open($round, $boardPleb);
+            e2eCast($round, $voters['voter1'], $long);
+            e2eCast($round, $voters['voter2'], $anna);
+            $stewardship->closeEarly($round->fresh(), $boardPleb, 'Alle haben abgestimmt');
+            $longPleb = EinundzwanzigPleb::query()->findOrFail($long['id']);
+            app(Candidacies::class)->approve(app(Candidacies::class)->submit($other, $longPleb), $boardPleb);
+            $runOff = app(CreateRunOff::class)->handle($round->fresh(), $boardPleb, resolvedByAssembly: true);
+            $stewardship->open($other, $boardPleb);
+            app(Candidacies::class)->withdraw($runOff->candidates()->where('einundzwanzig_pleb_id', $long['id'])->firstOrFail(), $boardPleb, 'Steht in der Kassenprüfung');
+            $stewardship->annul($stewardship->open($runOff->fresh(), $boardPleb), $boardPleb, 'Zurück an die Vorsitzende');
+
+            return [...$result, 'election' => $election->id, 'round' => $round->id, 'other' => $other->id, 'long' => $long];
 
         case 'dm':
             $election = e2eElection();

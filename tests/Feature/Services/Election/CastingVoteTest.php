@@ -5,6 +5,8 @@ use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionOutcome;
 use App\Enums\ElectionTieKind;
+use App\Exceptions\ElectionActionRefusedException;
+use App\Exceptions\ElectionCandidateBlockedException;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
@@ -12,6 +14,7 @@ use App\Models\ElectionAuditEntry;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionCastingVote;
 use App\Models\ElectionRound;
+use App\Services\Election\Candidacies;
 use App\Services\Election\CloseRound;
 use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionAuditLog;
@@ -406,7 +409,7 @@ it('ends a run-off chain with the casting vote on a tie in the run-off', functio
     $runOff = castingChainVoteAndSeal($runOff, $voters, [$memberA, $memberB]);
     $runOffB = (int) $runOff->candidates()->where('einundzwanzig_pleb_id', $memberB)->value('id');
 
-    castingVote($runOff, $board, [$runOffB]);
+    expect(castingRefusal(fn () => castingVote($runOff, $board, [$runOffB])))->toBe('recorded');
 
     $treasurer = draftElectionRound(['position' => 5, 'title' => 'Kasse'], candidates: 0, election: $election);
     castingChainStand($treasurer, $memberA);
@@ -528,3 +531,256 @@ it('does not apply a stored casting vote for a candidate who was not level', fun
         ->and(Artisan::output())->toContain('MISMATCH: the recorded casting vote does not fit the tie of the count.')
         ->not->toContain('differs from its line in the audit log');
 })->with(['between candidates', 'yes = no']);
+
+/*
+ * Gate finding j2g, defect 1: a sealed round with an undecided tie and a
+ * casting vote elected the same member twice. The treasurer at position 1
+ * opened with A while A was level in the tie of the later chair, elected A,
+ * and then the chair's casting vote elected A once more. Wahlreglement § 3
+ * Nr. 7 „Wer in einem Wahlgang gewählt ist, steht in den folgenden
+ * Wahlgängen nicht mehr zur Wahl.“
+ *
+ * Mutations that must turn this red: let `OpenRound` check the tie of a
+ * sealed round only for earlier contests (the treasurer opens); refuse the
+ * treasurer while the tie's run-off is a draft (the earlier office loses its
+ * first claim); drop the elected-elsewhere check from `RecordCastingVote`
+ * (the casting vote elects A twice); check every tied candidate instead of
+ * the chosen ones there (the chair cannot name B any more); read the raw
+ * count of the other round instead of its effective result (a casting vote
+ * there is missed); count an annulled round; record the casting vote when
+ * the other round cannot be counted.
+ */
+
+/**
+ * The treasurer at position 1 and, at position 2, a sealed round in which A
+ * is level in an undecided tie: the chair 1:1 between A and B (`single`), or
+ * a two-seat assessor round where C is elected and A and B are level for the
+ * second seat (`two seats`). Returns the tied round, the treasurer (a draft
+ * without candidates), the members A and B, the candidate ids of A and B in
+ * the tied round, the voters and a board member.
+ *
+ * @return array{0: ElectionRound, 1: ElectionRound, 2: int, 3: int, 4: int, 5: int, 6: list<EinundzwanzigPleb>, 7: EinundzwanzigPleb}
+ */
+function castingTwiceTie(string $seats): array
+{
+    [$board] = electionBoard(1);
+    $election = Election::factory()->create();
+    $voters = [electionVoter(), electionVoter()];
+    $treasurer = draftElectionRound(['position' => 1, 'title' => 'Kasse', 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 0, election: $election);
+
+    if ($seats === 'single') {
+        $tied = draftElectionRound(['position' => 2, 'title' => 'Vorsitz', 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 2, election: $election);
+        [$a, $b] = castingChainMembers($tied);
+        $ballots = [[$a], [$b]];
+    } else {
+        $tied = draftElectionRound(['position' => 2, 'title' => 'Beisitz', 'counting_rule' => ElectionCountingRule::MostVotes, 'seats' => 2], candidates: 3, election: $election);
+        [$c, $a, $b] = castingChainMembers($tied);
+        $ballots = [[$c, $a], [$c, $b]];
+    }
+
+    $tied = app(OpenRound::class)->handle($tied->fresh());
+    $candidateOf = fn (int $plebId): int => (int) $tied->candidates()->where('einundzwanzig_pleb_id', $plebId)->value('id');
+
+    foreach ($ballots as $index => $ballot) {
+        castElectionBallot($tied, $voters[$index], array_fill_keys(array_map($candidateOf, $ballot), 'for'));
+    }
+
+    $tied = app(CloseRound::class)->handle($tied);
+    $result = app(TallyRound::class)->effective($tied);
+
+    expect($result->outcome)->toBe(ElectionOutcome::Tie)
+        ->and($result->tied)->toBe([$candidateOf($a), $candidateOf($b)])
+        ->and($result->tiedSeats)->toBe(1);
+
+    return [$tied, $treasurer, $a, $b, $candidateOf($a), $candidateOf($b), $voters, $board];
+}
+
+/**
+ * The sealed rounds of `$rounds` whose effective result elects member `$plebId`.
+ *
+ * @param  list<ElectionRound>  $rounds
+ * @return list<string>
+ */
+function castingTwiceElectedIn(array $rounds, int $plebId): array
+{
+    return collect($rounds)
+        ->map(fn (ElectionRound $round): ElectionRound => $round->fresh())
+        ->filter(fn (ElectionRound $round): bool => $round->isSealed()
+            && in_array((int) $round->candidates()->where('einundzwanzig_pleb_id', $plebId)->value('id'), app(TallyRound::class)->effective($round)->elected, true))
+        ->map(fn (ElectionRound $round): string => $round->title)
+        ->values()
+        ->all();
+}
+
+it('elects nobody twice through a sealed tie and a casting vote (gate repro)', function (string $seats) {
+    [$tied, $treasurer, $a, , $tiedA, , $voters, $board] = castingTwiceTie($seats);
+    castingChainStand($treasurer, $a);
+
+    // The gate's steps 3 to 5, each as far as the application lets it go.
+    try {
+        $treasurer = app(OpenRound::class)->handle($treasurer->fresh());
+        $treasurerA = (int) $treasurer->candidates()->where('einundzwanzig_pleb_id', $a)->value('id');
+        castElectionBallot($treasurer, $voters[0], [$treasurerA => 'for']);
+        castElectionBallot($treasurer, $voters[1], [$treasurerA => 'for']);
+        app(CloseRound::class)->handle($treasurer);
+    } catch (ElectionRoundStateException) {
+    }
+
+    castingRefusal(fn () => castingVote($tied, $board, [$tiedA], 'Chair'));
+
+    expect(castingTwiceElectedIn([$treasurer, $tied], $a))->toHaveCount(1);
+})->with(['single seat' => ['single'], 'two seats, tie for the second' => ['two seats']]);
+
+it('refuses an earlier round while a candidate of it is level in the undecided tie of a later round', function (string $seats) {
+    [$tied, $treasurer, $a] = castingTwiceTie($seats);
+    castingChainStand($treasurer, $a);
+
+    try {
+        app(OpenRound::class)->handle($treasurer->fresh());
+        $this->fail('The treasurer opened while A is level in the undecided tie of "'.$tied->title.'".');
+    } catch (ElectionCandidateBlockedException $refusal) {
+        expect($refusal->getMessage())->toContain('level in the undecided tie of the round "'.$tied->title.'"')
+            ->and($refusal->memberId)->toBe($a)
+            ->and($refusal->roundTitle)->toBe($tied->title);
+    }
+
+    expect($treasurer->fresh()->opened_at)->toBeNull()
+        ->and(app(OpenRound::class)->refusal($treasurer->fresh()))->toBeInstanceOf(ElectionCandidateBlockedException::class);
+})->with(['single seat' => ['single'], 'two seats, tie for the second' => ['two seats']]);
+
+it('leaves no deadlock: the refused earlier round opens once the tie is decided or the candidacy withdrawn', function (string $seats, string $way) {
+    [$tied, $treasurer, $a, , $tiedA, $tiedB, , $board] = castingTwiceTie($seats);
+    castingChainStand($treasurer, (int) electionVoter()->id);
+    castingChainStand($treasurer, $a);
+
+    expect(castingChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('tie');
+
+    match ($way) {
+        'casting vote for B' => expect(castingRefusal(fn () => castingVote($tied, $board, [$tiedB])))->toBe('recorded'),
+        'casting vote for A' => expect(castingRefusal(fn () => castingVote($tied, $board, [$tiedA])))->toBe('recorded'),
+        'withdrawn' => app(Candidacies::class)->withdraw($treasurer->candidates()->where('einundzwanzig_pleb_id', $a)->firstOrFail(), $board, 'Steht im Gleichstand'),
+    };
+
+    if ($way === 'casting vote for A') {
+        // A is elected there now: the treasurer refuses A for good, and opens once A's candidacy is withdrawn.
+        expect(castingChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('elected');
+        app(Candidacies::class)->withdraw($treasurer->candidates()->where('einundzwanzig_pleb_id', $a)->firstOrFail(), $board, 'Gewählt');
+    }
+
+    expect(castingChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('opens');
+})->with(function (): array {
+    $rows = [];
+
+    foreach (['single seat' => 'single', 'two seats' => 'two seats'] as $label => $seats) {
+        foreach (['casting vote for B', 'casting vote for A', 'withdrawn'] as $way) {
+            $rows["{$label}, {$way}"] = [$seats, $way];
+        }
+    }
+
+    return $rows;
+});
+
+it('lets the earlier office open while the later tie waits for the run-off the assembly resolved, and still elects nobody twice', function () {
+    [$tied, $treasurer, $a, , $tiedA, , $voters, $board] = castingTwiceTie('single');
+    $runOff = app(CreateRunOff::class)->handle($tied, $board, resolvedByAssembly: true);
+    castingChainStand($treasurer, $a);
+
+    // The run-off is a draft of the later contest: the earlier office keeps its first claim.
+    expect(castingChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('opens');
+
+    $treasurer = $treasurer->fresh();
+    $treasurerA = (int) $treasurer->candidates()->where('einundzwanzig_pleb_id', $a)->value('id');
+    castElectionBallot($treasurer, $voters[0], [$treasurerA => 'for']);
+    castElectionBallot($treasurer, $voters[1], [$treasurerA => 'for']);
+    app(CloseRound::class)->handle($treasurer);
+
+    expect(castingRefusal(fn () => castingVote($tied, $board, [$tiedA])))->toContain('This round has a run-off')
+        ->and(castingChainOutcome(fn () => app(OpenRound::class)->handle($runOff->fresh())))->toBe('elected')
+        ->and(castingTwiceElectedIn([$treasurer, $tied, $runOff], $a))->toBe(['Kasse']);
+});
+
+/**
+ * The state the gate's repro left behind, which `OpenRound` refuses now: A
+ * is elected in the treasurer while A is still level in the undecided tie —
+ * by the count (`count`), or by the chair's casting vote on a 1:1 between A
+ * and D there (`casting vote`). Built here by writing the candidacy past the
+ * open-time check — A is withdrawn while the treasurer opens and approved
+ * again afterwards. The application reaches a like state without such a
+ * write too (an annulled run-off; TieDoubleElectionGuardTest, P1b).
+ *
+ * @return array{0: ElectionRound, 1: ElectionRound, 2: int, 3: int, 4: int, 5: int, 6: EinundzwanzigPleb}
+ */
+function castingTwiceElectedElsewhere(string $seats, string $how = 'count'): array
+{
+    [$tied, $treasurer, $a, $b, $tiedA, $tiedB, $voters, $board] = castingTwiceTie($seats);
+    castingChainStand($treasurer, (int) electionVoter()->id);
+    $treasurerA = (int) ElectionCandidate::factory()->status(ElectionCandidateStatus::Withdrawn)->create([
+        'election_round_id' => $treasurer->getKey(),
+        'einundzwanzig_pleb_id' => $a,
+    ])->getKey();
+
+    $treasurer = app(OpenRound::class)->handle($treasurer->fresh());
+    $treasurerD = (int) $treasurer->candidates()->whereKeyNot($treasurerA)->value('id');
+    DB::table('election_candidates')->where('id', $treasurerA)->update(['status' => ElectionCandidateStatus::Approved->value]);
+    castElectionBallot($treasurer, $voters[0], [$treasurerA => 'for']);
+    castElectionBallot($treasurer, $voters[1], [($how === 'count' ? $treasurerA : $treasurerD) => 'for']);
+    $treasurer = app(CloseRound::class)->handle($treasurer);
+
+    if ($how === 'casting vote') {
+        expect(app(TallyRound::class)->handle($treasurer)->elected)->toBe([])
+            ->and(castingRefusal(fn () => castingVote($treasurer, $board, [$treasurerA])))->toBe('recorded');
+    }
+
+    expect(app(TallyRound::class)->effective($treasurer->fresh())->elected)->toBe([$treasurerA]);
+
+    return [$tied, $treasurer, $a, $b, $tiedA, $tiedB, $board];
+}
+
+it('refuses a casting vote for a candidate elected in another round, and the chair names another of the tie', function (string $seats, string $how) {
+    [$tied, $treasurer, $a, , $tiedA, $tiedB, $board] = castingTwiceElectedElsewhere($seats, $how);
+
+    try {
+        castingVote($tied, $board, [$tiedA]);
+        $this->fail('The casting vote elected A, who is elected in "Kasse" already.');
+    } catch (ElectionCandidateBlockedException $refusal) {
+        expect($refusal->getMessage())->toContain('elected in the round "Kasse"')
+            ->and($refusal->memberId)->toBe($a)
+            ->and($refusal->roundTitle)->toBe('Kasse');
+    }
+
+    expect(ElectionCastingVote::query()->where('election_round_id', $tied->id)->exists())->toBeFalse();
+
+    // No deadlock: B is level too, and the chair decides for B.
+    expect(castingRefusal(fn () => castingVote($tied, $board, [$tiedB])))->toBe('recorded');
+    $elected = app(TallyRound::class)->effective($tied->fresh())->elected;
+
+    expect($elected)->toContain($tiedB)->not->toContain($tiedA)
+        ->and($elected)->toHaveCount($seats === 'single' ? 1 : 2)
+        ->and(castingTwiceElectedIn([$treasurer, $tied], $a))->toBe(['Kasse']);
+})->with(function (): array {
+    $rows = [];
+
+    foreach (['single seat' => 'single', 'two seats, tie for the second' => 'two seats'] as $label => $seats) {
+        foreach (['count', 'casting vote'] as $how) {
+            $rows["{$label}, elected there by {$how}"] = [$seats, $how];
+        }
+    }
+
+    return $rows;
+});
+
+it('lets the chair decide for a candidate whose election elsewhere was annulled', function () {
+    [$tied, $treasurer, $a, , $tiedA, , $board] = castingTwiceElectedElsewhere('single');
+    app(ElectionStewardship::class)->annul($treasurer, $board, 'Falsche Liste');
+
+    expect(castingRefusal(fn () => castingVote($tied, $board, [$tiedA])))->toBe('recorded')
+        ->and(castingTwiceElectedIn([$treasurer, $tied], $a))->toBe(['Vorsitz']);
+});
+
+it('refuses a casting vote for a candidate of another round whose stored votes cannot be counted, and takes one standing nowhere else', function () {
+    [$tied, $treasurer, , , $tiedA, $tiedB, $board] = castingTwiceElectedElsewhere('single');
+    DB::table('election_votes')->where('election_round_id', $treasurer->id)->limit(1)->update(['choices' => json_encode([(string) ($tiedA + 1000) => 'for'])]);
+
+    expect(castingRefusal(fn () => castingVote($tied, $board, [$tiedA])))->toBe(ElectionActionRefusedException::class.': The stored votes of the round "Kasse", which shares a candidate with this tie, cannot be counted; check it with election:verify.')
+        ->and(castingRefusal(fn () => castingVote($tied, $board, [$tiedB])))->toBe('recorded');
+});

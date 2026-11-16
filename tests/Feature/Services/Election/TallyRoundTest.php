@@ -201,7 +201,8 @@ it('ignores later rounds, annulled rounds, other elections and earlier rounds wi
     $round = draftElectionRound(['position' => 3], candidates: 1, election: $election);
     standAgain($round, $later->candidates()->first(), $annulled->candidates()->first(), $elsewhere->candidates()->first());
 
-    expect(app(OpenRound::class)->handle($round)->opened_at)->not->toBeNull()
+    expect(fn () => app(OpenRound::class)->handle($round))->not->toThrow(ElectionRoundStateException::class)
+        ->and($round->fresh()->opened_at)->not->toBeNull()
         ->and($unrelated->fresh()->opened_at)->toBeNull();
 });
 

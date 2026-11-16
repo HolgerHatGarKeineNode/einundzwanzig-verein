@@ -31,7 +31,7 @@ enum DmAudience: string
         return match ($this) {
             self::Members => __('Aktiv- und Ehrenmitglieder'),
             self::EntitledVoters => __('Stimmberechtigte der Wahl'),
-            self::FeeOutstanding => __('Mitglieder mit offenem Beitrag'),
+            self::FeeOutstanding => __('Mitglieder, Beitrag offen'),
             self::Candidates => __('Kandidierende der Wahl'),
             self::Board => __('Vorstand'),
         };

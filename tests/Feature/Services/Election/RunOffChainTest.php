@@ -16,6 +16,7 @@ use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\OpenRound;
 use App\Services\Election\TallyRound;
+use Illuminate\Auth\Access\AuthorizationException;
 
 require_once __DIR__.'/helpers.php';
 
@@ -46,6 +47,7 @@ function runOffChainOutcome(Closure $open): string
     } catch (ElectionRoundStateException $exception) {
         return match (true) {
             str_contains($exception->getMessage(), 'not sealed yet') => 'not sealed',
+            str_contains($exception->getMessage(), 'also stands in the opened round') => 'open elsewhere',
             str_contains($exception->getMessage(), 'has been elected') => 'elected',
             str_contains($exception->getMessage(), 'undecided tie') => 'tie',
             str_contains($exception->getMessage(), 'second ballot is owed') => 'owed',
@@ -536,3 +538,163 @@ it('annuls every run-off below an annulled round, so none of them can be opened 
         expect($second->fresh()->annulled_at)->not->toBeNull();
     }
 })->with(['draft', 'open', 'sealed level, second run-off sealed and elects A']);
+
+/*
+ * Gate finding j2g: a round placed earlier was opened while a candidate of it
+ * stood in a later round that was already open — the later chair's run-off
+ * (P3) or the later chair itself (P4) — and both rounds elected the same
+ * member. Wahlreglement § 3 Nr. 7 „Wer in einem Wahlgang gewählt ist, steht in
+ * den folgenden Wahlgängen nicht mehr zur Wahl.“ Mutation that must turn this
+ * red: drop the open-elsewhere check from
+ * `assertNobodyStandsAgainAfterBeingElected()`.
+ */
+
+/**
+ * Treasurer at position 1, chair at position 2, and A standing in an opened,
+ * unsealed round of the chair: its run-off after 3:2:1 without a majority
+ * (`run-off`), or the chair itself (`chair`). Returns the round A stands in
+ * there, the treasurer, A, B, the voters and a board member.
+ *
+ * @return array{0: ElectionRound, 1: ElectionRound, 2: int, 3: int, 4: list<EinundzwanzigPleb>, 5: EinundzwanzigPleb}
+ */
+function runOffChainOpenLaterRound(string $where): array
+{
+    $election = Election::factory()->create();
+    [$boardMember] = electionBoard(1);
+    $voters = collect(range(1, 6))->map(fn (): EinundzwanzigPleb => electionVoter())->all();
+
+    $treasurer = draftElectionRound(['position' => 1, 'title' => 'Kasse', 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 1, election: $election);
+
+    if ($where === 'run-off') {
+        $chair = draftElectionRound(['position' => 2, 'title' => 'Vorsitz', 'counting_rule' => ElectionCountingRule::SingleMajority], candidates: 3, election: $election);
+        [$a, $b, $c] = runOffChainMembers($chair);
+
+        // 3 of 6 is not more than half: nobody is elected, A and B go to the run-off.
+        $chair = runOffChainVoteAndSeal($chair, $voters, [$a, $a, $a, $b, $b, $c]);
+        $later = app(OpenRound::class)->handle(app(CreateRunOff::class)->handle($chair, $boardMember));
+    } else {
+        $chair = draftElectionRound(['position' => 2, 'title' => 'Vorsitz', 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 2, election: $election);
+        [$a, $b] = runOffChainMembers($chair);
+        $later = app(OpenRound::class)->handle($chair);
+    }
+
+    expect(runOffChainMembers($later))->toContain($a)->toContain($b);
+
+    return [$later, $treasurer, $a, $b, $voters, $boardMember];
+}
+
+it('refuses an earlier round while a candidate of it stands in an open later round, so nobody is elected twice', function (string $where) {
+    [$later, $treasurer, $a] = runOffChainOpenLaterRound($where);
+    runOffChainStand($treasurer, $a);
+
+    try {
+        app(OpenRound::class)->handle($treasurer->fresh());
+        $this->fail('The treasurer opened while A stands in the open round "'.$later->title.'".');
+    } catch (ElectionCandidateBlockedException $refusal) {
+        expect($refusal->getMessage())->toContain('also stands in the opened round')
+            ->toContain('"'.$later->title.'"')
+            ->and($refusal->memberId)->toBe($a)
+            ->and($refusal->roundTitle)->toBe($later->title);
+    }
+
+    expect($treasurer->fresh()->opened_at)->toBeNull()
+        ->and(app(OpenRound::class)->refusal($treasurer->fresh()))->toBeInstanceOf(ElectionCandidateBlockedException::class);
+})->with([
+    'P3: the later chair\'s run-off is open' => ['run-off'],
+    'P4: the later chair is open' => ['chair'],
+]);
+
+it('leaves no deadlock: the refused earlier round opens once the later round is closed or the candidacy withdrawn', function (string $where, string $way) {
+    [$later, $treasurer, $a, $b, $voters, $boardMember] = runOffChainOpenLaterRound($where);
+    runOffChainStand($treasurer, $a);
+
+    expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('open elsewhere');
+
+    if ($way === 'withdrawn') {
+        app(Candidacies::class)->withdraw($treasurer->candidates()->where('einundzwanzig_pleb_id', $a)->firstOrFail(), $boardMember, 'Kandidiert im Vorsitz');
+    } else {
+        $winner = $way === 'later round closed, elects A' ? $a : $b;
+        runOffChainVote($later, $voters[0], $winner);
+        app(CloseRound::class)->handle($later->fresh());
+
+        expect(app(TallyRound::class)->effective($later->fresh())->elected)
+            ->toBe([(int) $later->candidates()->where('einundzwanzig_pleb_id', $winner)->value('id')]);
+    }
+
+    if ($way === 'later round closed, elects A') {
+        // A is elected there now: the treasurer refuses A for good, and opens once A's candidacy is withdrawn.
+        expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('elected');
+        app(Candidacies::class)->withdraw($treasurer->candidates()->where('einundzwanzig_pleb_id', $a)->firstOrFail(), $boardMember, 'Im Vorsitz gewählt');
+    }
+
+    expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('opens');
+})->with(function (): array {
+    $rows = [];
+
+    foreach (['P3' => 'run-off', 'P4' => 'chair'] as $label => $where) {
+        foreach (['later round closed, elects B', 'later round closed, elects A', 'withdrawn'] as $way) {
+            $rows["{$label}, {$way}"] = [$where, $way];
+        }
+    }
+
+    return $rows;
+});
+
+/*
+ * Only a candidacy still standing in the open round holds the other round
+ * back. Mutation that must turn this red: count withdrawn and rejected
+ * candidacies in the open-elsewhere check (drop `standingOnly: true` there).
+ */
+it('opens an earlier round when the candidate\'s candidacy in the open later round was withdrawn or rejected', function (string $how) {
+    $election = Election::factory()->create();
+    [$boardMember] = electionBoard(1);
+
+    $treasurer = draftElectionRound(['position' => 1, 'title' => 'Kasse'], candidates: 1, election: $election);
+    $chair = draftElectionRound(['position' => 2, 'title' => 'Vorsitz'], candidates: 1, election: $election);
+    $a = (int) electionVoter()->id;
+
+    // Only a pending candidacy can be rejected.
+    $chairA = ElectionCandidate::factory()
+        ->status($how === 'rejected' ? ElectionCandidateStatus::Pending : ElectionCandidateStatus::Approved)
+        ->create(['election_round_id' => $chair->getKey(), 'einundzwanzig_pleb_id' => $a]);
+
+    match ($how) {
+        'withdrawn' => app(Candidacies::class)->withdraw($chairA, $boardMember, 'Kandidiert in der Kasse'),
+        'rejected' => app(Candidacies::class)->reject($chairA, $boardMember, 'Nicht wählbar'),
+    };
+
+    $chair = app(OpenRound::class)->handle($chair->fresh());
+    runOffChainStand($treasurer, $a);
+
+    expect($chair->isSealed())->toBeFalse()
+        ->and($chair->candidates()->where('einundzwanzig_pleb_id', $a)->value('status'))->toBe(ElectionCandidateStatus::from($how))
+        ->and(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('opens');
+})->with(['withdrawn', 'rejected']);
+
+/*
+ * Adding or approving a candidacy never goes around the open-time check: a
+ * draft round takes the candidacy and refuses to open, an opened round takes
+ * none at all.
+ */
+it('takes a candidacy into an earlier draft while a later round is open, and still refuses to open it', function () {
+    $election = Election::factory()->create();
+    [$boardMember] = electionBoard(1);
+    $a = electionVoter();
+
+    $treasurer = draftElectionRound(['position' => 1, 'title' => 'Kasse'], candidates: 1, election: $election);
+    $chair = draftElectionRound(['position' => 2, 'title' => 'Vorsitz'], candidates: 1, election: $election);
+    runOffChainStand($chair, (int) $a->id);
+    $chair = app(OpenRound::class)->handle($chair);
+
+    // An opened round takes no candidacy, by the policy and by the model.
+    expect(fn () => app(Candidacies::class)->submit($chair->fresh(), electionVoter()))->toThrow(AuthorizationException::class)
+        ->and(fn () => runOffChainStand($chair->fresh(), (int) electionVoter()->id))->toThrow(ElectionRoundStateException::class);
+
+    // The earlier draft takes A's candidacy and its approval, then refuses to open.
+    $candidacy = app(Candidacies::class)->submit($treasurer->fresh(), $a);
+    app(Candidacies::class)->approve($candidacy, $boardMember);
+
+    expect($candidacy->fresh()->status)->toBe(ElectionCandidateStatus::Approved)
+        ->and(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('open elsewhere')
+        ->and($treasurer->fresh()->opened_at)->toBeNull();
+});

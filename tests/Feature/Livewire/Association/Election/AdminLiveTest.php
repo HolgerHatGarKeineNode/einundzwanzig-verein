@@ -596,6 +596,49 @@ it('says in German which earlier result keeps the next round shut', function (st
     'earlier not counted' => ['not counted', 'kandidiert auch in einem früheren Wahlgang, der noch nicht ausgezählt ist. Zählt ihn zuerst aus'],
 ]);
 
+it('says in German which later round, opened and not counted, keeps an earlier round shut', function () {
+    liveBoard();
+    $election = Election::factory()->announced()->create();
+    $treasury = draftElectionRound(['title' => 'Kasse', 'position' => 1], candidates: 1, election: $election);
+    $presidency = app(OpenRound::class)->handle(draftElectionRound(['title' => 'Vorsitz', 'position' => 2], election: $election));
+    ElectionCandidate::factory()->create(['election_round_id' => $treasury->id, 'einundzwanzig_pleb_id' => $presidency->candidates()->value('einundzwanzig_pleb_id')]);
+
+    // The page keeps one round open at a time; past its 60 minutes and not yet counted, the chair still holds the treasury back.
+    $this->travel(OpenRound::LIVE_MAX_MINUTES + 1)->minutes();
+
+    livePage()
+        ->call('startRoundAction', $treasury->id, 'open')
+        ->call('confirmRoundAction')
+        ->assertHasErrors(['roundReason'])
+        ->assertSee('kandidiert auch im Wahlgang „Vorsitz“, der noch nicht ausgezählt ist. Zählt ihn zuerst aus, oder zieht die Kandidatur von');
+
+    expect($treasury->fresh()->opened_at)->toBeNull();
+});
+
+it('says in German which later round, tied and not decided, keeps an earlier round shut', function () {
+    liveBoard();
+    $voters = [electionVoter(), electionVoter()];
+    $election = Election::factory()->announced()->create();
+    $treasury = draftElectionRound(['title' => 'Kasse', 'position' => 1], candidates: 1, election: $election);
+    $presidency = app(OpenRound::class)->handle(draftElectionRound(['title' => 'Vorsitz', 'position' => 2, 'counting_rule' => ElectionCountingRule::MostVotes], election: $election));
+    [$a, $b] = $presidency->candidates()->orderBy('id')->pluck('id')->map(fn (mixed $id): int => (int) $id)->all();
+    castElectionBallot($presidency, $voters[0], [$a => 'for']);
+    castElectionBallot($presidency, $voters[1], [$b => 'for']);
+    app(CloseRound::class)->handle($presidency);
+
+    $memberA = EinundzwanzigPleb::query()->findOrFail(ElectionCandidate::query()->findOrFail($a)->einundzwanzig_pleb_id);
+    Profile::factory()->create(['pubkey' => $memberA->pubkey, 'name' => 'Alice Ambrosius']);
+    ElectionCandidate::factory()->create(['election_round_id' => $treasury->id, 'einundzwanzig_pleb_id' => $memberA->id]);
+
+    livePage()
+        ->call('startRoundAction', $treasury->id, 'open')
+        ->call('confirmRoundAction')
+        ->assertHasErrors(['roundReason'])
+        ->assertSee('Alice Ambrosius steht im Wahlgang „Vorsitz“ im Gleichstand, und der ist noch nicht entschieden. Tragt dort zuerst den Stichentscheid der/des Vorsitzenden ein, oder zieht die Kandidatur von Alice Ambrosius hier unter „Kandidaturen“ zurück.');
+
+    expect($treasury->fresh()->opened_at)->toBeNull();
+});
+
 it('repeats an annulled round from the page right after it, and then offers opening the repeat', function () {
     $board = liveBoard();
     $election = Election::factory()->announced()->create();

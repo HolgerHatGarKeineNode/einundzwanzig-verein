@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Exceptions\ElectionActionRefusedException;
 use App\Exceptions\ElectionCandidateBlockedException;
@@ -11,6 +12,7 @@ use App\Models\ElectionCastingVote;
 use App\Models\ElectionManifest;
 use App\Models\ElectionRound;
 use App\Models\Profile;
+use App\Services\Election\Candidacies;
 use App\Services\Election\CloseRound;
 use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionAuditLog;
@@ -265,6 +267,67 @@ it('keeps the counted result of a round annulled after its count in the minutes,
         ->toContain('Grund: Kandidatin nicht wählbar')
         ->and(strpos(tieProtocol($election), 'Prüfsumme'))->toBeLessThan(strpos(tieProtocol($election), 'ANNULLIERT'))
         ->and($round->fresh()->annulled_at)->not->toBeNull();
+});
+
+it('refuses in the dialog a casting vote for a person elected in another round, naming person and round, and takes the other', function () {
+    [, $election, $round, $ids] = tiedEvening();
+    $voters = [electionVoter(), electionVoter()];
+    $alice = (int) ElectionCandidate::query()->findOrFail($ids['alice'])->einundzwanzig_pleb_id;
+
+    // Alice elected in „Kasse“ while still level here. The application can
+    // reach this through an annulled run-off (TieDoubleElectionGuardTest,
+    // P1b); here her candidacy is written past the open-time check for brevity.
+    $treasury = ElectionRound::factory()->countingRule(ElectionCountingRule::SingleMajority, 1)->withCandidates(1)->create(['election_event_id' => $election->id, 'title' => 'Kasse', 'position' => 5]);
+    $treasuryAlice = (int) ElectionCandidate::factory()->status(ElectionCandidateStatus::Withdrawn)->create(['election_round_id' => $treasury->id, 'einundzwanzig_pleb_id' => $alice])->id;
+    $treasury = app(OpenRound::class)->handle($treasury->fresh());
+    DB::table('election_candidates')->where('id', $treasuryAlice)->update(['status' => ElectionCandidateStatus::Approved->value]);
+    castElectionBallot($treasury, $voters[0], [$treasuryAlice => 'for']);
+    castElectionBallot($treasury, $voters[1], [$treasuryAlice => 'for']);
+    app(CloseRound::class)->handle($treasury);
+
+    $page = tieAdmin()
+        ->call('startCastingVote', $round->id)
+        ->set('castingCandidates', [$ids['alice']])
+        ->set('castingChair', 'Erika Vorsitz')
+        ->call('recordCastingVote')
+        ->assertHasErrors(['castingCandidates'])
+        ->assertSee('Alice Ambrosius ist im Wahlgang „Kasse“ schon gewählt. Die/der Vorsitzende kann nur für eine andere Person aus dem Gleichstand entscheiden.');
+
+    expect(ElectionCastingVote::query()->where('election_round_id', $round->id)->exists())->toBeFalse();
+
+    $page->set('castingCandidates', [$ids['bob']])->call('recordCastingVote')->assertHasNoErrors();
+
+    expect(app(TallyRound::class)->effective($round->fresh())->elected)->toBe([$ids['bob']]);
+});
+
+it('refuses in the dialog a casting vote for a person standing in another opened round, naming person and round and what to do', function () {
+    [$board, $election, $round, $ids] = tiedEvening();
+    $alice = ElectionCandidate::query()->findOrFail($ids['alice'])->pleb;
+
+    // Reached through the services only (DoubleElectionInvariantTest, gate
+    // finding D2): „Kasse“ opens with Alice while the run-off the assembly
+    // resolved is a draft; Alice is withdrawn from the run-off, which is then
+    // opened and annulled, and the tie is the chair's again.
+    $runOff = app(CreateRunOff::class)->handle($round, $board, resolvedByAssembly: true);
+    $treasury = ElectionRound::factory()->countingRule(ElectionCountingRule::SingleMajority, 1)->create(['election_event_id' => $election->id, 'title' => 'Kasse', 'position' => 5]);
+    ElectionCandidate::factory()->create(['election_round_id' => $treasury->id, 'einundzwanzig_pleb_id' => $alice->id]);
+    app(OpenRound::class)->handle($treasury->fresh());
+    app(Candidacies::class)->withdraw($runOff->candidates()->where('einundzwanzig_pleb_id', $alice->id)->firstOrFail(), $board, 'steht in der Kasse');
+    app(ElectionStewardship::class)->annul(app(OpenRound::class)->handle($runOff->fresh()), $board, 'zurück an die Vorsitzende');
+
+    $page = tieAdmin()
+        ->call('startCastingVote', $round->id)
+        ->set('castingCandidates', [$ids['alice']])
+        ->set('castingChair', 'Erika Vorsitz')
+        ->call('recordCastingVote')
+        ->assertHasErrors(['castingCandidates'])
+        ->assertSee('Alice Ambrosius kandidiert auch im Wahlgang „Kasse“, der noch nicht ausgezählt ist. Entscheidet für eine andere Person aus dem Gleichstand, oder entscheidet, nachdem „Kasse“ ausgezählt ist.');
+
+    expect(ElectionCastingVote::query()->where('election_round_id', $round->id)->exists())->toBeFalse();
+
+    $page->set('castingCandidates', [$ids['bob']])->call('recordCastingVote')->assertHasNoErrors();
+
+    expect(app(TallyRound::class)->effective($round->fresh())->elected)->toBe([$ids['bob']]);
 });
 
 it('refuses the casting vote with a form error when the round was annulled while the dialog was open', function () {

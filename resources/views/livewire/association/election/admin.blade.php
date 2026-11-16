@@ -596,6 +596,10 @@ new class extends Component
             );
 
             $castingVotes->handle($round, $actor, array_map(intval(...), $this->castingCandidates), $this->castingChair, $this->castingNote);
+        } catch (ElectionCandidateBlockedException $refusal) {
+            $this->addError('castingCandidates', $this->refusalText('casting', $refusal));
+
+            return;
         } catch (\UnexpectedValueException) {
             $this->addError('castingCandidates', $this->unreadableText($round));
 
@@ -1330,9 +1334,13 @@ new class extends Component
             $action === 'open' && $name !== null && str_contains($message, 'stored votes cannot be counted') => $this->unreadableBlockText($name, $exception->memberId),
             // Before the run-off arm, so a future message that also says "run-off" still lands here.
             $action === 'open' && $name !== null && str_contains($message, 'second ballot is owed') => __(':name gehört zu den Bestplatzierten eines früheren Wahlgangs ohne Mehrheit, und dessen Stichwahl steht noch aus. Legt zuerst die Stichwahl an.', ['name' => $name]),
+            $action === 'open' && $name !== null && str_contains($message, 'also stands in the opened round') => __(':name kandidiert auch im Wahlgang „:round“, der noch nicht ausgezählt ist. Zählt ihn zuerst aus, oder zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück.', ['name' => $name, 'round' => $exception->roundTitle]),
             $action === 'open' && str_contains($message, 'run-off') => __('Die Stichwahl lässt sich erst öffnen, wenn ihr Wahlgang ausgezählt ist.'),
             $action === 'open' && $name !== null && str_contains($message, 'not sealed yet') => __(':name kandidiert auch in einem früheren Wahlgang, der noch nicht ausgezählt ist. Zählt ihn zuerst aus, oder zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück.', ['name' => $name]),
             $action === 'open' && $name !== null && str_contains($message, 'has been elected') => __(':name ist in einem früheren Wahlgang schon gewählt. Zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück, dann lässt sich der Wahlgang öffnen. Kann danach niemand mehr antreten, streicht den Wahlgang.', ['name' => $name]),
+            $action === 'open' && $name !== null && str_contains($message, 'undecided tie of the round "') => __(':name steht im Wahlgang „:round“ im Gleichstand, und der ist noch nicht entschieden. Tragt dort zuerst den Stichentscheid der/des Vorsitzenden ein, oder zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück.', ['name' => $name, 'round' => $exception->roundTitle]),
+            $action === 'casting' && $name !== null && str_contains($message, 'also stands in the opened round') => __(':name kandidiert auch im Wahlgang „:round“, der noch nicht ausgezählt ist. Entscheidet für eine andere Person aus dem Gleichstand, oder entscheidet, nachdem „:round“ ausgezählt ist.', ['name' => $name, 'round' => $exception->roundTitle]),
+            $action === 'casting' && $name !== null => __(':name ist im Wahlgang „:round“ schon gewählt. Die/der Vorsitzende kann nur für eine andere Person aus dem Gleichstand entscheiden.', ['name' => $name, 'round' => $exception->roundTitle]),
             $action === 'open' && $name !== null && str_contains($message, 'undecided tie') => __(':name steht in einem früheren Wahlgang im Gleichstand, und der ist noch nicht entschieden. Tragt den Stichentscheid der/des Vorsitzenden ein, oder zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück.', ['name' => $name]),
             $action === 'open' && str_contains($message, 'fee year') => __('Die Beitragsregel dieser Wahl braucht ein Beitragsjahr. Tragt es unter „Einstellungen“ ein.'),
             $action === 'open' => __('Dieser Wahlgang lässt sich gerade nicht öffnen. Lade die Seite neu, vielleicht hat ihn schon jemand geöffnet.'),
