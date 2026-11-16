@@ -243,7 +243,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
         $lines = [];
 
         foreach ($result['rows'] as $row) {
-            $lines[] = '   - '.$row['name'].': '.$this->countText($rule, $row).(($verdict = $this->verdictOf($row)) === '' ? '' : ', '.$verdict);
+            $lines[] = '   - '.$row['name'].': '.$this->countText($rule, $row).(($verdict = $this->verdictOf($row, $void)) === '' ? '' : ', '.$verdict);
         }
 
         $lines[] = '   '.__('Enthaltungen (leer): :blank', ['blank' => $result['blank']]);
@@ -257,11 +257,15 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
     }
 
     /**
+     * The verdict of a row. The void result of an annulled round keeps its
+     * counts but gives no verdict: nobody in it is elected.
+     *
      * @param  array<string, mixed>  $row
      */
-    protected function verdictOf(array $row): string
+    protected function verdictOf(array $row, bool $void = false): string
     {
         return match (true) {
+            $void => '',
             $row['elected'] && $row['by_casting_vote'] => __('gewählt durch Stichentscheid'),
             $row['elected'] => __('gewählt'),
             $row['tied'] => __('Gleichstand'),
@@ -424,7 +428,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
                             <tbody>
                                 @foreach ($shown['rows'] as $row)
                                     <tr class="border-b border-border-subtle print:border-neutral-400">
-                                        @php $verdict = $this->verdictOf($row); @endphp
+                                        @php $verdict = $this->verdictOf($row, $kind === 'void'); @endphp
                                         <td class="py-2 pr-4 align-top font-bold [overflow-wrap:anywhere]">
                                             {{ $row['name'] }}
                                             @if ($verdict !== '')

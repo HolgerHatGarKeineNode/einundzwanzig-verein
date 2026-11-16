@@ -36,11 +36,11 @@ require_once __DIR__.'/../../../../Feature/Services/Election/helpers.php';
 /**
  * A board of one, logged in, in an announced election with one sealed
  * single-majority round where Alice Ambrosius and Bob Brenner got one vote
- * each.
+ * each — or, not tied, Alice Ambrosius both votes.
  *
  * @return array{0: EinundzwanzigPleb, 1: Election, 2: ElectionRound, 3: array{alice: int, bob: int}}
  */
-function tiedEvening(string $title = 'Präsidium'): array
+function tiedEvening(string $title = 'Präsidium', bool $tied = true): array
 {
     [$board] = electionBoard(1);
     $voters = [electionVoter(), electionVoter()];
@@ -56,7 +56,7 @@ function tiedEvening(string $title = 'Präsidium'): array
 
     $round = app(OpenRound::class)->handle($round->fresh());
     castElectionBallot($round, $voters[0], [$ids['alice'] => 'for']);
-    castElectionBallot($round, $voters[1], [$ids['bob'] => 'for']);
+    castElectionBallot($round, $voters[1], [$ids[$tied ? 'bob' : 'alice'] => 'for']);
     $round = app(CloseRound::class)->handle($round);
     NostrAuth::login($board->pubkey);
 
@@ -252,4 +252,21 @@ it('refuses the casting vote with a form error when the round was annulled while
 
     expect(ElectionCastingVote::query()->exists())->toBeFalse()
         ->and(tieAudit($election))->not->toContain('casting_vote_recorded');
+});
+
+it('gives no per-row verdict in the void result of an annulled round, but keeps its counts', function () {
+    [$board, $election, $round] = tiedEvening(tied: false);
+    app(ElectionStewardship::class)->annul($round, $board, 'Kandidatin nicht wählbar');
+
+    $html = $this->get(route('association.election.admin.protocol', $election))->assertOk()->getContent();
+    preg_match('/<table[^>]*data-test="protocol-void-result-'.$round->id.'".*?<\/table>/s', $html, $table);
+
+    expect($table[0] ?? '')->toContain('Alice Ambrosius')
+        ->toContain('2 Stimmen')
+        ->not->toContain('gewählt');
+
+    expect(tieProtocol($election))
+        ->toContain('Alice Ambrosius: 2 Stimmen')
+        ->not->toContain('Alice Ambrosius: 2 Stimmen, gewählt')
+        ->toContain('Ausgezähltes Ergebnis (ungültig): gewählt ist Alice Ambrosius');
 });
