@@ -233,3 +233,23 @@ it('keeps the counted result of a round annulled after its count in the minutes,
         ->and(strpos(tieProtocol($election), 'Prüfsumme'))->toBeLessThan(strpos(tieProtocol($election), 'ANNULLIERT'))
         ->and($round->fresh()->annulled_at)->not->toBeNull();
 });
+
+it('refuses the casting vote with a form error when the round was annulled while the dialog was open', function () {
+    [$board, $election, $round, $ids] = tiedEvening();
+
+    $page = tieAdmin()
+        ->call('startCastingVote', $round->id)
+        ->call('$refresh')->assertOk()
+        ->set('castingCandidates', [$ids['alice']])
+        ->set('castingChair', 'Erika Vorsitz');
+
+    app(ElectionStewardship::class)->annul($round, $board, 'x');
+
+    $page->call('recordCastingVote')
+        ->assertOk()
+        ->assertHasErrors('castingCandidates')
+        ->assertSee('oder der Wahlgang ist annulliert');
+
+    expect(ElectionCastingVote::query()->exists())->toBeFalse()
+        ->and(tieAudit($election))->not->toContain('casting_vote_recorded');
+});

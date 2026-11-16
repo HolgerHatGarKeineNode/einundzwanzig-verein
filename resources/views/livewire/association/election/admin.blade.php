@@ -565,29 +565,32 @@ new class extends Component
     {
         $actor = $this->actor();
         $round = ElectionRound::query()->findOrFail($this->tieRoundId ?? abort(404));
-        $result = $tally->handle($round);
-        $exact = $result->tieKind === ElectionTieKind::Candidates;
 
-        $this->validate(
-            [
-                'castingCandidates' => array_filter(['array', $exact ? 'size:'.$result->tiedSeats : 'max:'.$result->tiedSeats, $exact ? 'required' : null]),
-                'castingCandidates.*' => ['integer', Rule::in($result->tied)],
-                'castingChair' => ['required', 'string', 'min:2', 'max:'.RecordCastingVote::MAX_CHAIR_LENGTH],
-                'castingNote' => ['nullable', 'string', 'max:'.ElectionAuditLog::MAX_REASON_LENGTH],
-            ],
-            [
-                'castingCandidates.required' => trans_choice('{1} Wähle die Person, für die die/der Vorsitzende entschieden hat.|[2,*] Wähle die :count Personen, für die die/der Vorsitzende entschieden hat.', $result->tiedSeats, ['count' => $result->tiedSeats]),
-                'castingCandidates.size' => trans_choice('{1} Wähle genau eine Person: Es geht um einen Sitz.|[2,*] Wähle genau :count Personen: Es geht um :count Sitze.', $result->tiedSeats, ['count' => $result->tiedSeats]),
-                'castingCandidates.max' => trans_choice('{1} Höchstens eine Person kann mit Ja bestätigt werden: Es ist ein Sitz frei.|[2,*] Höchstens :count Personen können mit Ja bestätigt werden: Es sind :count Sitze frei.', $result->tiedSeats, ['count' => $result->tiedSeats]),
-                'castingCandidates.*' => __('Wähle nur Personen aus dem Gleichstand.'),
-                'castingChair.required' => __('Nenne die/den Vorsitzenden. Der Name steht im Protokoll.'),
-                'castingChair.min' => __('Nenne die/den Vorsitzenden mit mindestens zwei Zeichen.'),
-                'castingChair.max' => __('Der Name darf höchstens :max Zeichen lang sein.', ['max' => RecordCastingVote::MAX_CHAIR_LENGTH]),
-                'castingNote.max' => __('Die Anmerkung darf höchstens :max Zeichen lang sein.', ['max' => ElectionAuditLog::MAX_REASON_LENGTH]),
-            ],
-        );
-
+        // The tally refuses a round annulled while the dialog was open, so it
+        // sits in the same try as the recording and reaches the same refusal.
         try {
+            $result = $tally->handle($round);
+            $exact = $result->tieKind === ElectionTieKind::Candidates;
+
+            $this->validate(
+                [
+                    'castingCandidates' => array_filter(['array', $exact ? 'size:'.$result->tiedSeats : 'max:'.$result->tiedSeats, $exact ? 'required' : null]),
+                    'castingCandidates.*' => ['integer', Rule::in($result->tied)],
+                    'castingChair' => ['required', 'string', 'min:2', 'max:'.RecordCastingVote::MAX_CHAIR_LENGTH],
+                    'castingNote' => ['nullable', 'string', 'max:'.ElectionAuditLog::MAX_REASON_LENGTH],
+                ],
+                [
+                    'castingCandidates.required' => trans_choice('{1} Wähle die Person, für die die/der Vorsitzende entschieden hat.|[2,*] Wähle die :count Personen, für die die/der Vorsitzende entschieden hat.', $result->tiedSeats, ['count' => $result->tiedSeats]),
+                    'castingCandidates.size' => trans_choice('{1} Wähle genau eine Person: Es geht um einen Sitz.|[2,*] Wähle genau :count Personen: Es geht um :count Sitze.', $result->tiedSeats, ['count' => $result->tiedSeats]),
+                    'castingCandidates.max' => trans_choice('{1} Höchstens eine Person kann mit Ja bestätigt werden: Es ist ein Sitz frei.|[2,*] Höchstens :count Personen können mit Ja bestätigt werden: Es sind :count Sitze frei.', $result->tiedSeats, ['count' => $result->tiedSeats]),
+                    'castingCandidates.*' => __('Wähle nur Personen aus dem Gleichstand.'),
+                    'castingChair.required' => __('Nenne die/den Vorsitzenden. Der Name steht im Protokoll.'),
+                    'castingChair.min' => __('Nenne die/den Vorsitzenden mit mindestens zwei Zeichen.'),
+                    'castingChair.max' => __('Der Name darf höchstens :max Zeichen lang sein.', ['max' => RecordCastingVote::MAX_CHAIR_LENGTH]),
+                    'castingNote.max' => __('Die Anmerkung darf höchstens :max Zeichen lang sein.', ['max' => ElectionAuditLog::MAX_REASON_LENGTH]),
+                ],
+            );
+
             $castingVotes->handle($round, $actor, array_map(intval(...), $this->castingCandidates), $this->castingChair, $this->castingNote);
         } catch (ElectionActionRefusedException|ElectionRoundStateException) {
             $this->addError('castingCandidates', __('Für „:round“ lässt sich kein Stichentscheid eintragen: Er ist schon eingetragen, es gibt eine Stichwahl, oder der Wahlgang ist annulliert. Lade die Seite neu.', ['round' => $round->title]));
@@ -1887,6 +1890,8 @@ new class extends Component
                             <flux:error name="castingCandidates" />
                             <flux:error name="castingCandidates.*" />
                         </fieldset>
+                    @else
+                        <flux:error name="castingCandidates" />
                     @endif
                     <flux:field class="[&_input]:min-h-11">
                         <flux:label>{{ __('Name der/des Vorsitzenden') }}</flux:label>
