@@ -100,6 +100,22 @@ final class NotificationKey
     }
 
     /**
+     * Whether a direct message could be sealed with this key: configured and
+     * well-formed. Answers yes or no and nothing else, so the board can be
+     * warned before a sending without ever seeing the key.
+     */
+    public function isUsable(): bool
+    {
+        try {
+            $this->secret();
+        } catch (NotificationKeyUnavailable) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Keeps the secret out of dump(), dd() and var_dump().
      *
      * @return array<string, string>

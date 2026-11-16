@@ -162,6 +162,12 @@
                                     {{ trans_choice('Einer davon hat keinen Nostr-Posteingang und liest die Nachricht nur im Portal.|:count davon haben keinen Nostr-Posteingang und lesen die Nachricht nur im Portal.', $dryRun['unreachable_count'], ['count' => $dryRun['unreachable_count']]) }}
                                 @endif
                             </p>
+                            @if ($dryRun['count'] > 0 && ! $this->senderKeyUsable)
+                                <p class="mt-2 flex items-start gap-2 text-base font-semibold text-text-primary" data-test="dry-run-no-sender-key">
+                                    <flux:icon.exclamation-triangle variant="mini" class="mt-0.5 size-5 shrink-0 text-danger" aria-hidden="true" />
+                                    <span>{{ trans_choice('Aber der Absenderschlüssel fehlt: Es geht keine Nostr-Nachricht raus, das Mitglied liest sie nur im Portal.|Aber der Absenderschlüssel fehlt: Es geht keine Nostr-Nachricht raus, alle :count lesen sie nur im Portal.', $dryRun['count'], ['count' => $dryRun['count']]) }}</span>
+                                </p>
+                            @endif
                             @if (($dryRun['skipped'] ?? 0) > 0)
                                 <p class="mt-2 text-base text-text-secondary" data-test="skipped">
                                     {{ trans_choice('Übersprungen: ein Mitglied, es hat diese Nachricht für diese Zielgruppe in den letzten :hours Stunden schon bekommen.|Übersprungen: :count Mitglieder, sie haben diese Nachricht für diese Zielgruppe in den letzten :hours Stunden schon bekommen.', $dryRun['skipped'], ['count' => $dryRun['skipped'], 'hours' => $dryRun['lock_hours']]) }}
@@ -206,11 +212,20 @@
             <div>
                 <flux:heading size="lg">{{ trans_choice('„:type“ an ein Mitglied senden?|„:type“ an :count Mitglieder senden?', $dryRun['count'], ['count' => $dryRun['count'], 'type' => $composeType->label()]) }}</flux:heading>
                 <flux:text class="mt-2">{{ $this->audienceSentence }}.</flux:text>
-                <flux:text class="mt-2">{{ __('Die Empfängerliste wird beim Start festgeschrieben und die Nachricht geht sofort raus. Eine Nostr-Nachricht lässt sich nicht zurückholen.') }}</flux:text>
+                @if ($this->senderKeyUsable)
+                    <flux:text class="mt-2">{{ __('Die Empfängerliste wird beim Start festgeschrieben und die Nachricht geht sofort raus. Eine Nostr-Nachricht lässt sich nicht zurückholen.') }}</flux:text>
+                @else
+                    <flux:text class="mt-2">{{ __('Die Empfängerliste wird beim Start festgeschrieben.') }}</flux:text>
+                    <p class="mt-4 flex items-start gap-2 rounded-r-lg border-l-4 border-danger bg-bg-page p-3 text-base text-text-primary" data-test="confirm-no-sender-key">
+                        <flux:icon.key variant="mini" class="mt-0.5 size-5 shrink-0 text-danger" aria-hidden="true" />
+                        <span>{{ __('Der Absenderschlüssel fehlt: Die Nachricht steht nur im Posteingang im Portal, per Nostr geht nichts raus. Erneut senden lässt sie sich, sobald der Schlüssel eingetragen ist.') }}</span>
+                    </p>
+                @endif
             </div>
             <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <flux:modal.close>
-                    <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto">{{ __('Abbrechen') }}</flux:button>
+                    {{-- Start focus on the safe choice, as in every election dialog: Enter right after opening sends nothing. --}}
+                    <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto" autofocus data-test="cancel-send">{{ __('Abbrechen') }}</flux:button>
                 </flux:modal.close>
                 <flux:button wire:click="confirmSend" variant="primary" class="min-h-11 w-full sm:w-auto" data-test="confirm-send">{{ $sendLabel }}</flux:button>
             </div>

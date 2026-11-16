@@ -1,6 +1,8 @@
 <?php
 
 use App\Enums\ElectionCountingRule;
+use App\Exceptions\ElectionActionRefusedException;
+use App\Exceptions\ElectionCandidateBlockedException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionAuditEntry;
@@ -11,11 +13,16 @@ use App\Models\ElectionRound;
 use App\Models\Profile;
 use App\Services\Election\CloseRound;
 use App\Services\Election\CreateRunOff;
+use App\Services\Election\ElectionAuditLog;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\OpenRound;
 use App\Services\Election\RecordCastingVote;
+use App\Services\Election\RoundManifest;
+use App\Services\Election\RoundReport;
 use App\Services\Election\TallyRound;
 use App\Support\NostrAuth;
+use Carbon\CarbonInterface;
+use Illuminate\Support\Facades\DB;
 use Livewire\Features\SupportTesting\Testable;
 use Livewire\Livewire;
 
@@ -331,4 +338,122 @@ it('brings the casting vote to a member page that is already open within one pol
 
     expect($page->get('fingerprint'))->not->toBe($before);
     $page->assertSeeHtml('data-test="casting-vote-'.$round->id.'"')->assertSee('Erika Mustermann');
+});
+
+/**
+ * Stand-ins for `RoundReport` and `CreateRunOff` as the security fix of
+ * package j2c (ba85b1a) shapes them, which is not on this branch: a round
+ * whose stored votes do not fit it reports `unreadable` with no result and
+ * no run-off proposal, and its run-off is refused with "cannot be counted".
+ * The count itself (`TallyRound`) stays real and refuses the corrupted row.
+ */
+function fakeUnreadableCountServices(): void
+{
+    app()->bind(CreateRunOff::class, fn ($app) => new class($app->make(TallyRound::class), $app->make(ElectionAuditLog::class)) extends CreateRunOff
+    {
+        public function proposal(ElectionRound $round): array
+        {
+            try {
+                return parent::proposal($round);
+            } catch (UnexpectedValueException) {
+                return ['candidates' => [], 'seats' => 0, 'needs_resolution' => false];
+            }
+        }
+
+        public function handle(ElectionRound $round, EinundzwanzigPleb $actor, bool $resolvedByAssembly = false): ElectionRound
+        {
+            try {
+                $this->tally->handle($round);
+            } catch (UnexpectedValueException) {
+                throw new ElectionActionRefusedException('The stored votes of this round cannot be counted; check it with election:verify.');
+            }
+
+            return parent::handle($round, $actor, $resolvedByAssembly);
+        }
+    });
+
+    app()->bind(RoundReport::class, fn ($app) => new class($app->make(TallyRound::class), $app->make(RoundManifest::class), $app->make(CreateRunOff::class)) extends RoundReport
+    {
+        public function of(ElectionRound $round, ?CarbonInterface $now = null): array
+        {
+            try {
+                return parent::of($round, $now) + ['unreadable' => false];
+            } catch (UnexpectedValueException) {
+                return [
+                    'round' => $round, 'state' => $round->stateAt($now ?? now()), 'sealed' => $round->isSealed(), 'over_by_clock' => false,
+                    'roll' => 0, 'cast' => 0, 'candidates' => [], 'result' => null, 'manifest' => null, 'void_result' => null,
+                    'unreadable' => true, 'reason' => null, 'run_off' => null, 'has_run_off' => false, 'run_off_resolved' => false,
+                ];
+            }
+        }
+    });
+}
+
+function corruptStoredVotes(ElectionRound $round): void
+{
+    DB::table('election_votes')->where('election_round_id', $round->id)->update(['choices' => json_encode(['999999' => 'for'])]);
+}
+
+/*
+ * Package j (security jury L1, on top of j2c): a tied round whose stored
+ * votes no longer fit it. The tie dialogs counted it uncaught and answered
+ * 500; now they say „Ergebnis nicht lesbar“ and point to election:verify.
+ * Mutation that must turn this red: drop the UnexpectedValueException catch
+ * in tieRound() or in recordCastingVote().
+ */
+it('answers a tie dialog on a round with an unreadable count with the verify hint instead of a 500', function () {
+    fakeUnreadableCountServices();
+    [, , $round, $ids] = tiedEvening();
+    $hint = 'Ergebnis nicht lesbar: Die gespeicherten Stimmen passen nicht zu diesem Wahlgang. Prüfen mit „php artisan election:verify '.$round->id.'“.';
+
+    // The dialog was already open when the row broke.
+    $page = tieAdmin()->call('startCastingVote', $round->id)->set('castingCandidates', [$ids['alice']])->set('castingChair', 'Erika Vorsitz');
+    corruptStoredVotes($round);
+
+    $page->call('recordCastingVote')->assertOk()->assertHasErrors(['castingCandidates'])->assertSee($hint);
+    expect(ElectionCastingVote::query()->where('election_round_id', $round->id)->exists())->toBeFalse();
+
+    // Opening either dialog afresh: a toast, no dialog, and the live list marks the round.
+    foreach (['startCastingVote', 'startTieRunOff'] as $action) {
+        tieAdmin()->call($action, $round->id)->assertOk()
+            ->assertDispatched('toast-show', fn (string $event, array $params): bool => $params['dataset']['variant'] === 'danger' && $params['slots']['text'] === $hint)
+            ->assertSet('tieRoundId', null)
+            ->assertSeeHtml('data-test="live-unreadable-'.$round->id.'"')
+            ->assertDontSeeHtml('data-test="live-outcome-'.$round->id.'"');
+    }
+});
+
+it('names the unreadable count when the run-off of such a round is refused', function () {
+    fakeUnreadableCountServices();
+    [, , $round] = tiedEvening();
+    $page = tieAdmin()->call('startTieRunOff', $round->id)->set('runOffResolved', true);
+    corruptStoredVotes($round);
+    $refusal = 'Für „Präsidium“ lässt sich keine Stichwahl anlegen: Ergebnis nicht lesbar. Prüft den Wahlgang mit „php artisan election:verify '.$round->id.'“ oder annulliert ihn.';
+
+    $page->call('confirmTieRunOff')->assertOk()->assertHasErrors(['runOffResolved'])->assertSee($refusal);
+
+    tieAdmin()->call('createRunOff', $round->id)->assertOk()
+        ->assertDispatched('toast-show', fn (string $event, array $params): bool => $params['dataset']['variant'] === 'danger' && $params['slots']['text'] === $refusal);
+    expect(ElectionRound::query()->where('parent_round_id', $round->id)->exists())->toBeFalse();
+});
+
+/*
+ * OpenRound (j2c) refuses a round whose candidate stands in a sealed round
+ * with an unreadable count. The exception names the member, not the round,
+ * so the page finds that round itself. Faked exception; the count is real.
+ */
+it('names the earlier round with an unreadable count when opening is refused for its candidate', function () {
+    fakeUnreadableCountServices();
+    [, , $round, $ids] = tiedEvening();
+    $page = tieAdmin();
+    corruptStoredVotes($round);
+    $member = (int) ElectionCandidate::query()->findOrFail($ids['alice'])->einundzwanzig_pleb_id;
+
+    $text = (new ReflectionMethod($page->instance(), 'refusalText'))->invoke($page->instance(), 'open', new ElectionCandidateBlockedException(
+        'A candidate of this round stands in an earlier round of the election whose stored votes cannot be counted; check it with election:verify.',
+        $member,
+    ));
+
+    expect($text)->toBe('Alice Ambrosius kandidiert auch in „Präsidium“, und dessen Ergebnis ist nicht lesbar. Prüft ihn mit „php artisan election:verify '.$round->id.'“ oder annulliert ihn.')
+        ->not->toContain('Lade die Seite neu');
 });

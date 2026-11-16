@@ -1002,11 +1002,33 @@ it('leads out of a round nobody can stand in any more: names the person, then st
         ->and(liveAudit($election))->toBe(['round_opened', 'round_closed_early', 'candidacy_withdrawn', 'round_annulled']);
 });
 
-it('offers striking a round without a candidacy before the meeting, and holds no step for it afterwards', function () {
+/*
+ * Board M5: candidacies stay open until the meeting. Before the evening a
+ * later round without a candidacy is named on the ready step, and the card
+ * offers to open the first round, not to strike the later one. Mutation that
+ * must turn this red: the phase-2 card back on the first round without a
+ * candidacy, whatever its position.
+ */
+it('offers opening the first round before the meeting while a later round still has no candidacy, and no strike', function () {
     liveBoard();
     $election = Election::factory()->announced()->create();
-    draftElectionRound(['title' => 'Vorsitz', 'position' => 1], election: $election);
+    $chair = draftElectionRound(['title' => 'Vorsitz', 'position' => 1], election: $election);
     $empty = draftElectionRound(['title' => 'Revision', 'position' => 2], candidates: 0, election: $election);
+
+    $card = liveNextStep(livePage()->html());
+
+    expect($card)->toContain('Zuerst: „Vorsitz“.')
+        ->toContain('„Revision“ hat noch keine freigegebene Kandidatur. Kandidieren geht bis zur Sitzung.')
+        ->toContain("startRoundAction({$chair->id}, &#039;open&#039;)")
+        ->not->toContain("startRoundAction({$empty->id}, &#039;strike&#039;)")
+        ->not->toContain('Wahlgang streichen');
+});
+
+it('offers striking the first round before the meeting when it has no candidacy, and holds no step for it afterwards', function () {
+    liveBoard();
+    $election = Election::factory()->announced()->create();
+    $empty = draftElectionRound(['title' => 'Revision', 'position' => 1], candidates: 0, election: $election);
+    draftElectionRound(['title' => 'Vorsitz', 'position' => 2], election: $election);
 
     livePage()
         ->assertSee('„Revision“ hat noch keine freigegebene Kandidatur.')
@@ -1015,6 +1037,96 @@ it('offers striking a round without a candidacy before the meeting, and holds no
         ->assertHasNoErrors()
         ->assertDontSee('„Revision“ hat noch keine freigegebene Kandidatur.')
         ->assertSee('Zuerst: „Vorsitz“.');
+});
+
+/*
+ * Board M1: annulling a counted round does not make its votes "never
+ * counted" — the minutes keep the result as void. The dialog and the live
+ * list say so; an open round keeps the old, true sentence. Mutation that
+ * must turn this red: drop the isSealed() branch, or the closed_at branch
+ * in the live list.
+ */
+it('says that a counted round keeps its void result when annulled, and that an open one is never counted', function () {
+    $board = liveBoard();
+    $election = Election::factory()->announced()->create();
+    $voter = electionVoter();
+
+    $counted = openElectionRound(['title' => 'Vorsitz', 'position' => 1], election: $election);
+    castElectionBallot($counted, $voter, [$counted->candidates()->value('id') => 'for']);
+    app(ElectionStewardship::class)->closeEarly($counted, $board, 'Fertig');
+
+    $page = livePage()->call('startRoundAction', $counted->id, 'annul')
+        ->assertSee('Das ausgezählte Ergebnis wird ungültig. Es bleibt im Beschlussprotokoll stehen, markiert als „ungültig“')
+        ->assertDontSee('Die abgegebenen Stimmen werden nie ausgezählt')
+        ->set('roundReason', 'Falsche Liste')->call('confirmRoundAction')
+        ->assertHasNoErrors()
+        ->assertSee('1 Stimme ausgezählt, dann annulliert. Das Ergebnis ist ungültig und steht so im Beschlussprotokoll.')
+        ->assertDontSee('nicht ausgezählt.');
+
+    $open = openElectionRound(['title' => 'Kasse', 'position' => 2], election: $election);
+
+    $page->call('refreshRounds')->call('startRoundAction', $open->id, 'annul')
+        ->assertSee('Die abgegebenen Stimmen werden nie ausgezählt')
+        ->assertDontSee('Das ausgezählte Ergebnis wird ungültig');
+
+    $this->get(route('association.election.admin.protocol', $election))->assertOk()
+        ->assertSee('Ausgezähltes Ergebnis (ungültig)');
+});
+
+/*
+ * Board L3: a single-candidate round closed at 0 votes has no majority and
+ * no run-off to follow. The live list and the card say the seat stays empty
+ * and name the only way to vote again. Mutation that must turn this red:
+ * drop the seats-open line, or return '' from seatsLeftOpenText().
+ */
+it('says the seat stays empty when a one-candidate round ends without a majority and no run-off follows', function () {
+    $board = liveBoard();
+    $election = Election::factory()->announced()->create();
+    $round = openElectionRound(['title' => 'Schriftführung', 'position' => 1], candidates: 1, election: $election);
+    app(ElectionStewardship::class)->closeEarly($round, $board, 'Zu früh');
+
+    $page = livePage()
+        ->assertSee('Niemand hat die nötige Mehrheit.')
+        ->assertSeeHtml('data-test="live-seats-open-'.$round->id.'"')
+        ->assertSee('Der Sitz bleibt frei. Neu abstimmen geht nur über „Wahlgang annullieren“ und danach „Wahlgang wiederholen“.');
+
+    expect(liveNextStep($page->html()))->toContain('In „Schriftführung“ bleibt ein Sitz frei.');
+});
+
+it('does not call a seat empty when the missed majority leads to a run-off', function () {
+    liveBoard();
+    $election = Election::factory()->announced()->create();
+    $voters = array_map(fn (): EinundzwanzigPleb => electionVoter(), range(1, 6));
+    $round = draftElectionRound(['title' => 'Vorsitz', 'position' => 1], candidates: 3, election: $election);
+    [$a, $b, $c] = $round->candidates()->orderBy('id')->pluck('id')->all();
+
+    // 3 : 2 : 1 is no majority and no tie: the run-off of the two leaders follows.
+    $page = liveVoteRound(livePage(), $round, $voters, [$a, $a, $a, $b, $b, $c])->assertSee('Niemand hat die nötige Mehrheit.');
+
+    $page->assertDontSeeHtml('data-test="live-seats-open-'.$round->id.'"');
+    expect(liveNextStep($page->html()))->not->toContain('bleibt ein Sitz frei');
+});
+
+/*
+ * Item i: OpenRound (package j2c) refuses a round whose candidate leads an
+ * earlier round without a majority while its run-off is still owed. The
+ * service is not on this branch, so the exception is built here; the arm
+ * must name the person and the way out instead of the generic refusal.
+ */
+it('names the owed run-off when opening is refused because a candidate leads an earlier round without a majority', function () {
+    liveBoard();
+    $round = draftElectionRound(['title' => 'Vorstand', 'position' => 2]);
+    $candidate = $round->candidates()->with('pleb')->first();
+    Profile::factory()->create(['pubkey' => $candidate->pleb->pubkey, 'name' => 'Anna Albrecht']);
+
+    $refusal = new ReflectionMethod(livePage()->instance(), 'refusalText');
+    $text = $refusal->invoke(livePage()->instance(), 'open', new ElectionCandidateBlockedException(
+        'Candidate stands in an earlier round without a majority, and its second ballot is owed.',
+        (int) $candidate->einundzwanzig_pleb_id,
+    ));
+
+    expect($text)->toBe('Anna Albrecht gehört zu den Bestplatzierten eines früheren Wahlgangs ohne Mehrheit, und dessen Stichwahl steht noch aus. Legt zuerst die Stichwahl an.')
+        ->not->toContain('lässt sich gerade nicht öffnen');
 });
 
 /*

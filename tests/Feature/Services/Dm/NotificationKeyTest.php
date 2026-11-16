@@ -15,6 +15,15 @@ it('throws a typed exception when no notification key is configured', function (
         ->toThrow(NotificationKeyUnavailable::class, 'No notification key is configured');
 });
 
+it('says whether the key can seal, without repeating it', function (?string $configured, bool $usable) {
+    expect((new NotificationKey($configured))->isUsable())->toBe($usable);
+})->with([
+    'not configured' => [null, false],
+    'blank' => ['  ', false],
+    'malformed' => [str_repeat('zz', 32), false],
+    'valid hex' => [fn () => testPrivateKey(), true],
+]);
+
 it('does not fall back to the fee-signing key', function () {
     config()->set('services.nostr', testPrivateKey());
     config()->set('services.nostr_notification_key', null);
@@ -104,6 +113,7 @@ it('offers the two signing shapes its docblock promises and no method that takes
             '__serialize' => [],
             'conversationKeyWith' => ['string $recipientPubkey'],
             'fromConfig' => [],
+            'isUsable' => [],
             'publicKey' => [],
             'signRelayAuth' => ['string $relayUrl', 'string $challenge', 'int $createdAt'],
             'signSeal' => ['string $encryptedRumor', 'int $createdAt'],

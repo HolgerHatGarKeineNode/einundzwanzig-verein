@@ -102,6 +102,15 @@
                             <div class="mt-4">
                                 <flux:button wire:click="sealRound({{ $round->id }})" icon="calculator" variant="outline" class="min-h-11 w-full sm:w-auto" data-test="seal-round-{{ $round->id }}">{{ __('Auszählen') }}</flux:button>
                             </div>
+                        @elseif (($report['unreadable'] ?? false) && $report['sealed'])
+                            {{-- The stored votes do not fit the round: no result, no run-off, only the way to check it. --}}
+                            <p class="mt-4 flex items-start gap-2 text-base font-bold text-danger break-words" data-test="live-unreadable-{{ $round->id }}">
+                                <flux:icon.exclamation-triangle variant="mini" class="mt-0.5 size-5 shrink-0" aria-hidden="true" />
+                                <span>{{ __('Ergebnis nicht lesbar: Die gespeicherten Stimmen passen nicht zu diesem Wahlgang. Prüfen mit „php artisan election:verify :round“.', ['round' => $round->id]) }}</span>
+                            </p>
+                            <div class="mt-5">
+                                <flux:button wire:click="startRoundAction({{ $round->id }}, 'annul')" variant="ghost" class="min-h-11 w-full text-danger! sm:w-auto" data-test="annul-round-{{ $round->id }}">{{ __('Wahlgang annullieren') }}</flux:button>
+                            </div>
                         @elseif ($result !== null)
                             @php $electedNames = collect($result['rows'])->where('elected', true)->pluck('name'); @endphp
                             <p class="mt-4 text-lg font-bold text-text-primary break-words" data-test="live-outcome-{{ $round->id }}">
@@ -120,6 +129,10 @@
                                         <span class="inline-flex items-center gap-1.5 text-warning"><flux:icon.exclamation-triangle variant="mini" class="size-5" aria-hidden="true" />{{ $electedNames->isEmpty() ? __('Niemand hat die nötige Mehrheit.') : __('Nicht alle Sitze sind besetzt.') }}</span>
                                         @if ($electedNames->isNotEmpty())
                                             <span class="block text-base font-normal text-text-primary">{{ $sentence(trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $electedNames->count(), ['names' => $electedNames->join(', ', ' und ')])) }}</span>
+                                        @endif
+                                        {{-- No run-off follows (one candidate, or a yes/no round): say that the seat stays empty and how to vote again. --}}
+                                        @if ($report['run_off'] === null && ! $report['has_run_off'] && ($freeSeats = $round->seats - $electedNames->count()) > 0)
+                                            <span class="block text-base font-normal text-text-primary" data-test="live-seats-open-{{ $round->id }}">{{ trans_choice('{1} Der Sitz bleibt frei.|[2,*] :count Sitze bleiben frei.', $freeSeats, ['count' => $freeSeats]) }} {{ __('Neu abstimmen geht nur über „Wahlgang annullieren“ und danach „Wahlgang wiederholen“.') }}</span>
                                         @endif
                                 @endswitch
                                 @if ($result['casting_vote'] !== null)
@@ -178,6 +191,9 @@
                             <p class="mt-4 text-base text-text-primary break-words">
                                 @if ($round->opened_at === null)
                                     {{ __('Nicht geöffnet, annulliert.') }}
+                                @elseif ($round->closed_at !== null)
+                                    {{-- Counted before it was annulled: the minutes keep the result, marked as void. --}}
+                                    {{ trans_choice('{0} Ausgezählt ohne Stimme, dann annulliert. Das Ergebnis ist ungültig und steht so im Beschlussprotokoll.|{1} 1 Stimme ausgezählt, dann annulliert. Das Ergebnis ist ungültig und steht so im Beschlussprotokoll.|[2,*] :count Stimmen ausgezählt, dann annulliert. Das Ergebnis ist ungültig und steht so im Beschlussprotokoll.', $report['cast']) }}
                                 @else
                                     {{ trans_choice('{0} Keine Stimme abgegeben, nicht ausgezählt.|{1} 1 Stimme abgegeben, nicht ausgezählt.|[2,*] :count Stimmen abgegeben, nicht ausgezählt.', $report['cast']) }}
                                 @endif

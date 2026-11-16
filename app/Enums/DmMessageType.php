@@ -94,7 +94,7 @@ enum DmMessageType: string
             self::ElectionAnnouncement => "Hallo {name},\n\n"
                 .'am {assembly_date} wählt der Verein EINUNDZWANZIG in der Mitgliederversammlung einen neuen Vorstand. '
                 .'Gewählt wird live im Video-Call der Versammlung: Du stimmst im Vereinsportal ab '
-                ."und unterschreibst deine Stimme mit deinem Nostr-Signer (Browser-Erweiterung).\n\n"
+                ."und unterschreibst deine Stimme mit deinem Nostr-Signer (Browser-Erweiterung oder Handy-App).\n\n"
                 .'Prüfe jetzt im Vereinsportal, ob du wahlberechtigt bist: {link}',
             self::NominationDeadline => "Hallo {name},\n\n"
                 .'du möchtest für den Vorstand kandidieren? Kandidaturen nimmt das Vereinsportal bis {deadline} entgegen. '
@@ -107,7 +107,7 @@ enum DmMessageType: string
             self::ElectionStartsNow => "Hallo {name},\n\n"
                 .'die Wahl des neuen Vorstands beginnt jetzt live im Video-Call der Mitgliederversammlung. '
                 ."Melde dich jetzt im Vereinsportal an: {link}\n\n"
-                .'Deine Stimme gibst du dort ab und unterschreibst sie mit deinem Nostr-Signer (Browser-Erweiterung).',
+                .'Deine Stimme gibst du dort ab und unterschreibst sie mit deinem Nostr-Signer (Browser-Erweiterung oder Handy-App).',
             self::RoundOpened => "Hallo {name},\n\n"
                 .'der Wahlgang „{round}“ ist geöffnet und läuft bis {closes_at}. '
                 .'Stimm jetzt im Vereinsportal ab und unterschreib deine Stimme mit deinem Nostr-Signer: {link}',

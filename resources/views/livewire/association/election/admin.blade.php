@@ -551,6 +551,10 @@ new class extends Component
         $this->actor();
         $round = $this->tieRound($roundId);
 
+        if ($round === null) {
+            return;
+        }
+
         $this->tieRoundId = (int) $round->id;
         $this->castingCandidates = [];
         $this->castingChair = '';
@@ -592,6 +596,10 @@ new class extends Component
             );
 
             $castingVotes->handle($round, $actor, array_map(intval(...), $this->castingCandidates), $this->castingChair, $this->castingNote);
+        } catch (\UnexpectedValueException) {
+            $this->addError('castingCandidates', $this->unreadableText($round));
+
+            return;
         } catch (ElectionActionRefusedException|ElectionRoundStateException) {
             $this->addError('castingCandidates', __('Für „:round“ lässt sich kein Stichentscheid eintragen: Er ist schon eingetragen, es gibt eine Stichwahl, oder der Wahlgang ist annulliert. Lade die Seite neu.', ['round' => $round->title]));
 
@@ -617,6 +625,10 @@ new class extends Component
         $this->actor();
         $round = $this->tieRound($roundId);
 
+        if ($round === null) {
+            return;
+        }
+
         $this->tieRoundId = (int) $round->id;
         $this->runOffResolved = false;
         $this->section = 'live';
@@ -637,8 +649,10 @@ new class extends Component
 
         try {
             $runOff = $runOffs->handle($round, $actor, resolvedByAssembly: true);
-        } catch (ElectionActionRefusedException|ElectionRoundStateException) {
-            $this->addError('runOffResolved', __('Für „:round“ gibt es keine Stichwahl anzulegen: Der Stichentscheid ist schon eingetragen, oder es gibt die Stichwahl schon. Lade die Seite neu.', ['round' => $round->title]));
+        } catch (ElectionActionRefusedException|ElectionRoundStateException $exception) {
+            $this->addError('runOffResolved', str_contains($exception->getMessage(), 'cannot be counted')
+                ? $this->unreadableRunOffText($round)
+                : __('Für „:round“ gibt es keine Stichwahl anzulegen: Der Stichentscheid ist schon eingetragen, oder es gibt die Stichwahl schon. Lade die Seite neu.', ['round' => $round->title]));
 
             return;
         }
@@ -659,8 +673,10 @@ new class extends Component
         try {
             // A tie needs the assembly's resolution, given in the dialog of startTieRunOff(); here it is refused.
             $runOff = $runOffs->handle($round, $actor);
-        } catch (ElectionActionRefusedException|ElectionRoundStateException) {
-            Flux::toast(__('Für „:round“ gibt es keine Stichwahl anzulegen.', ['round' => $round->title]), variant: 'danger');
+        } catch (ElectionActionRefusedException|ElectionRoundStateException $exception) {
+            Flux::toast(str_contains($exception->getMessage(), 'cannot be counted')
+                ? $this->unreadableRunOffText($round)
+                : __('Für „:round“ gibt es keine Stichwahl anzulegen.', ['round' => $round->title]), variant: 'danger');
 
             return;
         }
@@ -1027,7 +1043,13 @@ new class extends Component
                 );
             }
 
-            $without = $rounds->first(fn (ElectionRound $round): bool => $round->candidates->where('status', ElectionCandidateStatus::Approved)->isEmpty());
+            $without = $rounds->filter(fn (ElectionRound $round): bool => $round->candidates->where('status', ElectionCandidateStatus::Approved)->isEmpty());
+            $first = $rounds->sortBy('position')->first();
+
+            // Candidacies stay open until the meeting: only the round that is opened first is a dead end before the evening.
+            // A later round without a candidacy is mentioned on the ready step below, without the offer to strike it.
+            $laterWithout = $without->reject(fn (ElectionRound $round): bool => $round->is($first))->sortBy('position')->values();
+            $without = $without->first(fn (ElectionRound $round): bool => $round->is($first));
 
             if ($without !== null) {
                 return $this->step(
@@ -1144,10 +1166,14 @@ new class extends Component
                     default => __('Bereit. Zuerst: „:round“.', ['round' => $next->title]),
                 }.($awaiting === null ? '' : ' '.__('„:round“ wartet noch auf die Wiederholung.', ['round' => $awaiting->title])),
                 match (true) {
-                    $last?->isSealed() === true => __('Zeigt zuerst das Ergebnis im Call, dann öffnet den nächsten Wahlgang.'),
+                    $last?->isSealed() === true => $this->seatsLeftOpenText($last).__('Zeigt zuerst das Ergebnis im Call, dann öffnet den nächsten Wahlgang.'),
                     $election->is_test => __('Probewahl: öffnet den Wahlgang, wann immer ihr üben wollt.'),
                     default => __('Öffnet ihn erst in der Sitzung. Ab dann können die Wahlberechtigten abstimmen.'),
-                },
+                }.(($laterWithout ?? collect())->isEmpty() ? '' : ' '.trans_choice(
+                    '{1} „:rounds“ hat noch keine freigegebene Kandidatur. Kandidieren geht bis zur Sitzung.|[2,*] „:rounds“ haben noch keine freigegebene Kandidatur. Kandidieren geht bis zur Sitzung.',
+                    $laterWithout->count(),
+                    ['rounds' => $laterWithout->pluck('title')->join('“, „', '“ und „')],
+                )),
                 label: __('„:round“ öffnen', ['round' => $next->title]),
                 click: "startRoundAction({$next->id}, 'open')",
             );
@@ -1166,7 +1192,7 @@ new class extends Component
 
         return $this->step(
             __('Alle Wahlgänge sind abgeschlossen.'),
-            __('Das Beschlussprotokoll fasst Wahlgänge, Zahlen und Prüfsummen für die Niederschrift zusammen.'),
+            $this->seatsLeftOpenText($all->filter(fn (ElectionRound $round): bool => $round->isSealed())->sortByDesc('closed_at')->first()).__('Das Beschlussprotokoll fasst Wahlgänge, Zahlen und Prüfsummen für die Niederschrift zusammen.'),
             label: __('Beschlussprotokoll öffnen'),
             href: route('association.election.admin.protocol', $election),
         );
@@ -1301,6 +1327,9 @@ new class extends Component
 
         return match (true) {
             $action === 'open' && str_contains($message, 'without approved candidates') => __('Dieser Wahlgang hat keine freigegebene Kandidatur. Gebt unter „Kandidaturen“ eine frei, oder streicht den Wahlgang, wenn niemand mehr antreten kann.'),
+            $action === 'open' && $name !== null && str_contains($message, 'stored votes cannot be counted') => $this->unreadableBlockText($name, $exception->memberId),
+            // Before the run-off arm, so a future message that also says "run-off" still lands here.
+            $action === 'open' && $name !== null && str_contains($message, 'second ballot is owed') => __(':name gehört zu den Bestplatzierten eines früheren Wahlgangs ohne Mehrheit, und dessen Stichwahl steht noch aus. Legt zuerst die Stichwahl an.', ['name' => $name]),
             $action === 'open' && str_contains($message, 'run-off') => __('Die Stichwahl lässt sich erst öffnen, wenn ihr Wahlgang ausgezählt ist.'),
             $action === 'open' && $name !== null && str_contains($message, 'not sealed yet') => __(':name kandidiert auch in einem früheren Wahlgang, der noch nicht ausgezählt ist. Zählt ihn zuerst aus, oder zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück.', ['name' => $name]),
             $action === 'open' && $name !== null && str_contains($message, 'has been elected') => __(':name ist in einem früheren Wahlgang schon gewählt. Zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück, dann lässt sich der Wahlgang öffnen. Kann danach niemand mehr antreten, streicht den Wahlgang.', ['name' => $name]),
@@ -1314,6 +1343,35 @@ new class extends Component
     }
 
     /**
+     * "Ein Sitz bleibt frei." for a counted round that left seats empty with
+     * no run-off to follow (one candidate short of the majority, 0 votes, a
+     * yes/no round with more no than yes), plus the only way to vote again.
+     * Empty for any other round, so it can lead a hint.
+     */
+    protected function seatsLeftOpenText(?ElectionRound $round): string
+    {
+        if ($round === null || ! $round->isSealed()) {
+            return '';
+        }
+
+        $report = app(RoundReport::class)->of($round);
+        $result = $report['result'];
+
+        if ($result === null || $result['outcome'] !== ElectionOutcome::Understaffed || $report['run_off'] !== null || $report['has_run_off']) {
+            return '';
+        }
+
+        $free = $round->seats - collect($result['rows'])->where('elected', true)->count();
+
+        if ($free < 1) {
+            return '';
+        }
+
+        return trans_choice('{1} In „:round“ bleibt ein Sitz frei.|[2,*] In „:round“ bleiben :count Sitze frei.', $free, ['round' => $round->title, 'count' => $free])
+            .' '.__('Neu abstimmen geht nur über „Wahlgang annullieren“ und danach „Wahlgang wiederholen“.').' ';
+    }
+
+    /**
      * The confirm text of the round modal: what happens, in numbers.
      */
     protected function pendingRoundText(ElectionRound $round): string
@@ -1321,7 +1379,10 @@ new class extends Component
         return match ($this->pendingRoundAction) {
             'close' => $this->turnoutText($round).' '.__('Danach nimmt der Wahlgang keine Stimmen mehr an und wird sofort ausgezählt. Das lässt sich nicht zurücknehmen.'),
             'strike' => __('„:round“ wird nie geöffnet und zählt wie ein annullierter Wahlgang: Niemand stimmt darüber ab. Das lässt sich nicht zurücknehmen. Der Grund steht im Protokoll.', ['round' => $round->title]),
-            'annul' => __('Die abgegebenen Stimmen werden nie ausgezählt, und der Wahlgang lässt sich nicht wieder öffnen. Der Grund steht im Protokoll.'),
+            // A counted round keeps its result in the minutes, marked as void: "never counted" would be false there.
+            'annul' => $round->isSealed()
+                ? __('Das ausgezählte Ergebnis wird ungültig. Es bleibt im Beschlussprotokoll stehen, markiert als „ungültig“, mit dem Grund. Der Wahlgang lässt sich nicht wieder öffnen.')
+                : __('Die abgegebenen Stimmen werden nie ausgezählt, und der Wahlgang lässt sich nicht wieder öffnen. Der Grund steht im Protokoll.'),
             'repeat' => __('Legt „:title“ als neuen Wahlgang an, mit denselben freigegebenen Kandidaturen, derselben Zählregel und denselben Sitzen. Abgestimmt wird erst, wenn ihr ihn öffnet.', ['title' => ElectionStewardship::repeatTitle($round->title)]),
             default => __('Ab jetzt können :count Wahlberechtigte abstimmen. Kandidaturen und Zählregel sind danach fest. Schließt ihn niemand, nimmt er nach :minutes Minuten keine Stimmen mehr an.', [
                 'count' => $round->parent_round_id !== null
@@ -1365,7 +1426,7 @@ new class extends Component
     /**
      * A sealed round of the election whose tie nobody has decided yet.
      */
-    protected function tieRound(int $roundId): ElectionRound
+    protected function tieRound(int $roundId): ?ElectionRound
     {
         $round = ElectionRound::query()->findOrFail($roundId);
 
@@ -1373,9 +1434,61 @@ new class extends Component
             $this->select($round->election);
         }
 
-        abort_unless($round->isSealed() && app(TallyRound::class)->effective($round)->outcome === ElectionOutcome::Tie, 404);
+        abort_unless($round->isSealed(), 404);
+
+        // A stored vote that does not fit the round: no count, so no dialog — the board learns why instead of a 500.
+        try {
+            $outcome = app(TallyRound::class)->effective($round)->outcome;
+        } catch (\UnexpectedValueException) {
+            Flux::toast($this->unreadableText($round), variant: 'danger');
+
+            return null;
+        }
+
+        abort_unless($outcome === ElectionOutcome::Tie, 404);
 
         return $round;
+    }
+
+    /**
+     * The mark of a round whose stored votes do not fit it, in the words of
+     * the minutes: no result, the count is refused until it is verified.
+     */
+    protected function unreadableText(ElectionRound $round): string
+    {
+        return __('Ergebnis nicht lesbar: Die gespeicherten Stimmen passen nicht zu diesem Wahlgang. Prüfen mit „php artisan election:verify :round“.', ['round' => $round->id]);
+    }
+
+    protected function unreadableRunOffText(ElectionRound $round): string
+    {
+        return __('Für „:round“ lässt sich keine Stichwahl anlegen: Ergebnis nicht lesbar. Prüft den Wahlgang mit „php artisan election:verify :id“ oder annulliert ihn.', ['round' => $round->title, 'id' => $round->id]);
+    }
+
+    /**
+     * Opening is refused because `$memberId` also stands in a sealed round of
+     * this election whose stored votes cannot be counted. The exception does
+     * not carry that round, so it is found here by trying the count.
+     */
+    protected function unreadableBlockText(string $name, int $memberId): string
+    {
+        $tally = app(TallyRound::class);
+        $round = $this->selectedElection?->rounds()
+            ->whereNotNull('closed_at')->whereNull('annulled_at')
+            ->whereHas('candidates', fn ($query) => $query->where('einundzwanzig_pleb_id', $memberId))
+            ->orderBy('position')->get()
+            ->first(function (ElectionRound $round) use ($tally): bool {
+                try {
+                    $tally->effective($round);
+                } catch (\UnexpectedValueException) {
+                    return true;
+                }
+
+                return false;
+            });
+
+        return $round === null
+            ? __(':name kandidiert auch in einem früheren Wahlgang, dessen Ergebnis nicht lesbar ist. Prüft ihn mit „php artisan election:verify“ oder annulliert ihn.', ['name' => $name])
+            : __(':name kandidiert auch in „:round“, und dessen Ergebnis ist nicht lesbar. Prüft ihn mit „php artisan election:verify :id“ oder annulliert ihn.', ['name' => $name, 'round' => $round->title, 'id' => $round->id]);
     }
 
     /**
@@ -1394,7 +1507,11 @@ new class extends Component
             return null;
         }
 
-        $result = app(TallyRound::class)->handle($round);
+        try {
+            $result = app(TallyRound::class)->handle($round);
+        } catch (\UnexpectedValueException) {
+            return null;
+        }
 
         if ($result->tieKind === null) {
             return null;

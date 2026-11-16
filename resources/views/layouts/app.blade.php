@@ -80,7 +80,7 @@
                                        wire:navigate>{{ __('Wahl leiten') }}</flux:navlist.item>
                     <flux:navlist.item icon="paper-airplane" :href="route('association.messages.admin')"
                                        :current="request()->routeIs('association.messages.admin')"
-                                       wire:navigate>{{ __('Nachrichten senden') }}</flux:navlist.item>
+                                       wire:navigate>{{ __('Nachrichten an Mitglieder') }}</flux:navlist.item>
                 @endif
             </flux:navlist.group>
         </flux:navlist>
