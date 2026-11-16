@@ -1870,13 +1870,13 @@ new class extends Component
                     @if ($tie)
                         <fieldset>
                             <legend class="text-sm font-medium text-text-primary">{{ __('Entschieden für') }}</legend>
-                            {{-- The label runs the full row from the box to the counts, so the whole 44 px row ticks. --}}
+                            {{-- Every point of a row ticks: the label covers the row from the box to the counts, and the box column above and below the 18 px box is the checkbox's own transparent ::before, stretched to the row's height. --}}
                             <flux:checkbox.group wire:model="castingCandidates">
                                 <ul class="mt-2 divide-y divide-border-subtle border-y border-border-subtle">
                                     @foreach ($tie['candidates'] as $candidate)
                                         <li wire:key="casting-{{ $tie['round']->id }}-{{ $candidate['id'] }}">
-                                            <flux:field variant="inline" class="items-center gap-x-0!">
-                                                <flux:checkbox value="{{ $candidate['id'] }}" :autofocus="$loop->first" data-test="casting-checkbox-{{ $candidate['id'] }}" />
+                                            <flux:field variant="inline" class="relative items-center gap-x-0!">
+                                                <flux:checkbox value="{{ $candidate['id'] }}" :autofocus="$loop->first" class="before:absolute before:inset-y-0 before:start-0 before:w-[1.125rem] before:cursor-pointer" data-test="casting-checkbox-{{ $candidate['id'] }}" />
                                                 <flux:label class="flex! min-h-11 cursor-pointer items-center gap-3 py-2 ps-3 text-base!" data-test="casting-candidate-{{ $candidate['id'] }}">
                                                     <span class="min-w-0 flex-1 font-bold break-words text-text-primary">{{ $candidate['name'] }}</span>
                                                     <span class="shrink-0 text-sm font-normal tabular-nums text-text-secondary">
@@ -1926,11 +1926,14 @@ new class extends Component
                             {{ __('Nach den Statuten fällt bei Stimmengleichheit die/der Vorsitzende den Stichentscheid. Eine Stichwahl gibt es nur, wenn die Versammlung sie beschlossen hat. Endet auch sie im Gleichstand, fällt die/der Vorsitzende den Stichentscheid.') }}
                         </flux:text>
                     </div>
-                    <flux:field variant="inline" class="items-center gap-x-0!">
-                        <flux:checkbox wire:model="runOffResolved" autofocus data-test="run-off-resolved" />
-                        <flux:label class="flex! min-h-11 cursor-pointer items-center py-2 ps-3 text-base! break-words" data-test="run-off-resolved-label">{{ __('Die Versammlung hat eine Stichwahl beschlossen.') }}</flux:label>
+                    {{-- As in the casting-vote rows: the label and the checkbox's stretched ::before cover the whole row. The error sits below the field, outside the row the ::before spans. --}}
+                    <div>
+                        <flux:field variant="inline" class="relative items-center gap-x-0!" data-test="run-off-row">
+                            <flux:checkbox wire:model="runOffResolved" autofocus class="before:absolute before:inset-y-0 before:start-0 before:w-[1.125rem] before:cursor-pointer" data-test="run-off-resolved" />
+                            <flux:label class="flex! min-h-11 cursor-pointer items-center py-2 ps-3 text-base! break-words" data-test="run-off-resolved-label">{{ __('Die Versammlung hat eine Stichwahl beschlossen.') }}</flux:label>
+                        </flux:field>
                         <flux:error name="runOffResolved" />
-                    </flux:field>
+                    </div>
                     <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                         <flux:modal.close>
                             <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto" data-test="cancel-tie-run-off">{{ __('Abbrechen') }}</flux:button>
