@@ -2049,9 +2049,9 @@ new class extends Component
                             <flux:error name="castingCandidates" />
                             <flux:error name="castingCandidates.*" />
                             @if ($tie['kind'] === \App\Enums\ElectionTieKind::YesEqualsNo)
-                                <flux:field variant="inline" class="mt-4">
-                                    <flux:checkbox wire:model="castingAllNo" data-test="casting-all-no" />
-                                    <flux:label class="text-base!">{{ __('Die/der Vorsitzende hat alle mit Nein entschieden') }}</flux:label>
+                                <flux:field variant="inline" class="relative mt-2 items-center gap-x-0!">
+                                    <flux:checkbox wire:model="castingAllNo" class="before:absolute before:inset-y-0 before:start-0 before:w-[1.125rem] before:cursor-pointer" data-test="casting-all-no" />
+                                    <flux:label class="flex! min-h-11 cursor-pointer items-center py-2 ps-3 text-base!">{{ __('Die/der Vorsitzende hat alle mit Nein entschieden') }}</flux:label>
                                 </flux:field>
                             @endif
                         </fieldset>
