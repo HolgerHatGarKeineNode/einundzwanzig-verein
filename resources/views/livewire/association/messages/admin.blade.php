@@ -21,6 +21,7 @@ use App\Services\Dm\DirectMessageTextInvalid;
 use App\Services\Dm\ScheduleDirectMessage;
 use App\Services\Dm\StartDirectMessageRun;
 use Illuminate\Contracts\Cache\LockTimeoutException;
+use App\Services\Nostr\NotificationKey;
 use App\Services\Nostr\RelayPublishStatus;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
@@ -315,6 +316,12 @@ class extends Component
         }
 
         unset($this->runs);
+        if (! $this->senderKeyUsable) {
+            Flux::toast(__('Test an dich gestartet. Er steht nur in deinem Posteingang im Portal: Ohne Absenderschlüssel kommt er in keinem Nostr-Client an.'), variant: 'warning');
+
+            return;
+        }
+
         Flux::toast(__('Test an dich gestartet. Er steht im Verlauf und kommt in deinem Nostr-Client an.'), variant: 'success');
     }
 
@@ -394,7 +401,19 @@ class extends Component
             return;
         }
 
-        Flux::toast(trans_choice('Gestartet: geht an ein Mitglied.|Gestartet: geht an :count Mitglieder.', $run->recipient_count, ['count' => $run->recipient_count]), variant: 'success');
+        $started = trans_choice('Gestartet: geht an ein Mitglied.|Gestartet: geht an :count Mitglieder.', $run->recipient_count, ['count' => $run->recipient_count]);
+
+        if ($skipped > 0) {
+            $started .= ' '.trans_choice('Übersprungen: ein Mitglied, es hat sie in den letzten :hours Stunden schon bekommen.|Übersprungen: :count Mitglieder, sie haben sie in den letzten :hours Stunden schon bekommen.', $skipped, ['count' => $skipped, 'hours' => app(DirectMessageRepeatLock::class)->hours()]);
+        }
+
+        if (! $this->senderKeyUsable) {
+            Flux::toast($started.' '.__('Ohne Absenderschlüssel steht sie nur im Posteingang im Portal.'), variant: 'warning');
+
+            return;
+        }
+
+        Flux::toast($started, variant: 'success');
     }
 
     public function updatedScheduleElectionId(): void
@@ -591,6 +610,20 @@ class extends Component
         return $this->openRunId === null ? null : DmRun::query()
             ->with(['deliveries' => fn ($query) => $query->with(['recipient.profile', 'relays'])->orderBy('id')])
             ->find($this->openRunId);
+    }
+
+    /**
+     * Whether the sender key (NOSTR_NOTIFICATION_KEY) can seal a message.
+     * Without it every Nostr delivery fails as `no_sender_key`, and only the
+     * portal inbox copy arrives, so the board is told before it sends.
+     * Yes or no only: the key itself never reaches the page.
+     */
+    #[Computed]
+    public function senderKeyUsable(): bool
+    {
+        $this->actor();
+
+        return app(NotificationKey::class)->isUsable();
     }
 
     /**
@@ -1014,7 +1047,8 @@ class extends Component
 
 {{-- pb-32: the floating "Connect with Nostr" button of window.nostr.js sits
      at the bottom of the viewport; the last line must scroll clear of it. --}}
-<div class="relative mx-auto w-full max-w-5xl pb-32">
+{{-- election-ui: the accessibility floor of the election pages (2px orange focus ring, 3:1 field borders, 44px modal close), resources/css/components/flux-overrides.css. --}}
+<div class="election-ui relative mx-auto w-full max-w-5xl pb-32">
     @if ($isGuest)
         <div class="max-w-2xl">
             <flux:callout variant="warning" icon="exclamation-circle">
@@ -1032,14 +1066,26 @@ class extends Component
             </div>
             @php
                 // One primary action at a time: an open run with failures offers its re-send as the primary one.
+                // On the schedule tab „Einplanen“ is the primary one, as soon as there is an election to plan for.
                 $openRunHasFailures = $tab === 'history' && $openRunId !== null && ($this->runs->firstWhere('id', $openRunId)?->failed_count ?? 0) > 0;
+                $scheduleHasPrimary = $tab === 'schedule' && $this->scheduleElection !== null;
             @endphp
             @if ($tab !== 'compose')
-                <flux:button wire:click="showTab('compose')" icon="pencil-square" :variant="$openRunHasFailures ? 'outline' : 'primary'" class="min-h-11" data-test="start-compose">
+                <flux:button wire:click="showTab('compose')" icon="pencil-square" :variant="$openRunHasFailures || $scheduleHasPrimary ? 'outline' : 'primary'" class="min-h-11" data-test="start-compose">
                     {{ __('Neue Nachricht') }}
                 </flux:button>
             @endif
         </header>
+
+        @unless ($this->senderKeyUsable)
+            {{-- Not a reason to block: the portal inbox copy still arrives, and failed deliveries can be re-sent once the key is set. --}}
+            <div role="status" class="mb-8 rounded-r-lg border-l-4 border-danger bg-bg-elevated p-4" data-test="sender-key-missing">
+                <p class="flex items-start gap-3 text-base text-text-primary">
+                    <flux:icon.key class="mt-0.5 size-5 shrink-0 text-danger" aria-hidden="true" />
+                    <span><span class="font-bold">{{ __('Absenderschlüssel fehlt.') }}</span> {{ __('Nachrichten erreichen Mitglieder nur im Portal, nicht per Nostr. Das ist eine Server-Einstellung (NOSTR_NOTIFICATION_KEY).') }}</span>
+                </p>
+            </div>
+        @endunless
 
         @if ($pausedAt)
             <div role="status" class="mb-8 flex flex-col gap-3 rounded-r-lg border-l-4 border-warning bg-bg-elevated p-4 sm:flex-row sm:items-center sm:justify-between" data-test="paused-line">

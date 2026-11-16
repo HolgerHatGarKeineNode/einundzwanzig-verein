@@ -695,3 +695,110 @@ it('still refuses to send when a member left after the dry run and nobody was sk
     expect(DmRun::query()->count())->toBe(0);
     Queue::assertNothingPushed();
 });
+
+/*
+ * Board M3: without a usable sender key every Nostr delivery fails as
+ * `no_sender_key`; only the portal copy arrives. The board is told before it
+ * sends: on the page, in the dry run, in the confirm dialog and in the toast.
+ * Sending stays possible (the portal copy is real, the failures can be
+ * re-sent once the key is set). The key itself never reaches the page.
+ * Mutation that must turn this red: senderKeyUsable() always true.
+ */
+it('warns on the page, in the dry run, in the confirm dialog and in the toast when the sender key is missing', function () {
+    Queue::fake();
+    messageCentreBoard(2);
+    config()->set('services.nostr_notification_key', '');
+
+    $page = messageCentre()
+        ->assertSeeHtml('data-test="sender-key-missing"')
+        ->assertSee('Absenderschlüssel fehlt.')
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('audience', DmAudience::Members->value)
+        ->set('text', 'Hallo {name}, morgen ist Wahl.')
+        ->call('runDryRun')
+        ->assertSee('3 Empfänger.')
+        ->assertSee('Aber der Absenderschlüssel fehlt: Es geht keine Nostr-Nachricht raus, alle 3 lesen sie nur im Portal.')
+        ->assertSeeHtml('data-test="confirm-no-sender-key"')
+        ->assertDontSee('und die Nachricht geht sofort raus');
+
+    $page->call('confirmSend')
+        ->assertDispatched('toast-show', fn (string $event, array $params): bool => ($params['dataset']['variant'] ?? null) === 'warning'
+            && $params['slots']['text'] === 'Gestartet: geht an 3 Mitglieder. Ohne Absenderschlüssel steht sie nur im Posteingang im Portal.');
+
+    expect(DmRun::query()->sole()->recipient_count)->toBe(3);
+});
+
+it('shows no sender-key warning when the key is set', function () {
+    Queue::fake();
+    messageCentreBoard(1);
+
+    messageCentre()
+        ->assertDontSeeHtml('data-test="sender-key-missing"')
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('audience', DmAudience::Members->value)
+        ->set('text', 'Hallo {name}, morgen ist Wahl.')
+        ->call('runDryRun')
+        ->assertDontSeeHtml('data-test="dry-run-no-sender-key"')
+        ->assertDontSeeHtml('data-test="confirm-no-sender-key"')
+        ->assertSee('und die Nachricht geht sofort raus');
+});
+
+/*
+ * Board low: a sending that skips some members says how many in its toast.
+ * Mutation that must turn this red: drop the skipped sentence.
+ */
+it('names the skipped count in the toast of a sending that reaches only part of the audience', function () {
+    Queue::fake();
+    messageCentreBoard(2);
+
+    $draft = fn (): Testable => messageCentre()
+        ->call('showTab', 'compose')
+        ->set('type', DmMessageType::Individual->value)
+        ->set('audience', DmAudience::Members->value)
+        ->set('text', 'Hallo {name}, morgen ist Wahl.')
+        ->call('runDryRun');
+
+    $draft()->call('confirmSend');
+    (new DispatchBulkDirectMessages(DmRun::query()->sole()->id))->handle();
+    EinundzwanzigPleb::factory()->active()->create();
+
+    $draft()->assertSee('Ein Empfänger.')
+        ->call('confirmSend')
+        ->assertDispatched('toast-show', fn (string $event, array $params): bool => ($params['dataset']['variant'] ?? null) === 'success'
+            && $params['slots']['text'] === 'Gestartet: geht an ein Mitglied. Übersprungen: 3 Mitglieder, sie haben sie in den letzten 24 Stunden schon bekommen.');
+});
+
+/*
+ * Q2: one primary per view. On the schedule tab „Einplanen“ is primary, so
+ * the header's „Neue Nachricht“ is not. Mutation: drop $scheduleHasPrimary → red.
+ */
+it('keeps one primary button on the schedule tab: „Einplanen“, not the header', function () {
+    messageCentreBoard();
+    Election::factory()->create();
+
+    $isPrimary = fn (string $html, string $test): bool => preg_match('/<button(?=[^>]*data-test="'.$test.'")[^>]*>/', $html, $tag) === 1
+        && str_contains($tag[0], 'bg-orange-primary');
+
+    $html = messageCentre()->call('showTab', 'schedule')->html();
+
+    expect($isPrimary($html, 'add-schedule-submit'))->toBeTrue()
+        ->and($isPrimary($html, 'start-compose'))->toBeFalse()
+        ->and(substr_count($html, 'bg-orange-primary'))->toBeGreaterThan(0);
+});
+
+/*
+ * Member M4: on a phone the signer is an app, not a browser extension.
+ */
+it('names the browser extension and the phone app as the signer in the election messages', function (DmMessageType $type) {
+    expect($type->defaultText())->toContain('Nostr-Signer (Browser-Erweiterung oder Handy-App)')
+        ->not->toContain('Nostr-Signer (Browser-Erweiterung).');
+})->with([DmMessageType::ElectionAnnouncement, DmMessageType::ElectionStartsNow]);
+
+/*
+ * Q13: the modal close button speaks German like the rest of the site.
+ */
+it('labels the modal close button in German', function () {
+    expect(__('Close modal'))->toBe('Schließen');
+});

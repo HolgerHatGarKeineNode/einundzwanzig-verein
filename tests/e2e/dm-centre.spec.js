@@ -75,6 +75,15 @@ test('the board dry-runs, sends, sees the run in the history, and a repeat is sk
     await expect(result).toContainText(String(count))
 
     await page.locator('[data-test="open-confirm"]').click()
+
+    // The confirm dialog opens on its first control, the safe one, as every
+    // election dialog does: not on the page body behind it, and not on the
+    // button that sends. Enter right after opening sends nothing.
+    const cancel = page.locator('[data-test="cancel-send"]')
+    await expect(cancel).toBeFocused()
+    expect(await page.evaluate(() => document.activeElement?.closest('dialog') !== null)).toBe(true)
+    await expect(page.locator('[data-test="confirm-send"]')).not.toBeFocused()
+
     await page.locator('[data-test="confirm-send"]').click()
 
     // The page switches to the history, with the new run open: every
