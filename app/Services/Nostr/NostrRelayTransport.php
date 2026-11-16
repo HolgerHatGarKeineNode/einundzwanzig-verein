@@ -22,11 +22,15 @@ use Throwable;
  * a NOTICE, an OK for another id, an OK whose flag is the string "true", a
  * frame that is not JSON — is not an answer, and the deadline decides.
  *
- * AUTH (NIP-42): a challenge is answered once per connection, with a kind
- * 22242 signed by the notification key. An `OK false "auth-required: …"`
- * makes the event wait for that AUTH to be accepted and is then sent once
- * more. Authenticating tells that relay operator that the association sent
- * a gift wrap — NIP-59 recommends it for relays that guard kind 1059.
+ * AUTH (NIP-42) only when the relay demands it. A challenge the relay sends
+ * on connect is remembered, not answered: authenticating tells the operator
+ * of the member's inbox relay that the association sent this gift wrap,
+ * which is exactly the sender link NIP-59 exists to hide (jury run 2, M-1).
+ * Only an `OK false "auth-required: …"` for our event makes us sign a kind
+ * 22242 with the notification key — for the latest challenge, or for the
+ * first one that arrives afterwards — and, once that AUTH is accepted, send
+ * the event exactly once more. At most one AUTH and two EVENT frames per
+ * connection; a second refusal is the result.
  *
  * fetch() does not authenticate: it reads public lists (kind 10050), and a
  * relay that insists on AUTH for that yields an incomplete result.
@@ -168,10 +172,17 @@ final class NostrRelayTransport implements RelayTransport
     ): RelayPublishResult {
         $connection->send($frame);
 
+        // The latest challenge the relay offered (NIP-42: a newer one replaces
+        // it). Remembered, never answered on its own.
+        $challenge = null;
         $authEventId = null;
-        $authAccepted = null;
-        $authReason = '';
         $resent = false;
+
+        $authenticate = function (string $challenge) use ($connection, $relayUrl, &$authEventId): void {
+            $auth = $this->key->signRelayAuth($relayUrl, $challenge, CarbonImmutable::now()->getTimestamp());
+            $authEventId = $auth['id'];
+            $connection->send(EventHash::json(['AUTH', $auth]));
+        };
 
         while (true) {
             $message = self::decode($connection->receive());
@@ -187,12 +198,17 @@ final class NostrRelayTransport implements RelayTransport
             }
 
             if ($message[0] === 'AUTH') {
-                $challenge = $message[1] ?? null;
+                $offered = $message[1] ?? null;
 
-                if ($authEventId === null && is_string($challenge) && $challenge !== '') {
-                    $auth = $this->key->signRelayAuth($relayUrl, $challenge, CarbonImmutable::now()->getTimestamp());
-                    $authEventId = $auth['id'];
-                    $connection->send(EventHash::json(['AUTH', $auth]));
+                if (! is_string($offered) || $offered === '') {
+                    continue;
+                }
+
+                $challenge = $offered;
+
+                // The relay asked for AUTH before it sent a challenge.
+                if ($trace['awaiting_auth'] !== '' && $authEventId === null) {
+                    $authenticate($challenge);
                 }
 
                 continue;
@@ -205,19 +221,18 @@ final class NostrRelayTransport implements RelayTransport
             [, $id, $ok] = $message;
             $reason = self::clean(self::text($message[3] ?? ''));
 
-            if ($id === $authEventId) {
-                $authAccepted = $ok;
-                $authReason = $reason;
-
-                if ($trace['awaiting_auth'] !== '') {
-                    if (! $ok) {
-                        return RelayPublishResult::rejected("{$trace['awaiting_auth']} (AUTH refused: {$authReason})");
-                    }
-
-                    $trace['awaiting_auth'] = '';
-                    $resent = true;
-                    $connection->send($frame);
+            if ($authEventId !== null && $id === $authEventId) {
+                if ($trace['awaiting_auth'] === '') {
+                    continue;
                 }
+
+                if (! $ok) {
+                    return RelayPublishResult::rejected("{$trace['awaiting_auth']} (AUTH refused: {$reason})");
+                }
+
+                $trace['awaiting_auth'] = '';
+                $resent = true;
+                $connection->send($frame);
 
                 continue;
             }
@@ -230,20 +245,13 @@ final class NostrRelayTransport implements RelayTransport
                 return RelayPublishResult::accepted($reason);
             }
 
-            if (! $resent && str_starts_with($reason, 'auth-required:')) {
-                if ($authAccepted === true) {
-                    $resent = true;
-                    $connection->send($frame);
-
-                    continue;
-                }
-
-                if ($authAccepted === false) {
-                    return RelayPublishResult::rejected("{$reason} (AUTH refused: {$authReason})");
-                }
-
-                // No AUTH answered yet: wait for the challenge or its OK.
+            if (! $resent && $authEventId === null && str_starts_with($reason, 'auth-required:')) {
                 $trace['awaiting_auth'] = $reason;
+
+                // Without a challenge yet, the next AUTH frame triggers it.
+                if ($challenge !== null) {
+                    $authenticate($challenge);
+                }
 
                 continue;
             }

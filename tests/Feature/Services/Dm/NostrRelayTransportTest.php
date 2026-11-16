@@ -92,24 +92,60 @@ it('ignores everything that is not an OK for this event and lets the deadline de
         ->toBe([RelayPublishStatus::Failed, 'timeout: no OK within 10 s (last NOTICE: slow down)']);
 });
 
-it('answers an AUTH challenge with a kind 22242 signed by the notification key', function () {
+/*
+ * Jury run 2, M-1: an AUTH greeting used to be answered at once, so every
+ * inbox relay that greets with AUTH (khatru does on connect) learned that the
+ * association key delivered this wrap. AUTH now waits for `auth-required:`.
+ * Mutation "answer the greeting again" (call $authenticate() for every AUTH
+ * frame in NostrRelayTransport::exchangeEvent) → the first case goes red.
+ */
+it('does not authenticate to a relay that greets with AUTH but accepts the event', function () {
+    $event = realWrap();
+    $relay = (new ScriptedRelayConnector)
+        ->reply(['AUTH', 'challenge-abc'])
+        ->reply(fn (array $sent) => ['OK', $sent[0][1]['id'], true, '']);
+
+    $result = scriptedTransport($relay)->publish(RELAY, $event);
+
+    expect($result->status)->toBe(RelayPublishStatus::Accepted)
+        ->and($relay->sentTypes())->toBe(['EVENT'])
+        ->and($relay->sent())->toBe([['EVENT', $event]]);
+});
+
+it('authenticates with a kind 22242 by the notification key after auth-required and sends the event once more', function () {
     $secret = testPrivateKey();
     $event = realWrap();
     $relay = (new ScriptedRelayConnector)
         ->reply(['AUTH', 'challenge-abc'])
+        ->reply(fn (array $sent) => ['OK', $sent[0][1]['id'], false, 'auth-required: gift wraps only from known users'])
         ->reply(fn (array $sent) => ['OK', $sent[1][1]['id'], true, ''])
-        ->reply(fn (array $sent) => ['OK', $sent[0][1]['id'], true, '']);
+        ->reply(fn (array $sent) => ['OK', $sent[2][1]['id'], true, '']);
 
     $result = scriptedTransport($relay, $secret)->publish(RELAY, $event);
     $auth = $relay->sent()[1][1];
 
     expect($result->status)->toBe(RelayPublishStatus::Accepted)
-        ->and($relay->sentTypes())->toBe(['EVENT', 'AUTH'])
+        ->and($relay->sentTypes())->toBe(['EVENT', 'AUTH', 'EVENT'])
+        ->and($relay->sent()[2])->toBe(['EVENT', $event])
         ->and($auth['kind'])->toBe(22242)
         ->and($auth['pubkey'])->toBe((new Key)->getPublicKey($secret))
         ->and($auth['tags'])->toBe([['relay', RELAY], ['challenge', 'challenge-abc']])
         ->and($auth['id'])->toBe(EventHash::of($auth['pubkey'], $auth['created_at'], 22242, $auth['tags'], ''))
         ->and((new SchnorrSignature)->verify($auth['pubkey'], $auth['sig'], $auth['id']))->toBeTrue();
+});
+
+it('signs the latest challenge the relay offered, as NIP-42 says', function () {
+    $relay = (new ScriptedRelayConnector)
+        ->reply(['AUTH', 'first-challenge'])
+        ->reply(['AUTH', 'second-challenge'])
+        ->reply(fn (array $sent) => ['OK', $sent[0][1]['id'], false, 'auth-required: members only'])
+        ->reply(fn (array $sent) => ['OK', $sent[1][1]['id'], true, ''])
+        ->reply(fn (array $sent) => ['OK', $sent[2][1]['id'], true, '']);
+
+    $result = scriptedTransport($relay)->publish(RELAY, realWrap());
+
+    expect($result->status)->toBe(RelayPublishStatus::Accepted)
+        ->and($relay->sent()[1][1]['tags'])->toBe([['relay', RELAY], ['challenge', 'second-challenge']]);
 });
 
 it('sends the event once more after auth-required, when its AUTH has been accepted', function () {
@@ -127,11 +163,27 @@ it('sends the event once more after auth-required, when its AUTH has been accept
         ->and($relay->sent()[2])->toBe(['EVENT', $event]);
 });
 
+it('fails cleanly when the relay refuses the event again after an accepted AUTH', function () {
+    $relay = (new ScriptedRelayConnector)
+        ->reply(['AUTH', 'challenge'])
+        ->reply(fn (array $sent) => ['OK', $sent[0][1]['id'], false, 'auth-required: members only'])
+        ->reply(fn (array $sent) => ['OK', $sent[1][1]['id'], true, ''])
+        ->reply(fn (array $sent) => ['OK', $sent[2][1]['id'], false, 'auth-required: still members only'])
+        ->reply(['AUTH', 'another-challenge']);
+
+    $result = scriptedTransport($relay)->publish(RELAY, realWrap());
+
+    expect([$result->status, $result->accepted, $result->message])
+        ->toBe([RelayPublishStatus::Rejected, false, 'auth-required: still members only'])
+        ->and($relay->sentTypes())->toBe(['EVENT', 'AUTH', 'EVENT'])
+        ->and($relay->wasClosed())->toBeTrue();
+});
+
 it('rejects with both reasons when the relay refuses the AUTH it asked for', function () {
     $relay = (new ScriptedRelayConnector)
         ->reply(['AUTH', 'challenge'])
-        ->reply(fn (array $sent) => ['OK', $sent[1][1]['id'], false, 'restricted: not a member'])
-        ->reply(fn (array $sent) => ['OK', $sent[0][1]['id'], false, 'auth-required: members only']);
+        ->reply(fn (array $sent) => ['OK', $sent[0][1]['id'], false, 'auth-required: members only'])
+        ->reply(fn (array $sent) => ['OK', $sent[1][1]['id'], false, 'restricted: not a member']);
 
     $result = scriptedTransport($relay)->publish(RELAY, realWrap());
 

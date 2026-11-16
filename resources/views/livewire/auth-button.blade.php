@@ -1,6 +1,7 @@
 <?php
 
 use App\Support\NostrAuth;
+use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Locked;
 use Livewire\Attributes\On;
 use Livewire\Component;
@@ -36,14 +37,18 @@ new class extends Component
     }
 
     /**
-     * JS-driven fallback: re-issue the challenge if the client cannot find
-     * one in the rendered snapshot (e.g. after a long-lived tab where the
-     * Volt component snapshot drifted out of sync with the session).
+     * A fresh challenge for one login attempt. nostrLogin.js asks for it on
+     * every attempt instead of trusting the rendered one, which expires 300 s
+     * after the page was rendered while a guest tab stays open far longer.
+     *
+     * No re-render: the client uses the returned value, and morphing the
+     * component while its progress overlay is up gains nothing.
      */
     public function requestNostrChallenge(): string
     {
         $challenge = NostrAuth::issueChallenge();
         $this->nostrChallenge = $challenge;
+        $this->skipRender();
 
         return $challenge;
     }
@@ -62,7 +67,17 @@ new class extends Component
             return;
         }
 
-        NostrAuth::loginWithSignedEvent($signedEvent);
+        try {
+            NostrAuth::loginWithSignedEvent($signedEvent);
+        } catch (ValidationException $exception) {
+            // Livewire answers a refusal with HTTP 200. Without a signal the
+            // client kept its overlay up and the member saw nothing
+            // (jury run 2, H-1); nostrLogin.js ends the attempt on this event.
+            $this->setErrorBag($exception->errors());
+            $this->dispatch('nostr-login-refused')->self();
+
+            return;
+        }
 
         $this->js('window.location.reload(true);');
     }
@@ -76,6 +91,7 @@ new class extends Component
 ?>
 
 <div x-data="nostrLogin" data-nostr-challenge="{{ $nostrChallenge ?? '' }}" data-nostr-login-url="{{ \App\Support\NostrAuth::loginUrl() ?? '' }}" data-location="{{ $location }}"
+     x-on:nostr-login-refused="nostrLoginRefused()"
      x-on:nostr-login-start.window="if ($event.detail?.location === $root.dataset.location) openNostrLogin({ force: true })">
     @if($isLoggedIn)
         {{-- Vor dem Absenden den Klartext-Cache des Chats vom Geraet raeumen.
