@@ -102,6 +102,17 @@ use Symfony\Component\Finder\Finder;
  *       the sending (seconds here), not the row's own moment.
  *     - A value written and overwritten again within one sending: rows are
  *       compared as they stand after it, which is what the board reads.
+ *     - The order of rows by id: ids become labels and rows are compared
+ *       as a set, so a fan-out that inserts voters' deliveries last while
+ *       dispatching by member keeps every row and publish equal, yet the
+ *       board lists deliveries by id and shows the voter last (gate j2h,
+ *       round 3, D1). The rendered board page is not an observer here.
+ *     - A write after the after-snapshot: the snapshot is taken before
+ *       `app()->terminate()`, so an `afterResponse()` callback that marks a
+ *       voter's delivery seen escapes it (round 3, D2; `defer()` is caught).
+ *     - Cache entries: the suite runs on the array cache store, while
+ *       production keeps the cache in the `cache` table, so a voter-only
+ *       cache write is a row in production but not here (round 3, D3).
  *     - A re-wrap of a stored rumor (seal and wrap dated from the re-wrap,
  *       not from the rumor); this fixture only makes first builds.
  *     - A read through the run's own election in the members and board
