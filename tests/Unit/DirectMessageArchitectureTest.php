@@ -43,7 +43,9 @@ use Symfony\Component\Finder\Finder;
  * class outside app/Models, or a model method whose read the derivation does
  * not follow: a relation name as the first segment of a string on another
  * model's query (`ElectionRound::query()->whereHas('votes')` inside
- * Election), or a name resolved through `__get`/`__call`. The
+ * Election), a model method that reads the vote TABLE by name
+ * (`DB::table('election_votes')`, `->from()`, a join) instead of the vote
+ * model, or a name resolved through `__get`/`__call`. The
  * DM pages (Livewire, Blade) are held to the vote model, the vote table and
  * the vote readers by a text scan; their inventory is a floor, not a pin.
  * The scanned DM directories are pinned against the directories named `Dm`
@@ -61,8 +63,11 @@ use Symfony\Component\Finder\Finder;
  *    and each delivery's outcome to be the same before and after a member
  *    votes. It sees a vote read however it is written, but only on these two
  *    paths, for the four audiences it runs, and only where the read changes
- *    what this fixture produces: a read whose effect needs another fixture
- *    (a second round, a vote in a parent election) passes it.
+ *    who gets a delivery or how that delivery ends. It does NOT compare the
+ *    text a member receives, and the sync queue ignores `->delay()`, so a read
+ *    that changes only the wording or the send time for voters passes it
+ *    (jury gate j2f, round 3: O6, O9, O12). A read whose effect needs another
+ *    fixture (a second round, a vote in a parent election) passes it too.
  */
 
 /** Directories whose PHP is the direct message code, relative to the project root. */
