@@ -100,7 +100,7 @@
                                         <ul class="mt-3 divide-y divide-border-subtle border-y border-border-subtle" aria-label="{{ __('Empfänger') }}">
                                             @foreach ($deliveries as $delivery)
                                                 <li wire:key="delivery-{{ $delivery->id }}" class="grid gap-x-6 gap-y-1 py-3 sm:grid-cols-[minmax(0,1fr)_16rem_13rem]" data-test="delivery-{{ $delivery->id }}" data-status="{{ $delivery->status->value }}"@if ($delivery->isStuck(now())) data-stuck="true"@endif>
-                                                    <span class="min-w-0 text-base text-text-primary break-words">{{ $this->nameOf($delivery->recipient) }}</span>
+                                                    <span class="min-w-0 text-base text-text-primary break-words"><x-nostr-profile :pubkey="$delivery->recipient?->pubkey" :picture="$delivery->recipient?->profile?->picture" :name="$this->nameOf($delivery->recipient)" /></span>
                                                     @php
                                                         $deliveryFailed = $this->deliveryFailed($delivery);
                                                     @endphp

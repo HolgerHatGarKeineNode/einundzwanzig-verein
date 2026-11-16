@@ -83,3 +83,39 @@ test('the board inbox and the profile inbox check keep their limits at 390 and 1
         }
     }
 })
+
+test('a click on a name opens the Nostr profile card inside the viewport, not the thread', async ({ page }) => {
+    const data = scenario('board-inbox')
+
+    await login(page, data.board.secret, '/association/messages/inbox')
+
+    for (const width of WIDTHS) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.goto('/association/messages/inbox')
+
+        const chip = page.locator(`[data-test="conversation-${data.ida.pubkey}"] [data-test="nostr-profile"]`)
+        await chip.click()
+
+        const card = page.locator('[data-test="nostr-profile-card"]').first()
+        await expect(card).toBeVisible()
+        await expect(card.locator('[data-test="card-links"] a').first()).toHaveAttribute('href', /^https:\/\/njump\.me\/npub1/)
+        await expect(card.locator('[data-test="card-portal"]')).toBeVisible()
+        await expect(page.locator('[data-test="thread"]')).toHaveCount(0)
+
+        const box = await card.boundingBox()
+        expect.soft(box.x, `card at ${width}: left edge`).toBeGreaterThanOrEqual(0)
+        expect.soft(box.x + box.width, `card at ${width}: right edge`).toBeLessThanOrEqual(width)
+        expect.soft(box.y + box.height, `card at ${width}: bottom edge`).toBeLessThanOrEqual(900)
+        for (const link of await card.locator('a, button').all()) {
+            const target = await link.boundingBox()
+            expect.soft(target.height, `card at ${width}: tap target height`).toBeGreaterThanOrEqual(44)
+        }
+        await measured(page, 'board inbox (profile card open)', '/association/messages/inbox')
+        if (process.env.E2E_SHOTS) {
+            await page.screenshot({ path: `${process.env.E2E_SHOTS}/profile-card-inbox-${width}.png` })
+        }
+
+        await page.keyboard.press('Escape')
+        await expect(card).toBeHidden()
+    }
+})

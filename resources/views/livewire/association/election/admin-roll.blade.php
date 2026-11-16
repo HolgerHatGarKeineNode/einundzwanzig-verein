@@ -38,7 +38,7 @@
                 </li>
                 @foreach ($rows as $row)
                     <li wire:key="roll-preview-{{ $loop->index }}" class="relative grid gap-1 px-4 py-3 sm:gap-4 sm:px-5 {{ $announced ? 'sm:grid-cols-[minmax(0,1fr)_17rem_13rem]' : 'sm:grid-cols-[minmax(0,1fr)_17rem]' }}" data-test="roll-row">
-                        <span class="min-w-0 font-bold text-text-primary break-words">{{ $row['name'] }}</span>
+                        <span class="min-w-0 font-bold text-text-primary break-words"><x-nostr-profile :pubkey="$row['pubkey']" :name="$row['name']" :picture="$row['picture']" /></span>
                         <span class="text-sm sm:text-base">
                             <span class="text-text-tertiary sm:sr-only">{{ __('Wahlberechtigt:') }}</span>
                             @if ($row['reason'])
@@ -111,7 +111,7 @@
             </li>
             @foreach ($entries as $row)
                 <li wire:key="roll-entry-{{ $loop->index }}" class="relative grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_17rem_13rem] sm:gap-4 sm:px-5" data-test="roll-row">
-                    <span class="min-w-0 font-bold text-text-primary break-words">{{ $row['name'] }}</span>
+                    <span class="min-w-0 font-bold text-text-primary break-words"><x-nostr-profile :pubkey="$row['pubkey']" :name="$row['name']" :picture="$row['picture']" /></span>
                     <span class="text-sm sm:text-base">
                         <span class="text-text-tertiary sm:sr-only">{{ __('Grund:') }}</span>
                         <span class="text-text-primary">{{ $this->reasonLabel($row['reason']) }}</span><span class="text-text-secondary">, {{ $this->sourceLabel($row['source']) }}</span>

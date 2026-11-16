@@ -44,7 +44,7 @@
                         @endphp
                         <li wire:key="candidate-{{ $candidate->id }}" class="relative grid gap-4 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:p-5" data-test="candidate-{{ $candidate->id }}">
                             <div class="min-w-0">
-                                <p class="text-base font-bold text-text-primary break-words">{{ $row['name'] }}</p>
+                                <p class="text-base font-bold text-text-primary break-words"><x-nostr-profile :pubkey="$candidate->pleb?->pubkey" :name="$row['name']" :picture="$candidate->pleb?->profile?->picture" /></p>
                                 <div class="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
                                     <span class="inline-flex items-center gap-1.5 {{ $tone }}" data-test="candidate-status">
                                         <flux:icon :name="$icon" variant="micro" class="size-4" aria-hidden="true" />
