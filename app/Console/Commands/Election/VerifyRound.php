@@ -31,7 +31,8 @@ use UnexpectedValueException;
  *     stored pubkey and the member's pubkey agree), kind, binding to election
  *     and round, nonce, `created_at` within the open period, the stored event
  *     id, choices valid for the round, stored choices equal to the signed
- *     ones. A member who erased their data has no pubkey left to compare
+ *     ones, and the member on the roll of the round (`not_on_roll`, with a
+ *     summary line; security jury I1). A member who erased their data has no pubkey left to compare
  *     (`MembershipService::erasePersonalData()` tombstones it); their vote is
  *     checked against the key that signed it, see failedChecks().
  *  2. A recount from the signed events of the votes that pass (1), compared
@@ -222,7 +223,9 @@ class VerifyRound extends Command
         $round = ElectionRound::query()->findOrFail($round->getKey());
         $periodEnd = $round->closed_at ?? $round->closes_at ?? now();
         $approved = $round->candidates()->where('status', ElectionCandidateStatus::Approved)->pluck('id')->all();
+        $roll = $round->rollEntries()->pluck('einundzwanzig_pleb_id')->map(fn (mixed $id): int => (int) $id)->flip();
         $clean = true;
+        $offRoll = 0;
         $verified = [];
         $byErased = 0;
 
@@ -232,6 +235,11 @@ class VerifyRound extends Command
             $selection = VoteEvent::selection($event);
             $failed = $this->failedChecks($vote, $event, $selection, $round, $periodEnd, $approved);
 
+            if (! $roll->has((int) $vote->einundzwanzig_pleb_id)) {
+                $failed[] = ElectionBallotRefusal::NotOnRoll->value;
+                $offRoll++;
+            }
+
             if ($failed === []) {
                 $verified[] = $selection;
 
@@ -240,6 +248,10 @@ class VerifyRound extends Command
 
             $clean = false;
             $this->error('FAIL vote '.$vote->getKey().' event '.$vote->event_id.': '.implode(', ', $failed));
+        }
+
+        if ($offRoll > 0) {
+            $this->error('MISMATCH: '.$offRoll.' vote(s) signed by members who are not on the roll of this round.');
         }
 
         if ($byErased > 0) {

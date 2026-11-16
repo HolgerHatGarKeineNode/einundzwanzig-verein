@@ -459,3 +459,69 @@ it('reports a casting vote that agrees with its audit line but does not fit the 
         ->not->toContain('differs from its line in the audit log')
         ->not->toContain('no longer holds its hash chain');
 });
+
+/*
+ * Security jury I2: a stored casting vote whose candidates cannot be read was
+ * applied as a decision for nobody, which on a yes = no tie is a valid
+ * „nein“. Mutation that must turn this red: read an unreadable row as an
+ * empty list again in `ElectionCastingVote::decision()`.
+ */
+it('does not apply an unreadable stored casting vote on a yes = no tie, and verify flags it', function (string $stored) {
+    [$board] = electionBoard(1);
+    [$round, [$a]] = tiedRound(ElectionCountingRule::YesNoPerCandidate, 1, 1, [[0 => 'yes'], [0 => 'no']]);
+    castingVote($round, $board, []);
+
+    expect(app(TallyRound::class)->effective($round)->outcome)->toBe(ElectionOutcome::Understaffed);
+
+    DB::table('election_casting_votes')->where('election_round_id', $round->id)->update(['candidate_ids' => str_replace(':a', (string) $a, $stored)]);
+    $effective = app(TallyRound::class)->effective($round);
+
+    expect($effective->outcome)->toBe(ElectionOutcome::Tie)
+        ->and($effective->castingVote)->toBeNull()
+        ->and($effective->tied)->toBe([$a])
+        ->and(Artisan::call('election:verify', ['round' => $round->id]))->toBe(1)
+        ->and(Artisan::output())->toContain('MISMATCH: the recorded casting vote does not fit the tie of the count.');
+})->with([
+    'JSON null' => ['null'],
+    'a string' => ['"Anna"'],
+    'a number' => ['7'],
+    'an object' => ['{"chosen": :a}'],
+    'a nested list' => ['[[:a]]'],
+]);
+
+/*
+ * Tests jury K2: `fits()` must only accept candidates who were level. The
+ * escaped mutant was `||` → `&&` in the check of the chosen against the tied.
+ */
+it('does not apply a stored casting vote for a candidate who was not level', function (string $kind) {
+    [$board] = electionBoard(1);
+
+    [$round, $ids] = $kind === 'between candidates'
+        // 1:1:0 — A and B are level for the seat, C is not.
+        ? tiedRound(ElectionCountingRule::SingleMajority, 1, 3, [[0 => 'for'], [1 => 'for']])
+        // A is level on yes = no, B is elected with two yes.
+        : tiedRound(ElectionCountingRule::YesNoPerCandidate, 2, 2, [[0 => 'yes', 1 => 'yes'], [0 => 'no', 1 => 'yes']]);
+    $notLevel = end($ids);
+    $level = app(TallyRound::class)->handle($round)->tied;
+
+    expect($level)->not->toContain($notLevel);
+
+    ElectionCastingVote::query()->create([
+        'election_round_id' => $round->id,
+        'candidate_ids' => [$notLevel],
+        'chair_name' => 'Erika Vorsitz',
+        'recorded_by_pleb_id' => $board->id,
+    ]);
+    app(ElectionAuditLog::class)->append($round->election, ElectionAuditAction::CastingVoteRecorded, $board, round: $round, details: [
+        'chair' => 'Erika Vorsitz',
+        'decided_for' => (string) $notLevel,
+    ]);
+    $effective = app(TallyRound::class)->effective($round);
+
+    expect($effective->outcome)->toBe(ElectionOutcome::Tie)
+        ->and($effective->castingVote)->toBeNull()
+        ->and($effective->tied)->toBe($level)
+        ->and(Artisan::call('election:verify', ['round' => $round->id]))->toBe(1)
+        ->and(Artisan::output())->toContain('MISMATCH: the recorded casting vote does not fit the tie of the count.')
+        ->not->toContain('differs from its line in the audit log');
+})->with(['between candidates', 'yes = no']);

@@ -4,11 +4,13 @@ use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionOutcome;
 use App\Exceptions\ElectionActionRefusedException;
+use App\Exceptions\ElectionCandidateBlockedException;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
+use App\Services\Election\Candidacies;
 use App\Services\Election\CloseRound;
 use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionStewardship;
@@ -46,6 +48,7 @@ function runOffChainOutcome(Closure $open): string
             str_contains($exception->getMessage(), 'not sealed yet') => 'not sealed',
             str_contains($exception->getMessage(), 'has been elected') => 'elected',
             str_contains($exception->getMessage(), 'undecided tie') => 'tie',
+            str_contains($exception->getMessage(), 'second ballot is owed') => 'owed',
             default => throw $exception,
         };
     }
@@ -264,12 +267,18 @@ it('takes a run-off of a single-majority round without a majority as deciding it
 
     expect(app(TallyRound::class)->handle($chair)->outcome)->toBe(ElectionOutcome::Understaffed);
 
-    $runOff = app(CreateRunOff::class)->handle($chair, $boardMember, resolvedByAssembly: true);
+    if ($outcome !== 'no run-off yet') {
+        $runOff = app(CreateRunOff::class)->handle($chair, $boardMember, resolvedByAssembly: true);
 
-    expect(runOffChainMembers($runOff))->toBe([$a, $b]);
+        expect(runOffChainMembers($runOff))->toBe([$a, $b]);
+    }
 
     if ($outcome === 'elects B') {
         runOffChainVoteAndSeal($runOff, $voters, [$b, $b]);
+    }
+
+    if ($outcome === 'annulled') {
+        app(ElectionStewardship::class)->annul(app(OpenRound::class)->handle($runOff), $boardMember, 'Wrong roll.');
     }
 
     runOffChainStand($treasurer, match ($standing) {
@@ -280,6 +289,11 @@ it('takes a run-off of a single-majority round without a majority as deciding it
 
     expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe($expected);
 })->with([
+    'no run-off yet, treasurer with A' => ['no run-off yet', 'A', 'owed'],
+    'no run-off yet, treasurer with B' => ['no run-off yet', 'B', 'owed'],
+    'no run-off yet, treasurer with C, who would not be in it' => ['no run-off yet', 'C', 'opens'],
+    'run-off annulled, treasurer with A' => ['annulled', 'A', 'owed'],
+    'run-off annulled, treasurer with C' => ['annulled', 'C', 'opens'],
     'run-off draft, treasurer with A' => ['draft', 'A', 'not sealed'],
     'run-off draft, treasurer with C, who is not in it' => ['draft', 'C', 'opens'],
     'run-off elects B, treasurer with B' => ['elects B', 'B', 'elected'],
@@ -417,22 +431,71 @@ it('frees a later round once the blocking candidacy is withdrawn, in either roun
     expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('opens');
 })->with(['earlier', 'in the round to open']);
 
-it('refuses a run-off of an earlier chair with a candidate elected meanwhile in a later round', function () {
+/*
+ * Board jury H1: Präsidium 6:5:3 sealed without a majority, then Vorstand
+ * opened with Anna standing in both — Anna was elected to Vorstand and the
+ * Präsidium run-off refused her. Mutation that must turn this red: drop the
+ * owed run-off check from `assertContestDecidedFor()`.
+ */
+it('refuses a later round with a candidate of an owed run-off, and opens it once the run-off is decided', function () {
+    $election = Election::factory()->create();
+    [$boardMember] = electionBoard(1);
+    $voters = collect(range(1, 14))->map(fn (): EinundzwanzigPleb => electionVoter())->all();
+
+    $presidium = draftElectionRound(['position' => 1, 'title' => 'Präsidium', 'counting_rule' => ElectionCountingRule::SingleMajority], candidates: 3, election: $election);
+    $board = draftElectionRound(['position' => 2, 'title' => 'Vorstand', 'counting_rule' => ElectionCountingRule::YesNoPerCandidate], candidates: 1, election: $election);
+    [$anna, $bernd, $eva] = runOffChainMembers($presidium);
+    runOffChainStand($board, $anna);
+
+    // 6:5:3 — 6 of 14 is not more than half; Anna and Bernd go to the run-off.
+    $presidium = runOffChainVoteAndSeal($presidium, $voters, [...array_fill(0, 6, $anna), ...array_fill(0, 5, $bernd), ...array_fill(0, 3, $eva)]);
+
+    try {
+        app(OpenRound::class)->handle($board->fresh());
+        $this->fail('Vorstand opened while the Präsidium run-off is owed.');
+    } catch (ElectionCandidateBlockedException $refusal) {
+        expect($refusal->getMessage())->toContain('second ballot is owed')
+            ->toContain('create that second ballot first')
+            ->and($refusal->memberId)->toBe($anna);
+    }
+
+    expect($board->fresh()->opened_at)->toBeNull()
+        ->and(app(OpenRound::class)->refusal($board->fresh()))->toBeInstanceOf(ElectionCandidateBlockedException::class);
+
+    // The run-off can still be created and decides the seat; Bernd wins, Anna is free.
+    $runOff = app(CreateRunOff::class)->handle($presidium, $boardMember);
+    expect(runOffChainMembers($runOff))->toBe([$anna, $bernd]);
+    runOffChainVoteAndSeal($runOff, $voters, [$bernd, $bernd, $anna]);
+
+    expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($board->fresh())))->toBe('opens');
+});
+
+it('refuses a run-off of a chair with a candidate elected meanwhile in a round placed before it', function () {
     $election = Election::factory()->create();
     [$boardMember] = electionBoard(1);
     $voters = collect(range(1, 6))->map(fn (): EinundzwanzigPleb => electionVoter())->all();
 
-    $chair = draftElectionRound(['position' => 1, 'counting_rule' => ElectionCountingRule::SingleMajority], candidates: 3, election: $election);
-    $treasurer = draftElectionRound(['position' => 2, 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 1, election: $election);
+    $treasurer = draftElectionRound(['position' => 1, 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 1, election: $election);
+    $chair = draftElectionRound(['position' => 2, 'counting_rule' => ElectionCountingRule::SingleMajority], candidates: 3, election: $election);
     [$a, $b] = runOffChainMembers($chair);
-    runOffChainStand($treasurer, $a);
 
     $chair = runOffChainVoteAndSeal($chair, $voters, [$a, $a, $a, $b, $b, runOffChainMembers($chair)[2]]);
+
+    // The treasurer comes first, so the owed run-off of the later chair does not hold it back.
+    // Wahlreglement § 4 Nr. 1 „Gewählt wird in der festgelegten Reihenfolge.“ and
+    // § 3 Nr. 7 „Wer in einem Wahlgang gewählt ist, steht in den folgenden
+    // Wahlgängen nicht mehr zur Wahl.“: the earlier office has the first claim.
+    runOffChainStand($treasurer, $a);
     runOffChainVoteAndSeal($treasurer, $voters, [$a]);
-    $runOff = app(CreateRunOff::class)->handle($chair, $boardMember, resolvedByAssembly: true);
+    $runOff = app(CreateRunOff::class)->handle($chair, $boardMember);
 
     // Nobody is elected twice, whatever the order of the contests.
     expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($runOff->fresh())))->toBe('elected');
+
+    // No deadlock: once A's candidacy in the run-off is withdrawn, the run-off opens.
+    app(Candidacies::class)->withdraw($runOff->candidates()->where('einundzwanzig_pleb_id', $a)->firstOrFail(), $boardMember, 'Als Kassier gewählt');
+
+    expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($runOff->fresh())))->toBe('opens');
 });
 
 /*
