@@ -119,3 +119,11 @@ test('a click on a name opens the Nostr profile card inside the viewport, not th
         await expect(card).toBeHidden()
     }
 })
+
+test('a closed profile card takes no space and no clicks', async ({ page }) => {
+    const data = scenario('board-inbox')
+
+    await login(page, data.board.secret, '/association/messages/inbox')
+    await expect(page.locator('[data-chip-panel]').first()).toBeAttached()
+    expect(await page.locator('[data-chip-panel]').evaluateAll((panels) => panels.filter((panel) => getComputedStyle(panel).display !== 'none').length)).toBe(0)
+})
