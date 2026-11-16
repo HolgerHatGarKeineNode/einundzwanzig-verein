@@ -1046,30 +1046,33 @@ new class extends Component
                         'border-success/40 bg-bg-surface' => $canVote,
                         'border-orange-700 bg-bg-surface' => ! $canVote,
                     ])>
-                        <h2 id="eligibility" class="text-lg font-bold text-text-primary">{{ __('Deine Wahlberechtigung') }}</h2>
+                        {{-- The state icon sits beside the heading, not beside the sentence:
+                             in the 26rem column an icon gutter left the sentence 43
+                             characters wide (checklist Q12 wants 45). Full width it holds 46. --}}
+                        <h2 id="eligibility" class="flex items-center gap-2 text-lg font-bold text-text-primary">
+                            @if ($canVote)
+                                <flux:icon.check-circle class="size-5 shrink-0 text-success" aria-hidden="true" />
+                            @else
+                                <flux:icon.exclamation-triangle class="size-5 shrink-0 text-orange-500" aria-hidden="true" />
+                            @endif
+                            {{ __('Deine Wahlberechtigung') }}
+                        </h2>
 
                         @if ($offRoll !== null)
-                            <p class="mt-3 flex items-start gap-2 text-base text-text-primary" data-test="eligibility-off-roll">
-                                <flux:icon.exclamation-triangle class="mt-0.5 size-5 shrink-0 text-orange-500" aria-hidden="true" />
-                                <span class="min-w-0 break-words">{{ __('Für „:round“ stehst du nicht im Wählerverzeichnis.', ['round' => $offRoll->title]) }}</span>
+                            <p class="mt-3 break-words text-base text-text-primary" data-test="eligibility-off-roll">
+                                {{ __('Für „:round“ stehst du nicht im Wählerverzeichnis.', ['round' => $offRoll->title]) }}
                             </p>
                             <p class="mt-2 text-sm leading-normal text-text-secondary">
                                 {{ __('Nach der Beitragsregel darfst du wählen.') }}
                                 {{ __('Melde dich im Call beim Vorstand, er kann dich nachtragen.') }}
                             </p>
                         @elseif ($this->isEntitled)
-                            <p class="mt-3 flex items-start gap-2 text-base text-text-primary">
-                                <flux:icon.check-circle class="mt-0.5 size-5 shrink-0 text-success" aria-hidden="true" />
-                                <span>{{ __('Du darfst wählen.') }}</span>
-                            </p>
+                            <p class="mt-3 text-base text-text-primary">{{ __('Du darfst wählen.') }}</p>
                             <p class="mt-2 text-sm leading-normal text-text-secondary">
                                 {{ __('Wählen darf, wer aktives Mitglied oder Ehrenmitglied ist und :rule hat.', ['rule' => $this->feeRuleText]) }}
                             </p>
                         @else
-                            <p class="mt-3 flex items-start gap-2 text-base text-text-primary">
-                                <flux:icon.exclamation-triangle class="mt-0.5 size-5 shrink-0 text-orange-500" aria-hidden="true" />
-                                <span>{{ __('Du darfst noch nicht wählen.') }}</span>
-                            </p>
+                            <p class="mt-3 text-base text-text-primary">{{ __('Du darfst noch nicht wählen.') }}</p>
                             <p class="mt-2 text-sm leading-normal text-text-secondary">
                                 @switch($this->ineligibleBecause)
                                     @case('category')
@@ -1312,9 +1315,14 @@ new class extends Component
                                                             {{ __('Ob, sagt der Vorstand im Call.') }}
                                                         </p>
                                                     @endif
-                                                    <dl class="mt-3 divide-y divide-border-subtle">
+                                                    {{-- The row decides by its own width, not the viewport's: beside the
+                                                         26rem side column the card is narrow at 1280 and 1600 px, and a
+                                                         12rem label left the dd 20 characters wide. Two columns only from
+                                                         36rem: 12rem label + 1rem gap + 45 characters of the house font
+                                                         (8 px each at 16 px) is 568 px. Below, the office stands over the name. --}}
+                                                    <dl class="@container mt-3 divide-y divide-border-subtle">
                                                         @foreach ($this->outcome as $office)
-                                                            <div wire:key="after-{{ $loop->index }}" class="grid gap-1 py-3 sm:grid-cols-[12rem_minmax(0,1fr)] sm:gap-4">
+                                                            <div wire:key="after-{{ $loop->index }}" class="grid gap-1 py-3 @min-[36rem]:grid-cols-[12rem_minmax(0,1fr)] @min-[36rem]:gap-4">
                                                                 <dt class="break-words text-base text-text-secondary">{{ $office['title'] }}</dt>
                                                                 <dd class="min-w-0 break-words text-base text-text-primary">
                                                                     @if ($office['struck'])
