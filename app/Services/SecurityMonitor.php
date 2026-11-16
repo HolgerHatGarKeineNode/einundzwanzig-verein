@@ -79,7 +79,7 @@ class SecurityMonitor
             }
 
             $componentName = $this->extractComponentName($request);
-            $election = $this->involvesElectionComponent($request);
+            $election = self::involvesElectionComponent($request);
             $targetProperty = $election ? null : $this->extractTargetProperty($exception);
             $payload = $election ? null : $this->sanitizePayload($request);
             $severity = $this->determineSeverity($exception, $payload);
@@ -138,11 +138,20 @@ class SecurityMonitor
     }
 
     /**
+     * Whether `$name` is the name of an election component.
+     */
+    public static function isElectionComponent(string $name): bool
+    {
+        return preg_match(self::ELECTION_COMPONENT_PATTERN, $name) === 1;
+    }
+
+    /**
      * Whether any component in the request belongs to an election — a
      * Livewire request may bundle several. A snapshot that cannot be read
-     * counts as one: the payload is then withheld, not stored.
+     * counts as one: the payload is then withheld, not stored. Also used by
+     * `SentryElectionFilter`.
      */
-    private function involvesElectionComponent(Request $request): bool
+    public static function involvesElectionComponent(Request $request): bool
     {
         try {
             foreach ((array) $request->input('components', []) as $component) {
@@ -152,7 +161,7 @@ class SecurityMonitor
                     return true;
                 }
 
-                if (preg_match(self::ELECTION_COMPONENT_PATTERN, (string) ($snapshot['memo']['name'] ?? '')) === 1) {
+                if (self::isElectionComponent((string) ($snapshot['memo']['name'] ?? ''))) {
                     return true;
                 }
             }
