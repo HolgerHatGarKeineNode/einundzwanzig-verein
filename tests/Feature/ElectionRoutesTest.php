@@ -25,18 +25,30 @@ require_once __DIR__.'/Services/Election/helpers.php';
  *   no route name containing "election"     replaced on purpose by the exact
  *                                           inventory below, same filter;
  *                                           restored 2026-11-16
+ *
+ * Since 2026-11-16 (jury gate j2f) the inventory also takes every route under
+ * the path /association/election, whatever its name: an unguarded
+ * /association/election/admin/{election}/export named `association.wahl.export`
+ * passed both the inventory and the board check below.
  */
 
+/** The path every election page lives under. */
+const ELECTION_URI_PREFIX = 'association/election';
+
 /**
- * Every route name containing "election" — the filter of the old test.
+ * Every route whose name contains "election" (the filter of the old test) or
+ * whose path lies under ELECTION_URI_PREFIX, as "uri name"; an unnamed route
+ * shows as "uri (unnamed)".
  *
  * @return list<string>
  */
-function electionRouteNames(): array
+function electionRoutes(): array
 {
     return collect(app('router')->getRoutes())
-        ->map(fn (Route $route): ?string => $route->getName())
-        ->filter(fn (?string $name): bool => $name !== null && str_contains($name, 'election'))
+        ->filter(fn (Route $route): bool => str_contains((string) $route->getName(), 'election')
+            || $route->uri() === ELECTION_URI_PREFIX
+            || str_starts_with($route->uri(), ELECTION_URI_PREFIX.'/'))
+        ->map(fn (Route $route): string => $route->uri().' '.($route->getName() ?? '(unnamed)'))
         ->sort()
         ->values()
         ->all();
@@ -62,28 +74,33 @@ it('keeps the pages of the old election removed', function (string $url) {
 ]);
 
 it('registers exactly these election routes', function () {
-    expect(electionRouteNames())->toBe([
-        'association.election',
-        'association.election.admin',
-        'association.election.admin.protocol',
-        'association.election.admin.screen',
+    expect(electionRoutes())->toBe([
+        'association/election association.election',
+        'association/election/admin association.election.admin',
+        'association/election/admin/{election}/protocol association.election.admin.protocol',
+        'association/election/admin/{election}/screen association.election.admin.screen',
     ]);
 });
 
 /*
- * Every election admin route of the inventory, so a new one is held to the
- * board check by being registered (blickwinkel-tests M16).
+ * Every election admin route of the inventory, by name or by path, so a new
+ * one is held to the board check by being registered (blickwinkel-tests M16).
+ * The URL is built from the path, so an unnamed route is checked as well.
  */
 it('refuses every election admin route to a member who is not on the board', function () {
     $election = Election::factory()->create();
-    $admin = array_values(array_filter(electionRouteNames(), fn (string $name): bool => str_starts_with($name, 'association.election.admin')));
+    $admin = array_values(array_filter(electionRoutes(), function (string $route): bool {
+        [$uri, $name] = explode(' ', $route, 2);
+
+        return str_starts_with($name, 'association.election.admin') || str_starts_with($uri, ELECTION_URI_PREFIX.'/admin');
+    }));
 
     NostrAuth::login(electionVoter()->pubkey);
 
-    foreach ($admin as $name) {
-        $url = route($name, app('router')->getRoutes()->getByName($name)->parameterNames() === [] ? [] : ['election' => $election]);
+    foreach ($admin as $route) {
+        $url = '/'.preg_replace('/\{[^}]+\}/', (string) $election->getKey(), explode(' ', $route, 2)[0]);
 
-        expect($this->get($url)->status())->toBe(403, "{$name} ({$url})");
+        expect($this->get($url)->status())->toBe(403, "{$route} ({$url})");
     }
 
     expect($admin)->toHaveCount(3);
