@@ -2,9 +2,12 @@
 
 use App\Enums\AssociationStatus;
 use App\Models\EinundzwanzigPleb;
+use App\Services\Nostr\EventSigning;
 use App\Support\NostrAuth;
 use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
+use swentel\nostr\Key\Key;
+use Tests\Support\FakeRelayTransport;
 
 /*
  * The association's own nostr.json, which this screen fetches whenever a save
@@ -424,4 +427,35 @@ it('still allows an underscore inside a handle on the profile screen', function 
         ->assertHasNoErrors();
 
     expect($pleb->fresh()->nip05_handle)->toBe('alice_bob');
+});
+
+it('shows a member whether their Nostr DM inbox is set up and re-checks it on request, at most three times a minute', function () {
+    config(['einundzwanzig.config.profile_relays' => ['wss://profiles.example/']]);
+    $secret = testPrivateKey();
+    $pleb = EinundzwanzigPleb::factory()->create(['pubkey' => (new Key)->getPublicKey($secret)]);
+    $relay = FakeRelayTransport::bind()->withStoredEvents('wss://profiles.example/', [
+        EventSigning::sign($secret, 10050, [['relay', 'wss://inbox.member.example/']], '', time()),
+    ]);
+    NostrAuth::login($pleb->pubkey);
+
+    $profile = Livewire::test('association.profile')
+        ->assertSeeHtml('data-test="dm-inbox-check"')
+        ->assertSee('Kein Nostr-Postfach gefunden')
+        ->assertDontSeeHtml('$dmInboxRelays')
+        ->call('recheckDmInbox')
+        ->assertSeeHtml('data-test="dm-inbox-relays"')
+        ->assertSee('Dein Nostr-Postfach ist eingerichtet')
+        ->assertSee('wss://inbox.member.example/');
+
+    $profile->call('recheckDmInbox')->call('recheckDmInbox')->call('recheckDmInbox');
+
+    expect($relay->fetched())->toHaveCount(3);
+});
+
+it('lets no guest trigger the DM inbox re-check', function () {
+    $relay = FakeRelayTransport::bind();
+
+    Livewire::test('association.profile')->call('recheckDmInbox')->assertForbidden();
+
+    expect($relay->fetched())->toBe([]);
 });

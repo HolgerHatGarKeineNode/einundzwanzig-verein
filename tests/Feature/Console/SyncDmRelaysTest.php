@@ -315,3 +315,16 @@ it('is scheduled daily without overlapping', function () {
         ->and($events->first()->expression)->toBe('45 0 * * *')
         ->and($events->first()->withoutOverlapping)->toBeTrue();
 });
+
+it('re-checks one member only, asks the relays for that author alone and keeps every other member\'s inbox', function () {
+    [$alice, $aliceKey] = memberWithKey();
+    [$bob] = memberWithKey();
+    PlebDmRelay::factory()->for($bob, 'pleb')->create(['relays' => ['wss://inbox.bob.example/']]);
+    $relay = FakeRelayTransport::bind()->withStoredEvents(INDEXER, [dmRelayList($aliceKey, ['wss://inbox.alice.example/'])]);
+
+    $this->artisan('nostr:sync-dm-relays', ['--member' => $alice->id])->assertSuccessful();
+
+    expect(PlebDmRelay::query()->orderBy('einundzwanzig_pleb_id')->pluck('relays', 'einundzwanzig_pleb_id')->all())
+        ->toBe([$alice->id => ['wss://inbox.alice.example/'], $bob->id => ['wss://inbox.bob.example/']])
+        ->and(array_column(array_column($relay->fetched(), 'filter'), 'authors'))->each->toBe([$alice->pubkey]);
+});

@@ -237,6 +237,25 @@ return [
     ))),
 
     /*
+     * The notification key's own DM inbox relays (NIP-17 kind 10050). Replies
+     * of members to the portal's direct messages land here; `dm:fetch-inbox`
+     * reads them into the board inbox, and `dm:publish-inbox-relays` tells
+     * the members' clients about this list.
+     *
+     * Empty turns the board inbox off: then nothing is fetched and every DM
+     * says that replies to it are read by nobody. Tests set it empty
+     * (phpunit.xml), so no test dials a real relay.
+     */
+    'dm_inbox_relays' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env('NOSTR_DM_INBOX_RELAYS', implode(',', [
+            'wss://relay.damus.io',
+            'wss://nos.lol',
+            'wss://relay.primal.net',
+        ])))
+    ))),
+
+    /*
      * Where members should write instead of replying to a direct message
      * (E21: the notification key's inbox is read by nobody). Appended to
      * every DM by App\Services\Dm\DirectMessageText. Empty falls back to

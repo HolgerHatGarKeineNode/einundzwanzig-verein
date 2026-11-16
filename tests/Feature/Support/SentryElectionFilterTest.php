@@ -53,6 +53,7 @@ const SENTRY_DM_COMPONENTS = [
 const SENTRY_ELECTION_CLASSES = [
     'App\Jobs\Dm\DispatchBulkDirectMessages',
     'App\Jobs\Dm\SendDirectMessage',
+    'App\Jobs\Dm\SendInboxReply',
     'App\Services\Election\Candidacies',
     'App\Services\Election\CastBallot',
     'App\Services\Election\CastingDecision',

@@ -92,7 +92,7 @@ it('keeps the secret out of a dump', function () {
         ->and(print_r(new NotificationKey($secret), true))->toContain('yes');
 });
 
-it('offers the two signing shapes its docblock promises and no method that takes a kind', function () {
+it('offers the three signing shapes its docblock promises and no method that takes a kind', function () {
     $class = new ReflectionClass(NotificationKey::class);
     $surface = [];
 
@@ -115,6 +115,7 @@ it('offers the two signing shapes its docblock promises and no method that takes
             'fromConfig' => [],
             'isUsable' => [],
             'publicKey' => [],
+            'signInboxRelayList' => ['array $relays', 'int $createdAt'],
             'signRelayAuth' => ['string $relayUrl', 'string $challenge', 'int $createdAt'],
             'signSeal' => ['string $encryptedRumor', 'int $createdAt'],
         ]);

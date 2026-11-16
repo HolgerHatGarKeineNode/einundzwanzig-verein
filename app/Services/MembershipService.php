@@ -9,6 +9,7 @@ use App\Exceptions\MembershipUnavailableException;
 use App\Jobs\PublishPaymentEventToNostr;
 use App\Models\DmDelivery;
 use App\Models\DmDeliveryRelay;
+use App\Models\DmInboxMessage;
 use App\Models\EinundzwanzigPleb;
 use App\Models\MemberProposalVote;
 use App\Models\MembershipGrant;
@@ -1181,6 +1182,9 @@ class MembershipService
             // Inbox relays name where this person reads; the row would outlive
             // the anonymised member, whose record is updated, never deleted.
             $pleb->dmRelays()->delete();
+
+            // What the member wrote to the board and what the board answered.
+            DmInboxMessage::query()->where('einundzwanzig_pleb_id', $pleb->id)->delete();
 
             /*
              * DIRECT MESSAGES TO THIS MEMBER. The delivery row stays so a

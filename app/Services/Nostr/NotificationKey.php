@@ -11,8 +11,9 @@ use Throwable;
 /**
  * The association's notification key (E16), and the only code that reads it.
  *
- * It signs exactly two shapes and nothing else: the kind 13 seal of a direct
- * message and the kind 22242 answer to a relay's AUTH challenge. There is no
+ * It signs exactly three shapes and nothing else: the kind 13 seal of a direct
+ * message, the kind 22242 answer to a relay's AUTH challenge, and its own
+ * kind 10050 inbox relay list (the board inbox). There is no
  * method that takes a kind — the removed election feature failed on exactly
  * such an open signing method.
  *
@@ -26,6 +27,8 @@ final class NotificationKey
     public const int KIND_SEAL = 13;
 
     public const int KIND_RELAY_AUTH = 22242;
+
+    public const int KIND_DM_RELAYS = 10050;
 
     /*
      * Both the configured value and the derived hex secret are held as
@@ -94,6 +97,26 @@ final class NotificationKey
             $this->secret(),
             self::KIND_RELAY_AUTH,
             [['relay', $relayUrl], ['challenge', $challenge]],
+            '',
+            $createdAt,
+        );
+    }
+
+    /**
+     * Sign this key's own DM inbox relay list (kind 10050, NIP-17), so a
+     * member's client knows where a reply to the portal's messages goes.
+     *
+     * @param  list<string>  $relays
+     * @return array{id: string, pubkey: string, created_at: int, kind: int, tags: array<int, array<int, string>>, content: string, sig: string}
+     *
+     * @throws NotificationKeyUnavailable
+     */
+    public function signInboxRelayList(array $relays, int $createdAt): array
+    {
+        return EventSigning::sign(
+            $this->secret(),
+            self::KIND_DM_RELAYS,
+            array_map(fn (string $relay): array => ['relay', $relay], array_values($relays)),
             '',
             $createdAt,
         );

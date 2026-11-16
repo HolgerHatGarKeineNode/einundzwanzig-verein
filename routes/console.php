@@ -1,6 +1,7 @@
 <?php
 
 use App\Console\Commands\Dm\DispatchDueDirectMessages;
+use App\Console\Commands\Dm\FetchDmInbox;
 use App\Console\Commands\Election\CloseEndedRounds;
 use App\Console\Commands\Nostr\SyncDmRelays;
 use App\Console\Commands\Nostr\SyncProfiles;
@@ -18,3 +19,5 @@ Schedule::command(PruneDescriptionImages::class)->daily()->at('03:00');
 Schedule::command(CloseEndedRounds::class)->everyMinute()->withoutOverlapping();
 // Starts scheduled direct messages (election timeline, fee reminder) once their moment has come.
 Schedule::command(DispatchDueDirectMessages::class)->everyMinute()->withoutOverlapping(5);
+// Reads members' replies to the notification key into the board inbox.
+Schedule::command(FetchDmInbox::class)->everyFiveMinutes()->withoutOverlapping(10);
