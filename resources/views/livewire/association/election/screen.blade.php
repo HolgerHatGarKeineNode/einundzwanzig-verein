@@ -157,7 +157,8 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
         @endif
     </header>
 
-    <main class="flex flex-1 flex-col justify-center py-[4vh]">
+    {{-- The padding only shows when the round fills the screen (a short one is centred): 2vh keeps a 63-character elected name, a 60-character chair (RecordCastingVote::MAX_CHAIR_LENGTH) and both rows inside 1280×720. --}}
+    <main class="flex flex-1 flex-col justify-center py-[2vh]">
         @if ($round === null)
             <h1 class="text-[length:var(--s-title)] font-bold leading-tight">{{ __('Noch kein Wahlgang angelegt.') }}</h1>
         @else
@@ -228,7 +229,7 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
                     // A name may end in a full stop ("Erik E."); the sentence must not add a second one.
                     $sentence = fn (string $text): string => preg_replace('/(?<=\S)\.\.(?=\s|$)/u', '.', $text);
                 @endphp
-                <div class="mt-[4vh]" data-test="share-result">
+                <div class="mt-[3vh]" data-test="share-result">
                     <p class="text-[length:var(--s-body)] font-bold break-words" data-test="share-outcome">
                         @switch($result['outcome'])
                             @case(ElectionOutcome::Complete)

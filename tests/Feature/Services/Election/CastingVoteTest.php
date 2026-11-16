@@ -260,6 +260,11 @@ it('refuses a casting vote that does not fit or comes at the wrong time', functi
 
             return fn () => castingVote($round, $board, [$a], '   ');
         },
+        'chair over 60 characters' => function () use ($board) {
+            [$round, [$a]] = evenSplitRound();
+
+            return fn () => castingVote($round, $board, [$a], str_repeat('ä', 61));
+        },
         'unauthorised' => function () use ($member) {
             [$round, [$a]] = evenSplitRound();
 
@@ -287,8 +292,18 @@ it('refuses a casting vote that does not fit or comes at the wrong time', functi
     ['foreign candidate', 'level in the tie'],
     ['not level (3-way, the third has no votes)', 'level in the tie'],
     ['no chair', 'must name the chair'],
+    ['chair over 60 characters', 'in at most 60 characters'],
     ['unauthorised', AuthorizationException::class],
 ]);
+
+it('records a chair name of exactly 60 characters, trimmed, for the share view', function () {
+    [$board] = electionBoard(1);
+    [$round, [$a]] = evenSplitRound();
+    $chair = 'Erika Magdalena Mustermann-Vorsitz von der Leyen-Schwarzwald';
+
+    expect(mb_strlen($chair))->toBe(RecordCastingVote::MAX_CHAIR_LENGTH)
+        ->and(castingVote($round, $board, [$a], "  {$chair}  ")->chair_name)->toBe($chair);
+});
 
 it('keeps a recorded casting vote as it is, and annulling the round voids it', function () {
     [$board] = electionBoard(1);

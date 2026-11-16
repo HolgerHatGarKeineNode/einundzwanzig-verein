@@ -33,7 +33,7 @@ class RecordCastingVote
 {
     use AuthorizesElectionActor;
 
-    public const MAX_CHAIR_LENGTH = 200;
+    public const MAX_CHAIR_LENGTH = 60;
 
     public function __construct(protected TallyRound $tally, protected ElectionAuditLog $audit) {}
 

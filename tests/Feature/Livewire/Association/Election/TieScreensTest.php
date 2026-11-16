@@ -190,6 +190,27 @@ it('takes the casting vote in the board dialog, with the tied counts, the count 
         ->and(tieAudit($election))->toBe(['casting_vote_recorded']);
 });
 
+it('refuses a chair name over 60 characters in the dialog with a German error, and takes one of 60', function () {
+    [, $election, $round, $ids] = tiedEvening();
+    $chair = 'Erika Magdalena Mustermann-Vorsitz von der Leyen-Schwarzwald';
+
+    $page = tieAdmin()
+        ->call('startCastingVote', $round->id)
+        ->assertSeeHtml('maxlength="60"')
+        ->set('castingCandidates', [$ids['alice']])
+        ->set('castingChair', $chair.'x')
+        ->call('recordCastingVote')
+        ->assertHasErrors(['castingChair' => 'max'])
+        ->assertSee('Der Name darf höchstens 60 Zeichen lang sein.');
+
+    expect(ElectionCastingVote::query()->where('election_round_id', $round->id)->exists())->toBeFalse();
+
+    $page->set('castingChair', $chair)->call('recordCastingVote')->assertHasNoErrors();
+
+    expect(ElectionCastingVote::query()->where('election_round_id', $round->id)->sole()->chair_name)->toBe($chair)
+        ->and(tieAudit($election))->toBe(['casting_vote_recorded']);
+});
+
 it('refuses the dialog for a round that is not tied, and for a member', function () {
     [, $election, $round, $ids] = tiedEvening();
     $other = openElectionRound(election: $election);
