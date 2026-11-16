@@ -10,6 +10,8 @@ use App\Support\NostrAuth;
 use App\Traits\NostrFetcherTrait;
 use Carbon\Carbon;
 use Flux\Flux;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\RateLimiter;
 use Livewire\Attributes\Locked;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -208,6 +210,35 @@ new class extends Component {
         $this->resolveCurrentPaymentEvent();
         $this->loadEvents();
         $this->listenForPayment();
+    }
+
+    /**
+     * Reads the member's own kind 10050 list from the profile relays again, so a
+     * member who just set up their DM inbox sees it without waiting for the board.
+     * Three tries a minute: each one dials every profile relay.
+     */
+    public function recheckDmInbox(): void
+    {
+        $pleb = NostrAuth::check()
+            ? EinundzwanzigPleb::query()->notErased()->where('pubkey', NostrAuth::pubkey())->first()
+            : null;
+
+        abort_unless($pleb instanceof EinundzwanzigPleb, 403);
+
+        $checked = RateLimiter::attempt("dm-inbox-check:{$pleb->id}", 3, fn (): int => Artisan::call('nostr:sync-dm-relays', ['--member' => $pleb->id]), 60);
+
+        if ($checked === false) {
+            Flux::toast(__('Bitte warte eine Minute, bevor du noch einmal prüfst.'), variant: 'warning');
+
+            return;
+        }
+
+        Flux::toast(
+            $pleb->dmRelays()->exists()
+                ? __('Dein Nostr-Postfach ist eingerichtet.')
+                : __('Wir haben kein Nostr-Postfach zu deinem Schlüssel gefunden.'),
+            variant: $pleb->dmRelays()->exists() ? 'success' : 'warning',
+        );
     }
 
     public function handleNostrLoggedOut(): void
@@ -725,6 +756,36 @@ new class extends Component {
                                 @endif
                             </div>
                         </div>
+                    </div>
+                </flux:card>
+
+                <flux:card data-test="dm-inbox-check">
+                    @php
+                        $dmInboxRelays = \App\Models\PlebDmRelay::query()->where('einundzwanzig_pleb_id', $currentPleb->id)->first()?->relays ?? [];
+                    @endphp
+                    <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div class="min-w-0">
+                            <h3 class="flex items-center gap-2 text-base font-semibold text-text-primary">
+                                @if ($dmInboxRelays)
+                                    <flux:icon.check-circle class="size-5 shrink-0 text-success" aria-hidden="true" />
+                                    {{ __('Dein Nostr-Postfach ist eingerichtet') }}
+                                @else
+                                    <flux:icon.exclamation-triangle class="size-5 shrink-0 text-warning" aria-hidden="true" />
+                                    {{ __('Kein Nostr-Postfach gefunden') }}
+                                @endif
+                            </h3>
+                            @if ($dmInboxRelays)
+                                <p class="mt-1 text-sm text-text-secondary">{{ __('Nachrichten des Vereins, etwa Einladungen zur Wahl, erreichen dich verschlüsselt über diese Relays:') }}</p>
+                                <ul class="mt-2 space-y-1" data-test="dm-inbox-relays">
+                                    @foreach ($dmInboxRelays as $relay)
+                                        <li><code class="break-all rounded bg-bg-elevated px-2 py-0.5 font-mono text-xs text-text-secondary">{{ $relay }}</code></li>
+                                    @endforeach
+                                </ul>
+                            @else
+                                <p class="mt-1 text-sm text-text-secondary">{{ __('Ohne Postfach erreichen dich keine Nachrichten des Vereins, auch keine Einladungen zur Wahl. Lege in deiner Nostr-App die Relays für Direktnachrichten fest (oft „DM-Relays“ oder „Messaging-Relays“ in den Einstellungen, z. B. in Amethyst, 0xchat oder Coracle) und prüfe dann hier noch einmal.') }}</p>
+                            @endif
+                        </div>
+                        <flux:button wire:click="recheckDmInbox" wire:loading.attr="disabled" wire:target="recheckDmInbox" icon="arrow-path" class="min-h-11 w-full shrink-0 sm:w-auto" data-test="dm-inbox-recheck">{{ __('Jetzt prüfen') }}</flux:button>
                     </div>
                 </flux:card>
             @endif

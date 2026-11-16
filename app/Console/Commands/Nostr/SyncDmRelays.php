@@ -35,7 +35,8 @@ use Illuminate\Support\Facades\DB;
 class SyncDmRelays extends Command
 {
     protected $signature = 'nostr:sync-dm-relays
-        {--dry-run : Read and count only; store nothing}';
+        {--dry-run : Read and count only; store nothing}
+        {--member= : Read only this member (id), for the member\'s own re-check}';
 
     protected $description = 'Read the members\' DM inbox relays (kind 10050, NIP-17) and store them';
 
@@ -59,7 +60,10 @@ class SyncDmRelays extends Command
             return self::FAILURE;
         }
 
-        $members = EinundzwanzigPleb::query()->notErased()->pluck('pubkey', 'id');
+        $members = EinundzwanzigPleb::query()
+            ->notErased()
+            ->when($this->option('member') !== null, fn ($query) => $query->whereKey((int) $this->option('member')))
+            ->pluck('pubkey', 'id');
 
         /** @var array<string, int> $memberIdByPubkey */
         $memberIdByPubkey = [];
@@ -243,7 +247,11 @@ class SyncDmRelays extends Command
             if ($complete) {
                 $listed = array_map(fn (string $pubkey): int => $memberIdByPubkey[$pubkey], array_keys($newest));
 
-                PlebDmRelay::query()->whereNotIn('einundzwanzig_pleb_id', $listed)->delete();
+                // Scoped to the members read: a one-member re-check must not drop everyone else's row.
+                PlebDmRelay::query()
+                    ->whereIn('einundzwanzig_pleb_id', array_values($memberIdByPubkey))
+                    ->whereNotIn('einundzwanzig_pleb_id', $listed)
+                    ->delete();
             }
         });
     }

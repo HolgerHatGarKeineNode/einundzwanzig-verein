@@ -81,7 +81,9 @@
                     <flux:navlist.item icon="paper-airplane" :href="route('association.messages.admin')"
                                        :current="request()->routeIs('association.messages.admin')"
                                        wire:navigate>{{ __('Nachrichten an Mitglieder') }}</flux:navlist.item>
-                    @php($boardInboxUnread = \App\Models\DmInboxMessage::query()->where('direction', \App\Models\DmInboxMessage::IN)->whereNull('read_at')->count())
+                    @php
+                        $boardInboxUnread = \App\Models\DmInboxMessage::query()->where('direction', \App\Models\DmInboxMessage::IN)->whereNull('read_at')->count();
+                    @endphp
                     <flux:navlist.item icon="inbox" :href="route('association.messages.inbox')"
                                        :current="request()->routeIs('association.messages.inbox')"
                                        :badge="$boardInboxUnread > 0 ? $boardInboxUnread : null"

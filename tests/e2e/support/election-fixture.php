@@ -32,6 +32,7 @@ use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Jobs\Dm\DispatchBulkDirectMessages;
 use App\Models\DmDelivery;
+use App\Models\DmInboxMessage;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
@@ -485,6 +486,19 @@ function e2eScenario(string $name, string $state): array
             }
 
             return [...$result, 'viewer' => $viewer, 'messages' => $messages];
+
+        case 'board-inbox':
+            // Members' replies in the board inbox: Ida (inbox relay set) wrote
+            // twice, Bernd (long name, no inbox relay) once with a long text.
+            $ida = e2eMember('Ida Imhof');
+            PlebDmRelay::query()->updateOrCreate(['einundzwanzig_pleb_id' => $ida['id']], ['relays' => ['wss://inbox.ida.example/'], 'event_id' => str_repeat('a', 64), 'event_created_at' => now()->getTimestamp()]);
+            PlebDmRelay::query()->where('einundzwanzig_pleb_id', $bernd['id'])->delete();
+
+            foreach ([[$ida, 'Danke für die Einladung!', 40], [$ida, 'Kann ich auch per Video teilnehmen?', 30], [$bernd, str_repeat('Ich habe eine längere Frage zur Kandidatur und zum Ablauf der Wahl im Frühjahr. ', 6), 20]] as [$author, $body, $minutesAgo]) {
+                DmInboxMessage::query()->create(['einundzwanzig_pleb_id' => $author['id'], 'direction' => DmInboxMessage::IN, 'body' => $body, 'sent_at' => now()->subMinutes($minutesAgo)]);
+            }
+
+            return [...$result, 'ida' => $ida];
 
         case 'measure':
             // Every page with content: a counted round with a result, an open
