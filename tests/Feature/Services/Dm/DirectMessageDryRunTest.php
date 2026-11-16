@@ -251,7 +251,9 @@ it('holds the start lock while it checks the repeat lock and creates the run', f
  * is frozen once before and once after a member votes: dry run, the start
  * the board confirms, and a scheduled reminder started by `dm:send-due`. All
  * three must be the same both times. tests/Unit/DirectMessageArchitectureTest.php
- * scans for such reads; this holds the outcome, however they are written.
+ * scans for such reads; this holds the frozen list, however they are written.
+ * It runs under Queue::fake(), so the fan-out and the sends never run here:
+ * DirectMessageSendPathBallotSecrecyTest holds those (jury gate j2f, R7).
  */
 it('freezes the same recipients whether or not a member already voted', function (DmAudience $audience) {
     Queue::fake();
