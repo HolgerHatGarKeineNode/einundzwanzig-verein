@@ -73,7 +73,7 @@ it('writes the manifest of a round when it is sealed, with every field written o
 
     expect($manifest->hash)->toBe(hash('sha256', $manifest->body))
         ->and(json_decode($manifest->body, true))->toBe([
-            'version' => 3,
+            'version' => 4,
             'election' => $round->election_event_id,
             'round' => $round->id,
             'counting_rule' => 'most_votes',
@@ -508,4 +508,31 @@ it('still names a forged vote of a voter who erased their data', function () {
 
     expect($status)->toBe(1)
         ->and($output)->toContain('FAIL vote '.$vote->id.' event '.$events[0]['id'].': foreign_signer');
+});
+
+/*
+ * Security jury I1: election:verify never asked whether a signer was on the
+ * round's roll. A vote of a member whose roll entry was swapped for someone
+ * else's (same roll size, so the manifest still matches) passed every check.
+ * Mutation that must turn this red: drop the roll lookup from
+ * `VerifyRound::failedChecks()`.
+ */
+it('flags a vote whose signer is not on the roll of the round', function () {
+    [$round] = manifestRound();
+
+    [$status] = verifyRound($round);
+    expect($status)->toBe(0);
+
+    $vote = DB::table('election_votes')->where('election_round_id', $round->id)->orderBy('id')->first();
+    DB::table('election_roll_entries')
+        ->where('election_round_id', $round->id)
+        ->where('einundzwanzig_pleb_id', $vote->einundzwanzig_pleb_id)
+        ->update(['einundzwanzig_pleb_id' => EinundzwanzigPleb::factory()->active()->create()->id]);
+
+    [$status, $output] = verifyRound($round);
+
+    expect($status)->toBe(1)
+        ->and($output)->toContain('FAIL vote '.$vote->id.' event '.$vote->event_id.': not_on_roll')
+        ->toContain('MISMATCH: 1 vote(s) signed by members who are not on the roll of this round.')
+        ->not->toContain('the vote table no longer gives the manifest');
 });

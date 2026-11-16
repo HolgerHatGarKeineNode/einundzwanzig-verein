@@ -65,13 +65,22 @@ class ElectionCastingVote extends Model
     /**
      * The decision for the tie of `$tied` over `$tiedSeats` seats.
      *
+     * `RecordCastingVote` stores a list of candidate ids. Anything else (null,
+     * a string, an object, nested values) is not read as a decision for
+     * nobody, which on a yes = no tie would be a valid „nein“: the decision
+     * is marked unreadable and never fits, so the tie stays undecided and
+     * `election:verify` reports it.
+     *
      * @param  list<int>  $tied
      */
     public function decision(array $tied, int $tiedSeats): CastingDecision
     {
-        $candidates = array_map(fn (mixed $id): int => (int) $id, is_array($this->candidate_ids) ? array_values($this->candidate_ids) : []);
+        $stored = $this->candidate_ids;
+        $readable = is_array($stored) && array_is_list($stored)
+            && array_all($stored, fn (mixed $id): bool => is_int($id) || (is_string($id) && ctype_digit($id)));
+        $candidates = $readable ? array_map(fn (int|string $id): int => (int) $id, $stored) : [];
         sort($candidates);
 
-        return new CastingDecision($candidates, $tied, $tiedSeats, (string) $this->chair_name, $this->note, $this->created_at);
+        return new CastingDecision($candidates, $tied, $tiedSeats, (string) $this->chair_name, $this->note, $this->created_at, $readable);
     }
 }

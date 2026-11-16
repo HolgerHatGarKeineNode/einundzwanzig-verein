@@ -17,6 +17,7 @@ use App\Models\ElectionRound;
 use App\Services\Election\Concerns\AuthorizesElectionActor;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
+use UnexpectedValueException;
 
 /**
  * Set up the run-off of a sealed round as a draft round of its own, which
@@ -52,13 +53,20 @@ class CreateRunOff
      * tie decided by casting vote included. `needs_resolution` is true for a
      * tie: only the assembly can resolve that run-off.
      *
+     * A round whose stored votes do not fit it has no count, so nothing is
+     * proposed from it; `handle()` refuses its run-off outright.
+     *
      * @return array{candidates: list<int>, seats: int, needs_resolution: bool}
      *
      * @throws ElectionRoundStateException when the round is not sealed
      */
     public function proposal(ElectionRound $round): array
     {
-        $result = $this->tally->effective($round);
+        try {
+            $result = $this->tally->effective($round);
+        } catch (UnexpectedValueException) {
+            return ['candidates' => [], 'seats' => 0, 'needs_resolution' => false];
+        }
 
         if ($result->outcome === ElectionOutcome::Tie) {
             return ['candidates' => $result->tied, 'seats' => $result->tiedSeats, 'needs_resolution' => true];
@@ -87,7 +95,7 @@ class CreateRunOff
      *
      * @throws AuthorizationException
      * @throws ElectionRoundStateException when the round is not sealed
-     * @throws ElectionActionRefusedException when no run-off is needed, one exists already, the tie was decided by casting vote or the assembly's resolution is missing
+     * @throws ElectionActionRefusedException when no run-off is needed, one exists already, the tie was decided by casting vote, the assembly's resolution is missing or the votes cannot be counted
      */
     public function handle(ElectionRound $round, EinundzwanzigPleb $actor, bool $resolvedByAssembly = false): ElectionRound
     {
@@ -107,6 +115,12 @@ class CreateRunOff
 
             if (ElectionCastingVote::query()->where('election_round_id', $round->getKey())->exists()) {
                 throw new ElectionActionRefusedException('The tie of this round has been decided by casting vote.');
+            }
+
+            try {
+                $this->tally->handle($round);
+            } catch (UnexpectedValueException) {
+                throw new ElectionActionRefusedException('The stored votes of this round cannot be counted; check it with election:verify.');
             }
 
             ['candidates' => $candidateIds, 'seats' => $seats, 'needs_resolution' => $needsResolution] = $this->proposal($round);

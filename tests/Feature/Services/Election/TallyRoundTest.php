@@ -6,12 +6,16 @@ use App\Enums\ElectionOutcome;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
+use App\Models\ElectionManifest;
 use App\Models\ElectionRound;
 use App\Services\Election\CloseRound;
 use App\Services\Election\CreateRunOff;
 use App\Services\Election\OpenRound;
+use App\Services\Election\RoundReport;
 use App\Services\Election\TallyRound;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 
 require_once __DIR__.'/helpers.php';
 
@@ -310,3 +314,38 @@ it('checks the result of a run-off placed at the end before a later draft with i
     'elected in the run-off' => ['elected', 'A candidate of this round has been elected in an earlier round of the election.'],
     'level again' => ['level again', 'A candidate of this round is level in an undecided tie of an earlier round of the election.'],
 ]);
+
+/*
+ * Board jury H2: a rejected and a withdrawn candidacy showed as „0 Ja, 0 Nein“
+ * in every result, though neither was on the ballot. Mutation that must turn
+ * this red: count over every candidacy of the round again.
+ */
+it('counts exactly the candidates who were on the ballot, and refuses a vote for one who was not', function () {
+    $voters = [electionVoter(), electionVoter()];
+    $round = draftElectionRound(['counting_rule' => ElectionCountingRule::YesNoPerCandidate], candidates: 1);
+    $rejected = ElectionCandidate::factory()->create(['election_round_id' => $round->getKey(), 'status' => ElectionCandidateStatus::Rejected]);
+    $withdrawn = ElectionCandidate::factory()->create(['election_round_id' => $round->getKey(), 'status' => ElectionCandidateStatus::Withdrawn]);
+    $onBallot = (int) $round->candidates()->where('status', ElectionCandidateStatus::Approved)->value('id');
+
+    $round = app(OpenRound::class)->handle($round);
+    castElectionBallot($round, $voters[0], [$onBallot => 'yes']);
+    castElectionBallot($round, $voters[1], [$onBallot => 'no']);
+    $round = app(CloseRound::class)->handle($round);
+
+    $manifest = json_decode(ElectionManifest::query()->where('election_round_id', $round->getKey())->value('body'), true);
+    $report = app(RoundReport::class)->of($round->fresh());
+
+    expect(array_keys(app(TallyRound::class)->handle($round)->counts))->toBe([$onBallot])
+        ->and($manifest['candidates'])->toBe([$onBallot])
+        ->and(array_column($report['result']['rows'], 'candidate_id'))->toBe([$onBallot])
+        ->and(Artisan::call('election:verify', ['round' => $round->getKey()]))->toBe(0);
+
+    // A stored vote for a candidacy that was not on the ballot is not counted
+    // as a vote for nobody, nor dropped: the round has no count.
+    $vote = DB::table('election_votes')->where('election_round_id', $round->getKey())->orderBy('id')->first();
+    DB::table('election_votes')->where('id', $vote->id)->update(['choices' => json_encode([$rejected->getKey() => 'yes'])]);
+
+    expect(fn () => app(TallyRound::class)->handle($round))->toThrow(UnexpectedValueException::class)
+        ->and(Artisan::call('election:verify', ['round' => $round->getKey()]))->toBe(1)
+        ->and($withdrawn->fresh()->status)->toBe(ElectionCandidateStatus::Withdrawn);
+});

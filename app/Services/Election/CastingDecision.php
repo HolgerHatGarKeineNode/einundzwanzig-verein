@@ -16,6 +16,7 @@ final readonly class CastingDecision
     /**
      * @param  list<int>  $candidates  candidate ids the chair decided for, ascending; empty when the chair said no to every yes = no tie
      * @param  list<int>  $tied  the candidate ids that were level, ascending
+     * @param  bool  $readable  false when the stored row held no list of candidate ids; such a decision never fits
      */
     public function __construct(
         public array $candidates,
@@ -24,10 +25,14 @@ final readonly class CastingDecision
         public string $chair,
         public ?string $note,
         public CarbonInterface $recordedAt,
+        public bool $readable = true,
     ) {}
 
     /**
      * Does this decision answer the tie of `$result`?
+     *
+     * Never a decision whose stored row could not be read, and never one
+     * naming a candidate who was not level or the same candidate twice.
      *
      *  - between candidates: exactly as many of the tied as there are tied seats;
      *  - yes = no: any of the tied, up to the tied seats, none included — the
@@ -35,7 +40,7 @@ final readonly class CastingDecision
      */
     public function fits(TallyResult $result): bool
     {
-        if ($result->outcome !== ElectionOutcome::Tie || $result->tieKind === null) {
+        if (! $this->readable || $result->outcome !== ElectionOutcome::Tie || $result->tieKind === null) {
             return false;
         }
 

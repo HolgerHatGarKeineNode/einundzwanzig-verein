@@ -110,3 +110,55 @@ test('the board dry-runs, sends, sees the run in the history, and a repeat is sk
     await page.locator('[data-test="tab-history"]').click()
     await expect(runs).toHaveCount(1)
 })
+
+/**
+ * Board jury D1: at 390 px the native audience select cut „Alle Aktiv- und
+ * Ehrenmitglieder“ to „…Ehrenmitgliede“ (248 px of text in a 240 px content
+ * box). A native select clips its value without an ellipsis, so the board
+ * would read a truncated audience. Every option is measured with the
+ * select's own computed font, after the web font has loaded.
+ */
+test('every audience fits the native select at phone width', async ({ page }) => {
+    const data = scenario('dm')
+
+    // The login button sits in the desktop header; log in there, then load
+    // the DM centre afresh at phone width.
+    await login(page, data.board.secret, '/association/messages/admin')
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.reload()
+    await page.locator('[data-test="tab-compose"]').click()
+    await expect(page.locator('[data-test="tab-compose"]')).toHaveAttribute('aria-current', 'page')
+
+    const select = page.locator('select[data-test="compose-audience"], [data-test="compose-audience"] select')
+    await expect(select).toBeVisible()
+
+    const measured = await select.evaluate(async (element) => {
+        await document.fonts.ready
+        const style = getComputedStyle(element)
+        const px = (value) => parseFloat(value) || 0
+        const contentWidth = element.getBoundingClientRect().width
+            - px(style.paddingLeft) - px(style.paddingRight)
+            - px(style.borderLeftWidth) - px(style.borderRightWidth)
+        const context = document.createElement('canvas').getContext('2d')
+        context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+
+        return {
+            font: context.font,
+            fontLoaded: [...document.fonts].some((face) => face.family.replace(/"/g, '') === 'Inconsolata' && face.status === 'loaded'),
+            contentWidth,
+            options: [...element.options].map((option) => ({ text: option.text.trim(), width: context.measureText(option.text.trim()).width })),
+        }
+    })
+
+    // Measured with the fallback font, the widths would say nothing.
+    expect(measured.fontLoaded, measured.font).toBe(true)
+    expect(measured.options.length).toBeGreaterThan(0)
+    console.log(`compose-audience at 390 px: content ${measured.contentWidth} px; ${measured.options.map((o) => `${o.text} = ${o.width} px`).join('; ')}`)
+
+    // Inconsolata advances 8 px per character at 16 px; canvas reports
+    // 8.0000153 (240.00046 for 30 characters). The 0.01 px allowance is that
+    // rounding, not room: one more character is 8 px.
+    for (const option of measured.options) {
+        expect(option.width, `„${option.text}“ in a ${measured.contentWidth} px select`).toBeLessThanOrEqual(measured.contentWidth + 0.01)
+    }
+})
