@@ -10,7 +10,10 @@ use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
 use App\Services\Dm\DirectMessageAudience;
 use App\Services\Election\ElectoralRoll;
+use App\Services\Election\OpenRound;
 use App\Services\MembershipService;
+
+require_once __DIR__.'/../Election/helpers.php';
 
 /**
  * @return list<int>
@@ -103,6 +106,33 @@ it('resolves the board from the configured board list', function () {
 
     expect(audienceIds(DmAudience::Board))->toBe([$board->id])
         ->and(app(DirectMessageAudience::class)->describe(DmAudience::Board))->toBe('1 Vorstandsmitglied');
+});
+
+/*
+ * DoD 464 / E20, by behaviour: the direct message code cannot tell who voted,
+ * so a member who already voted is addressed like everyone else. Jury run 2
+ * (K12) filtered the entitled voters by
+ * `whereNotIn('id', ElectionVote::query()->select('einundzwanzig_pleb_id'))`
+ * and the whole suite stayed green. tests/Unit/DirectMessageArchitectureTest.php
+ * guards the names; this guards the outcome, however it is written.
+ */
+it('keeps members who already voted in every audience they belong to', function () {
+    $voted = electionVoter();
+    $notYet = electionVoter();
+    $board = EinundzwanzigPleb::factory()->boardMember()->active()->withPaidYear((int) now()->year)->create();
+    $round = draftElectionRound(['seats' => 1]);
+    $round->candidates()->orderBy('id')->firstOrFail()->update(['einundzwanzig_pleb_id' => $voted->id]);
+    $round = app(OpenRound::class)->handle($round);
+    $election = $round->election;
+
+    castElectionBallot($round, $voted);
+    castElectionBallot($round, $board);
+
+    expect(electionVoteCount($round))->toBe(2)
+        ->and(audienceIds(DmAudience::EntitledVoters, $election))->toContain($voted->id, $notYet->id, $board->id)
+        ->and(audienceIds(DmAudience::Members))->toContain($voted->id, $notYet->id, $board->id)
+        ->and(audienceIds(DmAudience::Candidates, $election))->toContain($voted->id)
+        ->and(audienceIds(DmAudience::Board))->toBe([$board->id]);
 });
 
 it('refuses an election audience without an election instead of resolving it to everyone', function () {
