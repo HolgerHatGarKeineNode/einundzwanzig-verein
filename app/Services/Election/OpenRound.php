@@ -29,7 +29,7 @@ class OpenRound
      */
     public const LIVE_MAX_MINUTES = 60;
 
-    public function __construct(protected ElectoralRoll $roll, protected TallyRound $tally) {}
+    public function __construct(protected ElectoralRoll $roll, protected TallyRound $tally, protected CreateRunOff $runOffs) {}
 
     /**
      * @throws ElectionRoundStateException
@@ -160,6 +160,11 @@ class OpenRound
      *    (`TallyRound::effective()`): once the chair's casting vote is
      *    recorded the tie is decided, whom it elected counts as elected and
      *    the others are free;
+     *  - among the best placed of the contest's decisive result when that is
+     *    a single-majority round without a majority whose run-off has not
+     *    been created yet (`CreateRunOff::proposal()`) → refused, the seat
+     *    is still to be decided between them. Once the run-off exists it is
+     *    an unsealed round of the contest and the next rule takes over;
      *  - standing in a round of that contest that is not sealed (a draft,
      *    open, or merely over by the clock) → refused, nobody can say yet
      *    whether that candidate is elected there.
@@ -253,6 +258,14 @@ class OpenRound
 
         if ($decisive !== null && ($tied = array_intersect($this->sharedCandidates($decisive, $standing), $this->tally->effective($decisive)->tied)) !== []) {
             throw $this->blocked('A candidate of this round is level in an undecided tie of an earlier round of the election.', $decisive, $tied);
+        }
+
+        // A seat without a majority is decided by a run-off between the best
+        // placed; until that run-off exists, they are as undecided as a tie.
+        if ($decisive !== null
+            && ! $contest->contains(fn (ElectionRound $other): bool => (int) $other->parent_round_id === (int) $decisive->getKey())
+            && ($owed = array_intersect($this->sharedCandidates($decisive, $standing), $this->runOffs->proposal($decisive)['candidates'])) !== []) {
+            throw $this->blocked('A candidate of this round is among the best placed of an earlier round of the election without a majority, whose second ballot is owed; create that second ballot first.', $decisive, $owed);
         }
 
         // An unsealed round only counts the candidacies still standing there.
