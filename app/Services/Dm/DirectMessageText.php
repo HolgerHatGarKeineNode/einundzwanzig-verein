@@ -100,6 +100,13 @@ final class DirectMessageText
      */
     public function footer(): string
     {
+        if (config('einundzwanzig.config.dm_inbox_relays', []) !== []) {
+            $contact = trim((string) config('einundzwanzig.config.dm_reply_contact'));
+
+            return "--\nDiese Nachricht kommt vom Verein EINUNDZWANZIG. Du kannst direkt antworten: Der Vorstand liest Antworten im Vereinsportal."
+                .($contact !== '' ? ' Oder schreib an: '.$contact : '');
+        }
+
         return "--\nDiese Nachricht kommt vom Verein EINUNDZWANZIG. Antworten an dieses Konto liest niemand. "
             .'Fragen bitte an: '.$this->replyContact();
     }

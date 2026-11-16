@@ -54,6 +54,7 @@
         <!-- Kein Testlauf baut echte Verbindungen nach draussen auf. Leer =
              fetchProfile() verbindet gar nicht erst. -->
         <env name="NOSTR_PROFILE_RELAYS" value=""/>
+        <env name="NOSTR_DM_INBOX_RELAYS" value=""/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>

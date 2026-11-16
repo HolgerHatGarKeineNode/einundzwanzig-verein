@@ -161,6 +161,9 @@ const DM_ALLOWED_APP_CLASSES = [
     'App\Services\Election\ElectoralRoll',
     'App\Services\Nostr\DirectMessageNotBuildable',
     'App\Services\Nostr\DirectMessageSigner',
+    // The board inbox (2026-11-16): opens members' replies and reads the key's pubkey; neither touches votes.
+    'App\Services\Nostr\GiftWrapOpener',
+    'App\Services\Nostr\NotificationKey',
     'App\Services\Nostr\NotificationKeyUnavailable',
     'App\Services\Nostr\RelayPublishResult',
     'App\Services\Nostr\RelayPublishStatus',
