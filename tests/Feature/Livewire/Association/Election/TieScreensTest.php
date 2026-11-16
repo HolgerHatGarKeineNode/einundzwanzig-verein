@@ -288,8 +288,44 @@ it('gives no per-row verdict in the void result of an annulled round, but keeps 
         ->toContain('2 Stimmen')
         ->not->toContain('gewählt');
 
+    // Statutes jury L3: never „gewählt ist“ for an annulled round, in either form.
+    expect($html)->toContain('Ausgezähltes Ergebnis (ungültig): die Zählung hätte Alice Ambrosius ergeben')
+        ->not->toContain('gewählt ist');
+
     expect(tieProtocol($election))
         ->toContain('Alice Ambrosius: 2 Stimmen')
         ->not->toContain('Alice Ambrosius: 2 Stimmen, gewählt')
-        ->toContain('Ausgezähltes Ergebnis (ungültig): gewählt ist Alice Ambrosius');
+        ->toContain('Ausgezähltes Ergebnis (ungültig): die Zählung hätte Alice Ambrosius ergeben')
+        ->not->toContain('gewählt ist');
+});
+
+/*
+ * Statutes jury M1: the minutes named the association „EINUNDZWANZIG e. V.“,
+ * a German registered association. It is a Verein under Art. 60 ff. ZGB
+ * named „EINUNDZWANZIG“ (statutes Art. 1).
+ */
+it('names the association without a legal form it does not have in the minutes', function () {
+    [, $election] = tiedEvening();
+
+    $this->get(route('association.election.admin.protocol', $election))->assertOk()
+        ->assertSee('Verein EINUNDZWANZIG, Beschlussprotokoll')
+        ->assertDontSee('e. V.');
+});
+
+/*
+ * Member jury M1: a member page already open kept saying the chair would
+ * decide, three polls after the casting vote was recorded, because the poll
+ * fingerprint left the casting vote out. Mutation that must turn this red:
+ * drop the casting vote from `currentFingerprint()`.
+ */
+it('brings the casting vote to a member page that is already open within one poll', function () {
+    [$board, , $round, $ids] = tiedEvening();
+    $page = tieMemberPage()->assertDontSeeHtml('data-test="casting-vote-'.$round->id.'"');
+    $before = $page->get('fingerprint');
+
+    app(RecordCastingVote::class)->handle($round, $board, [$ids['alice']], 'Erika Mustermann');
+    $page->call('syncRounds');
+
+    expect($page->get('fingerprint'))->not->toBe($before);
+    $page->assertSeeHtml('data-test="casting-vote-'.$round->id.'"')->assertSee('Erika Mustermann');
 });

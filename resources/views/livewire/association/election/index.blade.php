@@ -614,7 +614,8 @@ new class extends Component
             $this->election?->getKey(),
             $this->phase,
             collect($this->standing)->map(fn (array $standing): array => [$standing['state']->value, $standing['onRoll'], $standing['eventId'] !== null])->all(),
-            array_keys($this->results),
+            // The effective result, so a recorded casting vote re-renders too.
+            collect($this->results)->map(fn (TallyResult $result): array => [$result->outcome->value, $result->elected, $result->castingVote?->chair])->all(),
             [$this->meeting['at']?->getTimestamp(), $this->meeting['url']],
             $this->allRounds->map(fn (ElectionRound $round): array => [$round->getKey(), $round->candidates->count()])->all(),
         ], JSON_THROW_ON_ERROR));

@@ -74,7 +74,7 @@ final class DirectMessageAudience
 
         return match ($audience) {
             DmAudience::Members => trans_choice(
-                ':count Mitglied mit Stimmrecht (aktiv oder Ehrenmitglied)|:count Mitglieder mit Stimmrecht (aktiv oder Ehrenmitglied)',
+                ':count Aktiv- oder Ehrenmitglied, Beitrag bezahlt oder nicht|:count Aktiv- und Ehrenmitglieder, Beitrag bezahlt oder nicht',
                 $count,
             ),
             DmAudience::EntitledVoters => trans_choice(

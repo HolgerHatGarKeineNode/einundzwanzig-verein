@@ -12,6 +12,7 @@ use App\Models\ElectionRound;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use UnexpectedValueException;
 
 /**
  * Open a draft round: freeze what is voted on and when, and write the
@@ -29,7 +30,7 @@ class OpenRound
      */
     public const LIVE_MAX_MINUTES = 60;
 
-    public function __construct(protected ElectoralRoll $roll, protected TallyRound $tally) {}
+    public function __construct(protected ElectoralRoll $roll, protected TallyRound $tally, protected CreateRunOff $runOffs) {}
 
     /**
      * @throws ElectionRoundStateException
@@ -160,6 +161,11 @@ class OpenRound
      *    (`TallyRound::effective()`): once the chair's casting vote is
      *    recorded the tie is decided, whom it elected counts as elected and
      *    the others are free;
+     *  - among the best placed of the contest's decisive result when that is
+     *    a single-majority round without a majority whose run-off has not
+     *    been created yet (`CreateRunOff::proposal()`) → refused, the seat
+     *    is still to be decided between them. Once the run-off exists it is
+     *    an unsealed round of the contest and the next rule takes over;
      *  - standing in a round of that contest that is not sealed (a draft,
      *    open, or merely over by the clock) → refused, nobody can say yet
      *    whether that candidate is elected there.
@@ -196,7 +202,7 @@ class OpenRound
         $root = $chain[0];
 
         foreach (array_slice($chain, 0, -1) as $ancestor) {
-            if ($ancestor->isSealed() && ($elected = array_intersect($this->sharedCandidates($ancestor, $standing), $this->tally->effective($ancestor)->elected)) !== []) {
+            if ($ancestor->isSealed() && ($shared = $this->sharedCandidates($ancestor, $standing)) !== [] && ($elected = array_intersect($shared, $this->resultFor($ancestor, $shared)->elected)) !== []) {
                 throw $this->blocked('A candidate of this round has been elected in an earlier round of the election.', $ancestor, $elected);
             }
         }
@@ -211,7 +217,7 @@ class OpenRound
 
         // Nobody is elected twice, whatever the order of the contests.
         foreach ($otherContests->flatten(1)->filter(fn (ElectionRound $other): bool => $other->isSealed()) as $other) {
-            if (($elected = array_intersect($this->sharedCandidates($other, $standing), $this->tally->effective($other)->elected)) !== []) {
+            if (($shared = $this->sharedCandidates($other, $standing)) !== [] && ($elected = array_intersect($shared, $this->resultFor($other, $shared)->elected)) !== []) {
                 throw $this->blocked('A candidate of this round has been elected in an earlier round of the election.', $other, $elected);
             }
         }
@@ -241,7 +247,7 @@ class OpenRound
         }
 
         foreach ($sharing->filter(fn (ElectionRound $other): bool => $other->isSealed()) as $other) {
-            if (($elected = array_intersect($this->sharedCandidates($other, $standing), $this->tally->effective($other)->elected)) !== []) {
+            if (($elected = array_intersect($shared = $this->sharedCandidates($other, $standing), $this->resultFor($other, $shared)->elected)) !== []) {
                 throw $this->blocked('A candidate of this round has been elected in an earlier round of the election.', $other, $elected);
             }
         }
@@ -251,8 +257,16 @@ class OpenRound
             ->sortByDesc(fn (ElectionRound $other): int => count($this->chainOf($other, $rounds)))
             ->first();
 
-        if ($decisive !== null && ($tied = array_intersect($this->sharedCandidates($decisive, $standing), $this->tally->effective($decisive)->tied)) !== []) {
+        if ($decisive !== null && ($shared = $this->sharedCandidates($decisive, $standing)) !== [] && ($tied = array_intersect($shared, $this->resultFor($decisive, $shared)->tied)) !== []) {
             throw $this->blocked('A candidate of this round is level in an undecided tie of an earlier round of the election.', $decisive, $tied);
+        }
+
+        // A seat without a majority is decided by a run-off between the best
+        // placed; until that run-off exists, they are as undecided as a tie.
+        if ($decisive !== null
+            && ! $contest->contains(fn (ElectionRound $other): bool => (int) $other->parent_round_id === (int) $decisive->getKey())
+            && ($owed = array_intersect($this->sharedCandidates($decisive, $standing), $this->runOffs->proposal($decisive)['candidates'])) !== []) {
+            throw $this->blocked('A candidate of this round is among the best placed of an earlier round of the election without a majority, whose second ballot is owed; create that second ballot first.', $decisive, $owed);
         }
 
         // An unsealed round only counts the candidacies still standing there.
@@ -260,6 +274,28 @@ class OpenRound
 
         if ($unsealed !== null) {
             throw $this->blocked('A candidate of this round also stands in an earlier round of the election that is not sealed yet.', $unsealed, $this->sharedCandidates($unsealed, $standing, standingOnly: true));
+        }
+    }
+
+    /**
+     * The effective result of `$other`, a sealed round that shares the
+     * candidates `$shared` with the round to open.
+     *
+     * A round whose stored votes do not fit it cannot say whether these
+     * candidates are elected there, so the round to open is refused, naming
+     * the first of them — never opened on a guess. A sealed round that shares
+     * nobody is not counted here at all, so it holds back no other round.
+     *
+     * @param  array<int, int>  $shared
+     *
+     * @throws ElectionCandidateBlockedException
+     */
+    protected function resultFor(ElectionRound $other, array $shared): TallyResult
+    {
+        try {
+            return $this->tally->effective($other);
+        } catch (UnexpectedValueException) {
+            throw $this->blocked('A candidate of this round stands in an earlier round of the election whose stored votes cannot be counted; check it with election:verify.', $other, $shared);
         }
     }
 

@@ -15,6 +15,7 @@ use App\Models\ElectionRound;
 use App\Models\MemberProposal;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
+use UnexpectedValueException;
 
 /**
  * What the board's live control, the share view and the minutes show about
@@ -33,11 +34,18 @@ use Illuminate\Support\Collection;
  * record as `void_result` (jury run 1, F3): the minutes show it, marked as
  * not valid. Nothing else reads it.
  *
+ * A sealed or annulled-after-count round whose stored votes do not fit the
+ * round (a corrupted or hand-edited row, `TallyRound::count()` refuses it)
+ * has no result and no run-off proposal: `unreadable` is true and the
+ * screens say so and point to `election:verify`. The count stays refused;
+ * only this round is affected, every other round of the election reports
+ * as usual (security jury L1).
+ *
  * @phpstan-type ResultRow array{candidate_id: int, name: string, for: int, yes: int, no: int, elected: bool, tied: bool, by_casting_vote: bool}
  * @phpstan-type CastingVote array{chair: string, note: string|null, elected: list<string>, tied: list<string>, tied_seats: int, recorded_at: CarbonInterface}
  * @phpstan-type Result array{outcome: ElectionOutcome, blank: int, tied_seats: int, tie_kind: ElectionTieKind|null, casting_vote: CastingVote|null, rows: list<ResultRow>}
  * @phpstan-type Manifest array{hash: string, intact: bool}
- * @phpstan-type Report array{round: ElectionRound, state: ElectionRoundState, sealed: bool, over_by_clock: bool, roll: int, cast: int, candidates: list<string>, result: Result|null, manifest: Manifest|null, void_result: array{result: Result, manifest: Manifest|null}|null, reason: string|null, run_off: array{candidates: list<string>, seats: int, needs_resolution: bool}|null, has_run_off: bool, run_off_resolved: bool}
+ * @phpstan-type Report array{round: ElectionRound, state: ElectionRoundState, sealed: bool, over_by_clock: bool, roll: int, cast: int, candidates: list<string>, result: Result|null, manifest: Manifest|null, void_result: array{result: Result, manifest: Manifest|null}|null, unreadable: bool, reason: string|null, run_off: array{candidates: list<string>, seats: int, needs_resolution: bool}|null, has_run_off: bool, run_off_resolved: bool}
  */
 class RoundReport
 {
@@ -82,21 +90,29 @@ class RoundReport
         $runOff = null;
         $voidResult = null;
         $tiedRaw = false;
+        $unreadable = false;
 
         if ($sealed) {
-            $effective = $this->tally->effective($round);
-            $tiedRaw = $effective->outcome === ElectionOutcome::Tie || $effective->castingVote !== null;
-            $result = $this->resultOf($effective, $names);
             $manifest = $this->manifestOf($round);
 
-            $proposal = $this->runOffs->proposal($round);
+            try {
+                $effective = $this->tally->effective($round);
+                $proposal = $this->runOffs->proposal($round);
+            } catch (UnexpectedValueException) {
+                $unreadable = true;
+            }
 
-            if ($proposal['candidates'] !== []) {
-                $runOff = [
-                    'candidates' => array_map(fn (int $id): string => $names->get($id, ''), $proposal['candidates']),
-                    'seats' => $proposal['seats'],
-                    'needs_resolution' => $proposal['needs_resolution'],
-                ];
+            if (! $unreadable) {
+                $tiedRaw = $effective->outcome === ElectionOutcome::Tie || $effective->castingVote !== null;
+                $result = $this->resultOf($effective, $names);
+
+                if ($proposal['candidates'] !== []) {
+                    $runOff = [
+                        'candidates' => array_map(fn (int $id): string => $names->get($id, ''), $proposal['candidates']),
+                        'seats' => $proposal['seats'],
+                        'needs_resolution' => $proposal['needs_resolution'],
+                    ];
+                }
             }
         } elseif ($round->closed_at !== null && $round->annulled_at !== null) {
             try {
@@ -104,8 +120,8 @@ class RoundReport
                     'result' => $this->resultOf($this->tally->count($round, $round->votes()->pluck('choices')->all()), $names),
                     'manifest' => $this->manifestOf($round, annulled: true),
                 ];
-            } catch (\UnexpectedValueException) {
-                $voidResult = null;
+            } catch (UnexpectedValueException) {
+                $unreadable = true;
             }
         }
 
@@ -127,6 +143,8 @@ class RoundReport
             'result' => $result,
             'manifest' => $manifest,
             'void_result' => $voidResult,
+            // The stored votes do not fit the round: no result, run `election:verify`.
+            'unreadable' => $unreadable,
             'reason' => $this->reasonOf($round),
             'run_off' => $runOff,
             'has_run_off' => $hasRunOff,
