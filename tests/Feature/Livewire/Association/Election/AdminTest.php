@@ -307,6 +307,8 @@ it('rejects and withdraws a candidacy with a reason that goes into the audit log
 });
 
 it('shows each entitled member with the reason and who signed in since the announcement', function () {
+    // 23:30 UTC is already the next day in the display timezone.
+    $this->travelTo(now()->setTime(23, 30));
     loggedInBoard();
     $election = Election::factory()->create(['announced_at' => now()->subDays(3)]);
     draftElectionRound(candidates: 0, election: $election);
@@ -319,7 +321,7 @@ it('shows each entitled member with the reason and who signed in since the annou
         ->assertSee('3 von 4 Aktiv- und Ehrenmitgliedern sind wahlberechtigt.')
         ->assertSee('Davon hat sich eine Person seit der Ankündigung angemeldet.')
         ->assertSee('Aktivmitglied, Beitrag bezahlt')
-        ->assertSee('Ja, '.now()->subDay()->format('d.m.Y'))
+        ->assertSee('Ja, '.now()->subDay()->setTimezone(config('app.display_timezone'))->format('d.m.Y'))
         ->assertSee('Beitrag '.now()->year.' fehlt');
 });
 
