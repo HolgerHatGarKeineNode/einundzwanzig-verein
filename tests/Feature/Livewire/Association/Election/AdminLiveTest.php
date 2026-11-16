@@ -1134,3 +1134,37 @@ it('shows a round with an unreadable count as such and renders every other round
         ->and($refusal->memberId)->toBe($brokenMember)
         ->and(fn () => app(CreateRunOff::class)->handle($broken->fresh(), $board))->toThrow(ElectionActionRefusedException::class, 'cannot be counted');
 });
+
+/*
+ * Security jury L1, annulled branch: a round counted, then annulled, keeps
+ * its void count in the minutes. With a corrupted vote row that count is
+ * refused like any other, and the minutes say so instead of showing no
+ * result at all. Mutation that must turn this red: let `RoundReport::of()`
+ * set `$voidResult = null` instead of `$unreadable = true` when the void
+ * count is refused.
+ */
+it('marks an annulled round with an unreadable count as unreadable in the minutes', function () {
+    $board = liveBoard();
+    $election = Election::factory()->announced()->create(['name' => 'Wahl mit annulliertem Wahlgang']);
+    $voter = electionVoter();
+    $annulled = openElectionRound(['title' => 'Präsidium', 'position' => 1], election: $election);
+    castElectionBallot($annulled, $voter, [$annulled->candidates()->value('id') => 'for']);
+    app(CloseRound::class)->handle($annulled);
+    app(ElectionStewardship::class)->annul($annulled->fresh(), $board, 'Falsche Liste');
+
+    DB::table('election_votes')->where('election_round_id', $annulled->id)->update(['choices' => json_encode(['999999' => 'for'])]);
+
+    $report = app(RoundReport::class)->forElection($election)->firstWhere(fn (array $report): bool => $report['round']->id === $annulled->id);
+
+    expect($report['unreadable'])->toBeTrue()
+        ->and($report['void_result'])->toBeNull();
+
+    $this->get(route('association.election.admin.protocol', $election))->assertOk()
+        ->assertSeeHtml('data-test="protocol-unreadable-'.$annulled->id.'"')
+        ->assertSee('election:verify '.$annulled->id)
+        ->assertDontSeeHtml('data-test="protocol-void-result-'.$annulled->id.'"');
+
+    expect(Livewire::test('association.election.protocol', ['election' => $election])->instance()->plainText)
+        ->toContain('Ergebnis nicht lesbar')
+        ->toContain('election:verify '.$annulled->id);
+});
