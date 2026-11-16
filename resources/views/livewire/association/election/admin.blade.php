@@ -878,6 +878,8 @@ new class extends Component
             ->get()
             ->map(fn (EinundzwanzigPleb $pleb): array => [
                 'name' => MemberProposal::authorNameOf($pleb),
+                'pubkey' => $pleb->pubkey,
+                'picture' => $pleb->profile?->picture,
                 'reason' => $entitled->has($pleb->id) ? $roll->reasonOf($entitled->get($pleb->id)) : null,
                 'signed_in' => $this->signedInSinceAnnouncement($election, $pleb),
             ])
@@ -927,6 +929,8 @@ new class extends Component
             ->get()
             ->map(fn (ElectionRollEntry $entry): array => [
                 'name' => MemberProposal::authorNameOf($entry->pleb),
+                'pubkey' => $entry->pleb?->pubkey,
+                'picture' => $entry->pleb?->profile?->picture,
                 'reason' => $entry->reason,
                 'source' => $entry->source,
                 'signed_in' => $entry->pleb === null ? null : $this->signedInSinceAnnouncement($election, $entry->pleb),
@@ -1561,6 +1565,7 @@ new class extends Component
             'candidates' => array_map(fn (int $id): array => [
                 'id' => $id,
                 'name' => MemberProposal::authorNameOf($round->candidates->firstWhere('id', $id)?->pleb),
+                'pubkey' => $round->candidates->firstWhere('id', $id)?->pleb?->pubkey,
                 ...$result->counts[$id],
             ], $result->tied),
         ];
@@ -2032,7 +2037,7 @@ new class extends Component
                                             <flux:field variant="inline" class="relative items-center gap-x-0!">
                                                 <flux:checkbox value="{{ $candidate['id'] }}" :autofocus="$loop->first" class="before:absolute before:inset-y-0 before:start-0 before:w-[1.125rem] before:cursor-pointer" data-test="casting-checkbox-{{ $candidate['id'] }}" />
                                                 <flux:label class="flex! min-h-11 cursor-pointer items-center gap-3 py-2 ps-3 text-base!" data-test="casting-candidate-{{ $candidate['id'] }}">
-                                                    <span class="min-w-0 flex-1 font-bold break-words text-text-primary">{{ $candidate['name'] }}</span>
+                                                    <span class="min-w-0 flex-1 font-bold break-words text-text-primary"><x-nostr-profile trigger="avatar" :pubkey="$candidate['pubkey']" :name="$candidate['name']" /></span>
                                                     <span class="shrink-0 text-sm font-normal tabular-nums text-text-secondary">
                                                         @if ($tie['kind'] === \App\Enums\ElectionTieKind::YesEqualsNo || $tie['round']->counting_rule === \App\Enums\ElectionCountingRule::YesNoPerCandidate)
                                                             {{ __(':yes Ja, :no Nein', ['yes' => $candidate['yes'], 'no' => $candidate['no']]) }}

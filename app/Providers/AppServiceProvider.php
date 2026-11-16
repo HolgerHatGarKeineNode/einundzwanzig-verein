@@ -21,6 +21,7 @@ use App\Services\Nostr\Relay\WebSocket\WebSocketRelayConnector;
 use App\Services\Nostr\RelayTransport;
 use App\Support\ApiIdentity;
 use App\Support\NostrAuth;
+use App\Support\NostrAvatars;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -39,6 +40,7 @@ class AppServiceProvider extends ServiceProvider
          * a fresh instance per resolution sees the current value.
          */
         $this->app->bind(NotificationKey::class, fn (): NotificationKey => NotificationKey::fromConfig());
+        $this->app->scoped(NostrAvatars::class);
 
         /*
          * The real relay transport outside the test environment only. Under

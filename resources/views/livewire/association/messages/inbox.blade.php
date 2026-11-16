@@ -145,6 +145,7 @@ class extends Component
 
         $last = DmInboxMessage::query()->whereIn('id', $latest->values())->get()->keyBy('id');
         $members = EinundzwanzigPleb::query()->notErased()->whereIn('pubkey', $latest->keys())->pluck('id', 'pubkey');
+        app(\App\Support\NostrAvatars::class)->preload($latest->keys());
 
         return $latest->map(function (int $lastId, string $contact) use ($last, $unread, $members): array {
             $message = $last[$lastId];
@@ -282,22 +283,25 @@ class extends Component
                 @else
                     <ul class="divide-y divide-border-subtle overflow-hidden rounded-lg border border-border-default">
                         @foreach ($conversations as $conversation)
-                            <li wire:key="conversation-{{ $conversation['contact'] }}">
+                            {{-- The open button spans the whole row; the name chip sits above it, so its card opens instead of the thread. --}}
+                            <li wire:key="conversation-{{ $conversation['contact'] }}"
+                                @class(['relative flex min-h-11 flex-col gap-1 px-4 py-3 hover:bg-bg-elevated', 'bg-bg-elevated' => $contact === $conversation['contact']])
+                                data-test="conversation-{{ $conversation['contact'] }}">
                                 <button type="button" wire:click="open('{{ $conversation['contact'] }}')"
-                                        @class(['flex min-h-11 w-full flex-col gap-1 px-4 py-3 text-left hover:bg-bg-elevated', 'bg-bg-elevated' => $contact === $conversation['contact']])
+                                        class="absolute inset-0 cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-orange-500"
                                         @if ($contact === $conversation['contact']) aria-current="true" @endif
-                                        data-test="conversation-{{ $conversation['contact'] }}">
-                                    <span class="flex w-full items-baseline justify-between gap-3">
-                                        <span class="min-w-0 break-words text-base font-bold text-text-primary">{{ $conversation['name'] }}@unless ($conversation['is_member'])<span class="ms-2 whitespace-nowrap text-sm font-normal text-text-tertiary" data-test="not-member">{{ __('kein Mitglied') }}</span>@endunless</span>
-                                        <span class="shrink-0 text-sm tabular-nums text-text-tertiary">{{ $conversation['last_at']->timezone('Europe/Berlin')->format('d.m. H:i') }}</span>
-                                    </span>
-                                    <span class="flex w-full items-start justify-between gap-3">
-                                        <span class="min-w-0 break-words text-sm text-text-secondary">{{ $conversation['preview'] }}</span>
-                                        @if ($conversation['unread'] > 0)
-                                            <flux:badge color="orange" size="sm" class="shrink-0" data-test="unread-{{ $conversation['contact'] }}">{{ trans_choice('{1} 1 neu|[2,*] :count neu', $conversation['unread'], ['count' => $conversation['unread']]) }}</flux:badge>
-                                        @endif
-                                    </span>
-                                </button>
+                                        aria-label="{{ __('Unterhaltung mit :name öffnen', ['name' => $conversation['name']]) }}"
+                                        data-test="open-{{ $conversation['contact'] }}"></button>
+                                <span class="pointer-events-none relative flex w-full items-baseline justify-between gap-3">
+                                    <span class="min-w-0 break-words text-base font-bold text-text-primary"><span class="pointer-events-auto relative"><x-nostr-profile :pubkey="$conversation['contact']" :name="$conversation['name']" /></span>@unless ($conversation['is_member'])<span class="ms-2 whitespace-nowrap text-sm font-normal text-text-tertiary" data-test="not-member">{{ __('kein Mitglied') }}</span>@endunless</span>
+                                    <span class="shrink-0 text-sm tabular-nums text-text-tertiary">{{ $conversation['last_at']->timezone('Europe/Berlin')->format('d.m. H:i') }}</span>
+                                </span>
+                                <span class="pointer-events-none relative flex w-full items-start justify-between gap-3">
+                                    <span class="min-w-0 break-words text-sm text-text-secondary">{{ $conversation['preview'] }}</span>
+                                    @if ($conversation['unread'] > 0)
+                                        <flux:badge color="orange" size="sm" class="shrink-0" data-test="unread-{{ $conversation['contact'] }}">{{ trans_choice('{1} 1 neu|[2,*] :count neu', $conversation['unread'], ['count' => $conversation['unread']]) }}</flux:badge>
+                                    @endif
+                                </span>
                             </li>
                         @endforeach
                     </ul>
@@ -309,7 +313,7 @@ class extends Component
                     <p class="rounded-lg border border-dashed border-border-default p-6 text-base text-text-secondary">{{ __('Wähle links ein Gespräch.') }}</p>
                 @else
                     <div class="mb-4 flex items-center justify-between gap-3">
-                        <h2 class="min-w-0 break-words text-xl font-bold text-text-primary" data-test="thread-name">{{ $this->nameOf($contact) }}@unless ($this->contactIsMember())<span class="ms-2 whitespace-nowrap text-sm font-normal text-text-tertiary">{{ __('kein Mitglied') }}</span>@endunless</h2>
+                        <h2 class="min-w-0 break-words text-xl font-bold text-text-primary" data-test="thread-name"><x-nostr-profile :pubkey="$contact" :name="$this->nameOf($contact)" size="lg" />@unless ($this->contactIsMember())<span class="ms-2 whitespace-nowrap text-sm font-normal text-text-tertiary">{{ __('kein Mitglied') }}</span>@endunless</h2>
                         <flux:button wire:click="close" variant="ghost" icon="arrow-left" class="min-h-11 md:hidden">{{ __('Alle Gespräche') }}</flux:button>
                     </div>
 

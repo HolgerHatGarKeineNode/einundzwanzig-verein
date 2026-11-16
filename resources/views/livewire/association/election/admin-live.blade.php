@@ -143,7 +143,7 @@
                             <ul class="mt-4 max-w-2xl divide-y divide-border-subtle border-y border-border-subtle" data-test="live-result-{{ $round->id }}">
                                 @foreach ($result['rows'] as $row)
                                     <li class="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-4 gap-y-1 py-3 sm:grid-cols-[minmax(0,1fr)_auto_8rem]">
-                                        <span class="min-w-0 font-bold text-text-primary break-words">{{ $row['name'] }}</span>
+                                        <span class="min-w-0 font-bold text-text-primary break-words"><x-nostr-profile :pubkey="$report['round']->candidates->firstWhere('id', $row['candidate_id'])?->pleb?->pubkey" :picture="$report['round']->candidates->firstWhere('id', $row['candidate_id'])?->pleb?->profile?->picture" :name="$row['name']" /></span>
                                         <span class="text-right tabular-nums text-text-primary">
                                             @if ($isYesNo)
                                                 {{ __(':yes Ja, :no Nein', ['yes' => $row['yes'], 'no' => $row['no']]) }}

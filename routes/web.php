@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\BtcPayWebhookController;
 use App\Http\Controllers\Nostr\GetProfiles;
+use App\Http\Controllers\Nostr\ProfileCard;
 use App\Models\EinundzwanzigPleb;
 use App\Support\NostrAuth;
 use Illuminate\Http\Request;
@@ -88,6 +89,11 @@ Route::post('webhooks/btcpay', BtcPayWebhookController::class)->name('webhooks.b
 Route::get('nostr/profiles', GetProfiles::class)
     ->middleware('throttle:nostr-profiles')
     ->name('nostr.profiles');
+
+Route::get('association/nostr-profile/{pubkey}', ProfileCard::class)
+    ->where('pubkey', '[0-9a-f]{64}')
+    ->middleware('throttle:nostr-profiles')
+    ->name('nostr.profile-card');
 
 Route::post('logout', function () {
     NostrAuth::logout();

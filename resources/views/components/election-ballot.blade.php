@@ -60,7 +60,7 @@
                     <li wire:key="ballot-{{ $round->id }}-{{ $candidate->id }}" class="px-4 sm:px-6">
                         @if ($rule === ElectionCountingRule::YesNoPerCandidate)
                             <div role="radiogroup" aria-label="{{ $name }}" class="py-3">
-                                <p class="break-words text-lg font-bold leading-snug">{{ $name }}</p>
+                                <p class="break-words text-lg font-bold leading-snug"><x-nostr-profile trigger="avatar" :pubkey="$candidate->pleb?->pubkey" :picture="$candidate->pleb?->profile?->picture" :name="$name" /></p>
                                 <div class="mt-2 flex flex-wrap gap-x-6 gap-y-1">
                                     @foreach (['yes' => __('Ja'), 'no' => __('Nein'), 'abstain' => __('Enthaltung')] as $value => $label)
                                         <label class="flex min-h-11 cursor-pointer items-center gap-3">
@@ -75,7 +75,7 @@
                             <label class="flex min-h-14 cursor-pointer items-center gap-4 py-3">
                                 <input type="radio" class="peer sr-only" name="ballot-{{ $round->id }}" value="{{ $candidate->id }}" x-model="single">
                                 <x-election-ballot-mark />
-                                <span class="min-w-0 break-words text-lg font-bold leading-snug">{{ $name }}</span>
+                                <span class="min-w-0 break-words text-lg font-bold leading-snug"><x-nostr-profile trigger="avatar" :pubkey="$candidate->pleb?->pubkey" :picture="$candidate->pleb?->profile?->picture" :name="$name" /></span>
                             </label>
                         @else
                             <label class="flex min-h-14 cursor-pointer items-center gap-4 py-3">
@@ -83,7 +83,7 @@
                                        x-bind:checked="selection[{{ $candidate->id }}] === 'for'"
                                        x-on:change="toggle({{ $candidate->id }}, $event)">
                                 <x-election-ballot-mark />
-                                <span class="min-w-0 break-words text-lg font-bold leading-snug">{{ $name }}</span>
+                                <span class="min-w-0 break-words text-lg font-bold leading-snug"><x-nostr-profile trigger="avatar" :pubkey="$candidate->pleb?->pubkey" :picture="$candidate->pleb?->profile?->picture" :name="$name" /></span>
                             </label>
                         @endif
                     </li>
