@@ -10,6 +10,7 @@ use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
+use App\Services\Election\Candidacies;
 use App\Services\Election\CloseRound;
 use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionStewardship;
@@ -481,12 +482,20 @@ it('refuses a run-off of a chair with a candidate elected meanwhile in a round p
     $chair = runOffChainVoteAndSeal($chair, $voters, [$a, $a, $a, $b, $b, runOffChainMembers($chair)[2]]);
 
     // The treasurer comes first, so the owed run-off of the later chair does not hold it back.
+    // Wahlreglement § 4 Nr. 1 „Gewählt wird in der festgelegten Reihenfolge.“ and
+    // § 3 Nr. 7 „Wer in einem Wahlgang gewählt ist, steht in den folgenden
+    // Wahlgängen nicht mehr zur Wahl.“: the earlier office has the first claim.
     runOffChainStand($treasurer, $a);
     runOffChainVoteAndSeal($treasurer, $voters, [$a]);
     $runOff = app(CreateRunOff::class)->handle($chair, $boardMember);
 
     // Nobody is elected twice, whatever the order of the contests.
     expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($runOff->fresh())))->toBe('elected');
+
+    // No deadlock: once A's candidacy in the run-off is withdrawn, the run-off opens.
+    app(Candidacies::class)->withdraw($runOff->candidates()->where('einundzwanzig_pleb_id', $a)->firstOrFail(), $boardMember, 'Als Kassier gewählt');
+
+    expect(runOffChainOutcome(fn () => app(OpenRound::class)->handle($runOff->fresh())))->toBe('opens');
 });
 
 /*
