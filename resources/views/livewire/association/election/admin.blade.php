@@ -1888,7 +1888,7 @@ new class extends Component
                             <flux:error name="castingCandidates.*" />
                         </fieldset>
                     @endif
-                    <flux:field>
+                    <flux:field class="[&_input]:min-h-11">
                         <flux:label>{{ __('Name der/des Vorsitzenden') }}</flux:label>
                         <flux:input wire:model="castingChair" maxlength="{{ \App\Services\Election\RecordCastingVote::MAX_CHAIR_LENGTH }}" autocomplete="off" data-test="casting-chair" />
                         <flux:error name="castingChair" />
@@ -1917,7 +1917,10 @@ new class extends Component
                         </flux:text>
                     </div>
                     <flux:field>
-                        <flux:checkbox wire:model="runOffResolved" :label="__('Die Versammlung hat eine Stichwahl beschlossen.')" class="min-h-11" data-test="run-off-resolved" />
+                        <label class="flex min-h-11 cursor-pointer items-center gap-3 py-2" data-test="run-off-resolved-label">
+                            <input type="checkbox" wire:model="runOffResolved" class="size-5 shrink-0 accent-orange-500" data-test="run-off-resolved">
+                            <span class="min-w-0 flex-1 font-medium break-words text-text-primary">{{ __('Die Versammlung hat eine Stichwahl beschlossen.') }}</span>
+                        </label>
                         <flux:error name="runOffResolved" />
                     </flux:field>
                     <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
