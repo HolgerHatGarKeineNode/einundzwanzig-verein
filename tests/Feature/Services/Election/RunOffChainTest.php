@@ -641,6 +641,37 @@ it('leaves no deadlock: the refused earlier round opens once the later round is 
 });
 
 /*
+ * Only a candidacy still standing in the open round holds the other round
+ * back. Mutation that must turn this red: count withdrawn and rejected
+ * candidacies in the open-elsewhere check (drop `standingOnly: true` there).
+ */
+it('opens an earlier round when the candidate\'s candidacy in the open later round was withdrawn or rejected', function (string $how) {
+    $election = Election::factory()->create();
+    [$boardMember] = electionBoard(1);
+
+    $treasurer = draftElectionRound(['position' => 1, 'title' => 'Kasse'], candidates: 1, election: $election);
+    $chair = draftElectionRound(['position' => 2, 'title' => 'Vorsitz'], candidates: 1, election: $election);
+    $a = (int) electionVoter()->id;
+
+    // Only a pending candidacy can be rejected.
+    $chairA = ElectionCandidate::factory()
+        ->status($how === 'rejected' ? ElectionCandidateStatus::Pending : ElectionCandidateStatus::Approved)
+        ->create(['election_round_id' => $chair->getKey(), 'einundzwanzig_pleb_id' => $a]);
+
+    match ($how) {
+        'withdrawn' => app(Candidacies::class)->withdraw($chairA, $boardMember, 'Kandidiert in der Kasse'),
+        'rejected' => app(Candidacies::class)->reject($chairA, $boardMember, 'Nicht wählbar'),
+    };
+
+    $chair = app(OpenRound::class)->handle($chair->fresh());
+    runOffChainStand($treasurer, $a);
+
+    expect($chair->isSealed())->toBeFalse()
+        ->and($chair->candidates()->where('einundzwanzig_pleb_id', $a)->value('status'))->toBe(ElectionCandidateStatus::from($how))
+        ->and(runOffChainOutcome(fn () => app(OpenRound::class)->handle($treasurer->fresh())))->toBe('opens');
+})->with(['withdrawn', 'rejected']);
+
+/*
  * Adding or approving a candidacy never goes around the open-time check: a
  * draft round takes the candidacy and refuses to open, an opened round takes
  * none at all.

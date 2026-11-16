@@ -183,7 +183,12 @@ class OpenRound
      * contest's draft does not count, so the earlier office keeps its first
      * claim (Wahlreglement § 4 Nr. 1, § 3 Nr. 7). The way on is to seal that
      * round or withdraw the candidacy in the round to open: the candidates of
-     * an opened round are frozen. An unsealed round only counts candidacies
+     * an opened round are frozen. Likewise a candidate level in the undecided
+     * tie of any other contest's decisive result is refused until the chair's
+     * casting vote is recorded there or the candidacy here is withdrawn — the
+     * casting vote needs no round to open, so this cannot deadlock. A tie the
+     * assembly sent to a run-off is left to that run-off, a round of its
+     * contest like any other. An unsealed round only counts candidacies
      * that are not withdrawn or rejected, so withdrawing a candidacy frees
      * the round it blocked.
      *
@@ -236,6 +241,25 @@ class OpenRound
             $this->assertContestDecidedFor($contest, $standing, $rounds);
         }
 
+        // Nobody is elected twice: a candidate level in the undecided tie of
+        // another contest may still be elected there by the chair's casting
+        // vote, also in a contest placed later. An earlier contest has
+        // refused above already. A tie the assembly sent to a run-off waits
+        // for that run-off, a round of its own contest: its draft does not
+        // hold back an earlier office, and once opened the next check does.
+        foreach ($otherContests as $contest) {
+            $decisive = $this->decisiveOf($contest, $rounds);
+
+            if ($decisive === null
+                || $contest->contains(fn (ElectionRound $other): bool => (int) $other->parent_round_id === (int) $decisive->getKey())
+                || ($shared = $this->sharedCandidates($decisive, $standing)) === []
+                || ($tied = array_intersect($shared, $this->resultFor($decisive, $shared)->tied)) === []) {
+                continue;
+            }
+
+            throw $this->blocked(sprintf('A candidate of this round is level in the undecided tie of the round "%s" of the election, so nobody knows yet whether the casting vote elects them there; record the casting vote there first or withdraw the candidacy here.', $decisive->title), $decisive, $tied);
+        }
+
         // Nobody is elected twice: an opened round that is not sealed holds
         // back every other contest it shares a candidate with, also
         // one placed before it. An earlier contest has refused above already.
@@ -269,10 +293,7 @@ class OpenRound
             }
         }
 
-        $decisive = $contest
-            ->filter(fn (ElectionRound $other): bool => $other->isSealed())
-            ->sortByDesc(fn (ElectionRound $other): int => count($this->chainOf($other, $rounds)))
-            ->first();
+        $decisive = $this->decisiveOf($contest, $rounds);
 
         if ($decisive !== null && ($shared = $this->sharedCandidates($decisive, $standing)) !== [] && ($tied = array_intersect($shared, $this->resultFor($decisive, $shared)->tied)) !== []) {
             throw $this->blocked('A candidate of this round is level in an undecided tie of an earlier round of the election.', $decisive, $tied);
@@ -292,6 +313,21 @@ class OpenRound
         if ($unsealed !== null) {
             throw $this->blocked('A candidate of this round also stands in an earlier round of the election that is not sealed yet.', $unsealed, $this->sharedCandidates($unsealed, $standing, standingOnly: true));
         }
+    }
+
+    /**
+     * The round whose result is the contest's: its deepest sealed round, or
+     * null while none of its rounds is sealed.
+     *
+     * @param  Collection<int, ElectionRound>  $contest  the rounds of one chain that are not annulled
+     * @param  Collection<int, ElectionRound>  $rounds  every round of the election, by id
+     */
+    protected function decisiveOf(Collection $contest, Collection $rounds): ?ElectionRound
+    {
+        return $contest
+            ->filter(fn (ElectionRound $other): bool => $other->isSealed())
+            ->sortByDesc(fn (ElectionRound $other): int => count($this->chainOf($other, $rounds)))
+            ->first();
     }
 
     /**
