@@ -15,6 +15,7 @@ Schedule::command(SyncProfiles::class)->daily()->at('00:30');
 // last run is otherwise missed, and that member stays on stale relays or no_inbox.
 Schedule::command(SyncDmRelays::class)->daily()->at('00:45')->withoutOverlapping(60);
 Schedule::command(PruneDescriptionImages::class)->daily()->at('03:00');
+Schedule::command('horizon:snapshot')->everyFiveMinutes();
 // Seals rounds whose window has run out; ballots stop by the clock without it.
 Schedule::command(CloseEndedRounds::class)->everyMinute()->withoutOverlapping();
 // Starts scheduled direct messages (election timeline, fee reminder) once their moment has come.

@@ -14,6 +14,7 @@
         "dedoc/scramble": "^0.13.39",
         "einundzwanzig/group": "dev-master",
         "laravel/framework": "^13.0",
+        "laravel/horizon": "^5.51",
         "laravel/nightwatch": "^1.22",
         "laravel/tinker": "^3.0",
         "league/html-to-markdown": "^5.1",
