@@ -61,18 +61,18 @@ final class SentryElectionFilter
      * a Livewire 4 name may carry a namespace (`pages::association.election.index`).
      * The whole token is taken; `::` is read as a segment boundary.
      */
-    private const LIVEWIRE_MESSAGE_PATTERN = '/^Component [a-z]+: (\S+)/';
+    private const LIVEWIRE_MESSAGE_PATTERN = '/^Component [a-z]+: (\S+)/u';
 
     /** A route path with the segment `election`. */
-    private const ELECTION_PATH_PATTERN = '#(^|/)election(/|$)#';
+    private const ELECTION_PATH_PATTERN = '#(^|/)election(/|$)#u';
 
     /** A class in a namespace with the segment `Election`, or in `App\Jobs\Dm`. */
-    private const ELECTION_CLASS_PATTERN = '/(^|\\\\)(Election|App\\\\Jobs\\\\Dm)\\\\/';
+    private const ELECTION_CLASS_PATTERN = '/(^|\\\\)(Election|App\\\\Jobs\\\\Dm)\\\\/u';
 
     private const QUEUE_JOB_CATEGORY = 'queue.job';
 
     /** Trace data keys that hold an HTTP body. */
-    private const HTTP_BODY_KEY_PATTERN = '/^http\.(request|response)\.body\./';
+    private const HTTP_BODY_KEY_PATTERN = '/^http\.(request|response)\.body\./u';
 
     public static function beforeBreadcrumb(Breadcrumb $breadcrumb): ?Breadcrumb
     {
@@ -99,7 +99,7 @@ final class SentryElectionFilter
             return true;
         }
 
-        return SecurityMonitor::isElectionComponent(str_replace('::', '.', $matches[1]));
+        return SecurityMonitor::isElectionComponent($matches[1]);
     }
 
     /**
@@ -128,7 +128,7 @@ final class SentryElectionFilter
         }
 
         return SecurityMonitor::isElectionComponent((string) $route->getName())
-            || preg_match(self::ELECTION_PATH_PATTERN, $route->uri()) === 1;
+            || preg_match(self::ELECTION_PATH_PATTERN, $route->uri()) !== 0;
     }
 
     private static function namesElectionClass(Event $event): bool
@@ -148,7 +148,7 @@ final class SentryElectionFilter
         }
 
         foreach ($names as $name) {
-            if (preg_match(self::ELECTION_CLASS_PATTERN, $name) === 1) {
+            if (preg_match(self::ELECTION_CLASS_PATTERN, $name) !== 0) {
                 return true;
             }
         }
@@ -205,6 +205,6 @@ final class SentryElectionFilter
      */
     private static function withoutHttpBodies(array $data): array
     {
-        return array_filter($data, fn (string $key): bool => preg_match(self::HTTP_BODY_KEY_PATTERN, $key) !== 1, ARRAY_FILTER_USE_KEY);
+        return array_filter($data, fn (string $key): bool => preg_match(self::HTTP_BODY_KEY_PATTERN, $key) === 0, ARRAY_FILTER_USE_KEY);
     }
 }

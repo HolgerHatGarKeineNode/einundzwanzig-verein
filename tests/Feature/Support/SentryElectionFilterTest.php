@@ -308,3 +308,67 @@ it('does not take a class outside the election namespaces for one', function (st
     'a round model' => ['App\Models\ElectionRound::publishedVoteEventIds'],
     'another job' => ['App\Jobs\SyncMembers::handle'],
 ]);
+
+/*
+ * preg_match() never throws: on an engine error it returns false. The
+ * patterns carry `/u`, so a subject that is not valid UTF-8 is a
+ * deterministic engine error; each case feeds one into one classifier.
+ */
+it('counts a regex engine error as election, since preg_match returns false instead of throwing', function (Closure $arrange) {
+    $event = sentryEventWithBallot();
+    $arrange($event);
+
+    expect(preg_match('/x/u', "\xff"))->toBeFalse()
+        ->and(sentryBallotLeftIn(SentryElectionFilter::beforeSend($event)))->toBe([]);
+})->with([
+    'route name' => [function (): void {
+        $request = Request::create('/members');
+        $request->setRouteResolver(fn (): RoutingRoute => (new RoutingRoute('GET', 'members', []))->name("members\xff"));
+        sentryCurrentRequest($request);
+    }],
+    'route path' => [function (): void {
+        $request = Request::create('/members');
+        $request->setRouteResolver(fn (): RoutingRoute => (new RoutingRoute('GET', "members\xff", []))->name('members'));
+        sentryCurrentRequest($request);
+    }],
+    'class name' => [function (Event $event): void {
+        sentryCurrentRequest(sentryRouteRequest('association.members.admin'));
+        $event->setTransaction("App\\Http\xff");
+    }],
+]);
+
+it('drops a trace data key it cannot read, instead of keeping it', function () {
+    sentryCurrentRequest(sentryLivewireRequest('association.election.index'));
+    $event = sentryEventWithBallot();
+    $event->setContext('trace', ['data' => ["http.request.body.\xff" => SENTRY_FILTER_NEEDLE, 'http.request.method' => 'POST']]);
+
+    expect(SentryElectionFilter::beforeSend($event)->getContexts()['trace']['data'])->toBe(['http.request.method' => 'POST']);
+});
+
+it('reads a namespace separator as a segment boundary in request component names', function (string $name) {
+    sentryCurrentRequest(sentryLivewireRequest($name));
+
+    expect(sentryBallotLeftIn(SentryElectionFilter::beforeSend(sentryEventWithBallot())))->toBe([]);
+})->with(['pages::election.ballot', 'election::ballot', 'pages::association.election.index']);
+
+it('scrubs an event when a Livewire request carries a snapshot it cannot read', function () {
+    sentryCurrentRequest(Request::create('/livewire/update', 'POST', ['components' => [
+        ['snapshot' => '{not json', 'calls' => []],
+    ]]));
+
+    expect(sentryBallotLeftIn(SentryElectionFilter::beforeSend(sentryEventWithBallot())))->toBe([]);
+});
+
+it('scrubs an event when reading the Livewire request throws', function () {
+    $request = new class extends Request
+    {
+        public function input($key = null, $default = null): mixed
+        {
+            throw new RuntimeException('input cannot be read');
+        }
+    };
+    $request->setRouteResolver(fn (): RoutingRoute => Route::getRoutes()->getByName('association.members.admin'));
+    sentryCurrentRequest($request);
+
+    expect(sentryBallotLeftIn(SentryElectionFilter::beforeSend(sentryEventWithBallot())))->toBe([]);
+});
