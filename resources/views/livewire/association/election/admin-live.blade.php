@@ -102,6 +102,15 @@
                             <div class="mt-4">
                                 <flux:button wire:click="sealRound({{ $round->id }})" icon="calculator" variant="outline" class="min-h-11 w-full sm:w-auto" data-test="seal-round-{{ $round->id }}">{{ __('Auszählen') }}</flux:button>
                             </div>
+                        @elseif (($report['unreadable'] ?? false) && $report['sealed'])
+                            {{-- The stored votes do not fit the round: no result, no run-off, only the way to check it. --}}
+                            <p class="mt-4 flex items-start gap-2 text-base font-bold text-danger break-words" data-test="live-unreadable-{{ $round->id }}">
+                                <flux:icon.exclamation-triangle variant="mini" class="mt-0.5 size-5 shrink-0" aria-hidden="true" />
+                                <span>{{ __('Ergebnis nicht lesbar: Die gespeicherten Stimmen passen nicht zu diesem Wahlgang. Prüfen mit „php artisan election:verify :round“.', ['round' => $round->id]) }}</span>
+                            </p>
+                            <div class="mt-5">
+                                <flux:button wire:click="startRoundAction({{ $round->id }}, 'annul')" variant="ghost" class="min-h-11 w-full text-danger! sm:w-auto" data-test="annul-round-{{ $round->id }}">{{ __('Wahlgang annullieren') }}</flux:button>
+                            </div>
                         @elseif ($result !== null)
                             @php $electedNames = collect($result['rows'])->where('elected', true)->pluck('name'); @endphp
                             <p class="mt-4 text-lg font-bold text-text-primary break-words" data-test="live-outcome-{{ $round->id }}">
