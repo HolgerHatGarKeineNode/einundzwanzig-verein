@@ -243,7 +243,7 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
                         @endswitch
                     </p>
                     @if ($result['casting_vote'] !== null)
-                        <p class="mt-[1.5vh] text-[length:var(--s-meta)] break-words" data-test="share-casting-vote">{{ $sentence(ElectionTieText::decided($result['tie_kind'], $result['casting_vote']['chair'], $result['casting_vote']['elected'], $result['casting_vote']['tied'])) }}</p>
+                        <p class="mt-[1.5vh] text-[length:var(--s-meta)] break-words" data-test="share-casting-vote">{{ $sentence(ElectionTieText::decidedBy($result['casting_vote']['chair'])) }}</p>
                     @endif
 
                     {{-- More than three rows are dense: below 800px height the bars give way to the numbers they repeat. On a landscape screen they go into two columns, unless a name is too long for half the width — a column holds about 38 characters per line at 1280×720, and a long name with long words then needs three lines. Such a list stays in one column, where the name gets the full width. Names are never cut. --}}

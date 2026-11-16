@@ -171,6 +171,6 @@ test('the board enters the chair\'s casting vote on a tie, and the share view sh
     ])
     await screen.waitForLoadState()
     await expect(screen.locator('[data-test="share-outcome"]')).toContainText(bernd.name)
-    await expect(screen.locator('[data-test="share-casting-vote"]')).toHaveText(decided)
+    await expect(screen.locator('[data-test="share-casting-vote"]')).toHaveText('Entschieden durch Stichentscheid der/des Vorsitzenden Erika Vorsitz.')
     await expect(screen.locator('[data-test="share-tie-next"]')).toHaveCount(0)
 })

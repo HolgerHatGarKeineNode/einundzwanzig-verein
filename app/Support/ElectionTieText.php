@@ -55,6 +55,16 @@ final class ElectionTieText
     }
 
     /**
+     * The chair's decision in short, for the share view: its outcome line
+     * and its rows already name whom the chair decided for, and repeating a
+     * long name there pushed the view past a 1280×720 screen.
+     */
+    public static function decidedBy(string $chair): string
+    {
+        return __('Entschieden durch Stichentscheid der/des Vorsitzenden :chair.', ['chair' => $chair]);
+    }
+
+    /**
      * The assembly resolved a run-off instead of the casting vote.
      */
     public static function runOffResolved(): string

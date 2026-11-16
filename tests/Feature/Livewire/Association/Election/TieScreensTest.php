@@ -122,9 +122,11 @@ it('shows the result with a line naming the chair once the casting vote is recor
     app(RecordCastingVote::class)->handle($round, $board, [$ids['bob']], 'Erika Vorsitz', 'Nach Aussprache');
     $line = 'Stichentscheid der/des Vorsitzenden Erika Vorsitz: gewählt ist Bob Brenner.';
 
+    // The share view names the chair only: its outcome line and rows name Bob already.
     tieShare($election)
         ->assertSeeHtml('data-test="share-casting-vote"')
-        ->assertSee($line)
+        ->assertSee('Entschieden durch Stichentscheid der/des Vorsitzenden Erika Vorsitz.')
+        ->assertDontSee($line)
         ->assertDontSee('Die/der Vorsitzende fällt den Stichentscheid.')
         ->assertDontSeeHtml('data-test="share-tie-next"');
 
