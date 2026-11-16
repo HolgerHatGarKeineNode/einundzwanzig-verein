@@ -133,6 +133,7 @@
         disableOverflowFix: false,
     }
 </script>
+@include('partials.wnj-nsec-guard')
 <script src="{{ asset('dist/window.nostr.min.js.js') }}"></script>
 </body>
 </html>
