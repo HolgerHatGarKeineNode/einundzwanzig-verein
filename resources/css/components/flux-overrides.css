@@ -131,8 +131,8 @@
 }
 
 /*
- * Accessibility floor for Flux controls on the election pages (board page,
- * share view, minutes; scoped by `.election-ui` so legacy pages and the group
+ * Accessibility floor for Flux controls on the election pages (member page,
+ * board page, share view, minutes; scoped by `.election-ui` so legacy pages and the group
  * package keep their look until they are measured themselves).
  *
  * Deliberately outside @layer: Flux sets these values with utilities
@@ -161,10 +161,13 @@
     border-color: var(--color-orange-500);
 }
 
-/* WCAG 2.4.7 — the project's focus ring on every Flux button and checkbox:
-   2px brand orange (8.6:1 on bg-page), offset so it also reads on an orange
-   fill. Without it a Flux checkbox shows the browser's own 1px ring. */
-.election-ui :is([data-flux-button], [data-flux-checkbox]):focus-visible {
+/* WCAG 2.4.7 — the project's focus ring on every Flux button, checkbox, text
+   field and link: 2px brand orange (8.6:1 on bg-page), offset so it also
+   reads on an orange fill. Without it a Flux checkbox shows the browser's own
+   1px ring and a Flux input only turns its 1px border orange. The ballot's
+   own radios sit on the light paper sheet and keep their 3px ink ring
+   (election-ballot-mark). Pinned in tests/e2e/election-layout.spec.js. */
+.election-ui :is([data-flux-button], [data-flux-checkbox], a[href], :is(input, textarea, select)[data-flux-control]):focus-visible {
     outline: 2px solid var(--color-orange-500);
     outline-offset: 2px;
 }
@@ -180,4 +183,21 @@
    the heading keeps clear of it (24px dialog padding + 40px = 64px ≥ 60px). */
 .election-ui dialog[data-modal] [data-flux-heading] {
     padding-inline-end: 2.5rem;
+}
+
+/* WCAG 2.3.3 / checklist Q20 — with reduced motion asked for, nothing on an
+   election page moves: no spinner (Flux keeps an `animate-spin` svg running
+   inside every hidden `data-flux-loading-indicator`), no dialog scale-in, no
+   chevron turn. State still shows through the static icon and the words.
+   The whole document of an election page, not only its main area: the app
+   shell's logout button carries a spinning loading svg of its own. */
+@media (prefers-reduced-motion: reduce) {
+    :root:has(.election-ui) *,
+    :root:has(.election-ui) *::before,
+    :root:has(.election-ui) *::after {
+        animation: none !important;
+        transition-duration: 0s !important;
+        transition-delay: 0s !important;
+        scroll-behavior: auto !important;
+    }
 }

@@ -144,3 +144,8 @@ export async function login(page, secretHex, path, buttonSelector = '[x-data="no
 export function tagsNamed(event, name) {
     return event.tags.filter((tag) => tag[0] === name)
 }
+
+/** Close a round early as the board, the way admin-live does, without a browser. */
+export function closeRound(roundId) {
+    return JSON.parse(php(['close', String(roundId)])).closed
+}

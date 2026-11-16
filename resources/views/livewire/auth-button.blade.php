@@ -24,9 +24,21 @@ new class extends Component
     #[Locked]
     public ?string $nostrChallenge = null;
 
+    /**
+     * Whether the login button carries the primary variant. A page that asks
+     * for the login itself owns the one primary action of the screen, so the
+     * sidebar's button steps back to a secondary one there.
+     */
+    #[Locked]
+    public bool $isPrimary = true;
+
+    /** Routes whose page shows its own login button (location other than the sidebar). */
+    public const PAGES_WITH_OWN_LOGIN = ['association.election'];
+
     public function mount(): void
     {
         $this->isLoggedIn = NostrAuth::check();
+        $this->isPrimary = $this->location !== 'sidebar' || ! request()->routeIs(...self::PAGES_WITH_OWN_LOGIN);
 
         if (! $this->isLoggedIn) {
             // Sidebar + navbar mount the same component on the same page; using
@@ -104,7 +116,7 @@ new class extends Component
             <flux:button variant="ghost" icon="arrow-right-start-on-rectangle" type="submit" wire:click="$dispatch('nostrLoggedOut')">Logout</flux:button>
         </form>
     @else
-        <flux:button variant="primary"
+        <flux:button :variant="$isPrimary ? 'primary' : 'filled'"
                      icon="user"
                      @click="openNostrLogin"
                      x-bind:disabled="nostrLoginInProgress"

@@ -141,9 +141,12 @@ it('shows the result with a line naming the chair once the casting vote is recor
         ->toContain($line)
         ->not->toContain('Die/der Vorsitzende fällt den Stichentscheid.');
 
+    // The member page names Bob in its "Gewählt ist" sentence and the chair on
+    // a line of its own: one sentence with both ran 7 lines at 390 px (Q12).
     tieMemberPage()
         ->assertSeeHtml('data-test="casting-vote-'.$round->id.'"')
-        ->assertSee($line);
+        ->assertSeeInOrder(['Gewählt ist Bob Brenner.', 'Entschieden durch Stichentscheid.', 'Vorsitz: Erika Vorsitz'])
+        ->assertDontSee($line);
 
     NostrAuth::login($board->pubkey);
     tieAdmin()->assertSee($line)

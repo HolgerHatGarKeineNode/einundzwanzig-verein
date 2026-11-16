@@ -37,8 +37,9 @@
              },
          }">
     <h2 id="signer-check" class="text-lg font-bold text-text-primary">{{ __('Dein Nostr-Signer') }}</h2>
-    <p class="mt-2 text-sm leading-normal text-text-secondary">
-        {{ __('Am Tag der Versammlung unterschreibst du deine Stimme mit deinem Signer. Probier ihn vorher einmal aus, dann klappt es im Call.') }}
+    <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
+        {{ __('Am Tag der Versammlung unterschreibst du deine Stimme mit deinem Signer.') }}
+        {{ __('Probier ihn vorher einmal aus, dann klappt es im Call.') }}
     </p>
 
     <flux:button x-on:click="probe()" x-bind:disabled="state === 'busy'" icon="finger-print" class="mt-4 min-h-11 w-full">
