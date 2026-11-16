@@ -699,10 +699,10 @@ it('lets the earlier office open while the later tie waits for the run-off the a
  * The state the gate's repro left behind, which `OpenRound` refuses now: A
  * is elected in the treasurer while A is still level in the undecided tie —
  * by the count (`count`), or by the chair's casting vote on a 1:1 between A
- * and D there (`casting vote`). Reached only by writing the candidacy past
- * the open-time check — A is withdrawn while the treasurer opens and
- * approved again afterwards, as a database from before that check can hold
- * it.
+ * and D there (`casting vote`). Built here by writing the candidacy past the
+ * open-time check — A is withdrawn while the treasurer opens and approved
+ * again afterwards. The application reaches a like state without such a
+ * write too (an annulled run-off; TieDoubleElectionGuardTest, P1b).
  *
  * @return array{0: ElectionRound, 1: ElectionRound, 2: int, 3: int, 4: int, 5: int, 6: EinundzwanzigPleb}
  */

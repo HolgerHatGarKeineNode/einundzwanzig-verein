@@ -264,9 +264,9 @@ it('refuses in the dialog a casting vote for a person elected in another round, 
     $voters = [electionVoter(), electionVoter()];
     $alice = (int) ElectionCandidate::query()->findOrFail($ids['alice'])->einundzwanzig_pleb_id;
 
-    // Alice elected in „Kasse“ while still level here: a state only a
-    // database from before OpenRound refused it can hold, so her candidacy
-    // there is written past the open-time check.
+    // Alice elected in „Kasse“ while still level here. The application can
+    // reach this through an annulled run-off (TieDoubleElectionGuardTest,
+    // P1b); here her candidacy is written past the open-time check for brevity.
     $treasury = ElectionRound::factory()->countingRule(ElectionCountingRule::SingleMajority, 1)->withCandidates(1)->create(['election_event_id' => $election->id, 'title' => 'Kasse', 'position' => 5]);
     $treasuryAlice = (int) ElectionCandidate::factory()->status(ElectionCandidateStatus::Withdrawn)->create(['election_round_id' => $treasury->id, 'einundzwanzig_pleb_id' => $alice])->id;
     $treasury = app(OpenRound::class)->handle($treasury->fresh());

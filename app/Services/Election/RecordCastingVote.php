@@ -130,8 +130,11 @@ class RecordCastingVote
      * level candidates than tied seats, so with one of them elected elsewhere
      * the chair names the others, and on a yes = no tie the chair may decide
      * „nein“. `OpenRound` refuses a round while one of its candidates is level
-     * in an undecided tie elsewhere, so only a state from before that refusal
-     * meets this check.
+     * in an undecided tie elsewhere, but that refusal does not cover every
+     * path: a tie whose run-off is a living draft does not block, so A can be
+     * elected elsewhere, withdrawn from the run-off, and the run-off annulled,
+     * which hands the decision back to the chair with A elected elsewhere
+     * (gate j2g round 2, probe P1b). This check is the one that stops it.
      *
      * A sealed round whose stored votes cannot be counted cannot say who is
      * elected there: the casting vote is refused, never recorded on a guess.
