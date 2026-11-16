@@ -155,3 +155,60 @@ test('a 63-character elected name and a 60-character chair fit the share view at
         expect.soft(height, `share view at ${viewport.width}x${viewport.height}: scrollHeight`).toBe(viewport.height)
     }
 })
+
+for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+    test(`the casting dialog refuses a person standing in another opened round, in words, at ${viewport.width} px`, async ({ page }) => {
+        const data = scenario('tie-opened-elsewhere')
+
+        // The login button sits in the closed drawer below 1024 px: log in wide, then narrow.
+        await login(page, data.board.secret, ADMIN)
+        await page.setViewportSize(viewport)
+        await page.goto(ADMIN)
+        await openLive(page)
+        await page.locator(`[data-test="casting-vote-${data.round}"]`).click()
+
+        const dialog = page.locator('[data-test="casting-vote-form"]')
+        await expect(dialog).toBeVisible()
+        await dialog.locator('[data-test^="casting-candidate-"]').filter({ hasText: data.long.name }).click()
+        await dialog.locator('[data-test="casting-chair"]').fill('Erika Vorsitz')
+        await dialog.locator('[data-test="confirm-casting-vote"]').click()
+
+        const text = `${data.long.name} kandidiert auch im Wahlgang „Kassenprüfung und Revision“, der noch nicht ausgezählt ist. Entscheidet für eine andere Person aus dem Gleichstand, oder zählt „Kassenprüfung und Revision“ zuerst aus.`
+        const error = dialog.getByText(text)
+        await expect(error).toBeVisible()
+        await page.evaluate(() => document.fonts.ready)
+        await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => Number.isFinite(a.effect?.getComputedTiming().endTime)).map((a) => a.finished)))
+
+        const values = await error.evaluate((message) => {
+            const box = (element) => {
+                const r = element.getBoundingClientRect()
+
+                return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height), right: Math.round(r.right) }
+            }
+            const form = document.querySelector('[data-test="casting-vote-form"]')
+
+            return {
+                viewport: { width: window.innerWidth, height: window.innerHeight },
+                document_scroll_width: document.documentElement.scrollWidth,
+                body_scroll_width: document.body.scrollWidth,
+                form: box(form),
+                form_scroll_width: form.scrollWidth,
+                form_client_width: form.clientWidth,
+                message: { ...box(message), scroll_width: message.scrollWidth, client_width: message.clientWidth, color: getComputedStyle(message).color, inside_form: form.contains(message) },
+            }
+        })
+        test.info().annotations.push({ type: 'measure', description: JSON.stringify(values) })
+        console.log(`MEASURE ${viewport.width}x${viewport.height} ${JSON.stringify(values)}`)
+
+        expect(values.message.inside_form, 'the refusal stands in the casting dialog').toBe(true)
+        expect.soft(values.document_scroll_width, 'documentElement.scrollWidth').toBeLessThanOrEqual(values.viewport.width)
+        expect.soft(values.body_scroll_width, 'body.scrollWidth').toBeLessThanOrEqual(values.viewport.width)
+        expect.soft(values.form_scroll_width, 'form scrollWidth').toBeLessThanOrEqual(values.form_client_width)
+        expect.soft(values.message.scroll_width, 'message scrollWidth').toBeLessThanOrEqual(values.message.client_width)
+        expect.soft(values.message.right, 'message right edge').toBeLessThanOrEqual(values.viewport.width)
+
+        if (process.env.J2I_SHOT_DIR) {
+            await page.screenshot({ path: `${process.env.J2I_SHOT_DIR}/casting-refusal-opened-elsewhere-${viewport.width}x${viewport.height}.png` })
+        }
+    })
+}
