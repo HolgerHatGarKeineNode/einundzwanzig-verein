@@ -161,9 +161,10 @@
     border-color: var(--color-orange-500);
 }
 
-/* WCAG 2.4.7 — the project's focus ring on every Flux button: 2px brand
-   orange (8.6:1 on bg-page), offset so it also reads on an orange fill. */
-.election-ui [data-flux-button]:focus-visible {
+/* WCAG 2.4.7 — the project's focus ring on every Flux button and checkbox:
+   2px brand orange (8.6:1 on bg-page), offset so it also reads on an orange
+   fill. Without it a Flux checkbox shows the browser's own 1px ring. */
+.election-ui :is([data-flux-button], [data-flux-checkbox]):focus-visible {
     outline: 2px solid var(--color-orange-500);
     outline-offset: 2px;
 }

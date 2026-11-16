@@ -1870,23 +1870,28 @@ new class extends Component
                     @if ($tie)
                         <fieldset>
                             <legend class="text-sm font-medium text-text-primary">{{ __('Entschieden für') }}</legend>
-                            <ul class="mt-2 divide-y divide-border-subtle border-y border-border-subtle">
-                                @foreach ($tie['candidates'] as $candidate)
-                                    <li wire:key="casting-{{ $tie['round']->id }}-{{ $candidate['id'] }}">
-                                        <label class="flex min-h-11 cursor-pointer items-center gap-3 py-2" data-test="casting-candidate-{{ $candidate['id'] }}">
-                                            <input type="checkbox" wire:model="castingCandidates" value="{{ $candidate['id'] }}" class="size-5 shrink-0 accent-orange-500">
-                                            <span class="min-w-0 flex-1 font-bold break-words text-text-primary">{{ $candidate['name'] }}</span>
-                                            <span class="shrink-0 text-sm tabular-nums text-text-secondary">
-                                                @if ($tie['kind'] === \App\Enums\ElectionTieKind::YesEqualsNo || $tie['round']->counting_rule === \App\Enums\ElectionCountingRule::YesNoPerCandidate)
-                                                    {{ __(':yes Ja, :no Nein', ['yes' => $candidate['yes'], 'no' => $candidate['no']]) }}
-                                                @else
-                                                    {{ trans_choice('{0} 0 Stimmen|{1} 1 Stimme|[2,*] :count Stimmen', $candidate['for'], ['count' => $candidate['for']]) }}
-                                                @endif
-                                            </span>
-                                        </label>
-                                    </li>
-                                @endforeach
-                            </ul>
+                            {{-- The label runs the full row from the box to the counts, so the whole 44 px row ticks. --}}
+                            <flux:checkbox.group wire:model="castingCandidates">
+                                <ul class="mt-2 divide-y divide-border-subtle border-y border-border-subtle">
+                                    @foreach ($tie['candidates'] as $candidate)
+                                        <li wire:key="casting-{{ $tie['round']->id }}-{{ $candidate['id'] }}">
+                                            <flux:field variant="inline" class="items-center gap-x-0!">
+                                                <flux:checkbox value="{{ $candidate['id'] }}" :autofocus="$loop->first" data-test="casting-checkbox-{{ $candidate['id'] }}" />
+                                                <flux:label class="flex! min-h-11 cursor-pointer items-center gap-3 py-2 ps-3 text-base!" data-test="casting-candidate-{{ $candidate['id'] }}">
+                                                    <span class="min-w-0 flex-1 font-bold break-words text-text-primary">{{ $candidate['name'] }}</span>
+                                                    <span class="shrink-0 text-sm font-normal tabular-nums text-text-secondary">
+                                                        @if ($tie['kind'] === \App\Enums\ElectionTieKind::YesEqualsNo || $tie['round']->counting_rule === \App\Enums\ElectionCountingRule::YesNoPerCandidate)
+                                                            {{ __(':yes Ja, :no Nein', ['yes' => $candidate['yes'], 'no' => $candidate['no']]) }}
+                                                        @else
+                                                            {{ trans_choice('{0} 0 Stimmen|{1} 1 Stimme|[2,*] :count Stimmen', $candidate['for'], ['count' => $candidate['for']]) }}
+                                                        @endif
+                                                    </span>
+                                                </flux:label>
+                                            </flux:field>
+                                        </li>
+                                    @endforeach
+                                </ul>
+                            </flux:checkbox.group>
                             <flux:error name="castingCandidates" />
                             <flux:error name="castingCandidates.*" />
                         </fieldset>
@@ -1921,11 +1926,9 @@ new class extends Component
                             {{ __('Nach den Statuten fällt bei Stimmengleichheit die/der Vorsitzende den Stichentscheid. Eine Stichwahl gibt es nur, wenn die Versammlung sie beschlossen hat. Endet auch sie im Gleichstand, fällt die/der Vorsitzende den Stichentscheid.') }}
                         </flux:text>
                     </div>
-                    <flux:field>
-                        <label class="flex min-h-11 cursor-pointer items-center gap-3 py-2" data-test="run-off-resolved-label">
-                            <input type="checkbox" wire:model="runOffResolved" class="size-5 shrink-0 accent-orange-500" data-test="run-off-resolved">
-                            <span class="min-w-0 flex-1 font-medium break-words text-text-primary">{{ __('Die Versammlung hat eine Stichwahl beschlossen.') }}</span>
-                        </label>
+                    <flux:field variant="inline" class="items-center gap-x-0!">
+                        <flux:checkbox wire:model="runOffResolved" autofocus data-test="run-off-resolved" />
+                        <flux:label class="flex! min-h-11 cursor-pointer items-center py-2 ps-3 text-base! break-words" data-test="run-off-resolved-label">{{ __('Die Versammlung hat eine Stichwahl beschlossen.') }}</flux:label>
                         <flux:error name="runOffResolved" />
                     </flux:field>
                     <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

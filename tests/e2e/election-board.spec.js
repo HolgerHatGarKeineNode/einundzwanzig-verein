@@ -148,16 +148,16 @@ test('the board enters the chair\'s casting vote on a tie, and the share view sh
     await page.locator(`[data-test="casting-vote-${data.round}"]`).click()
     const dialog = page.locator('[data-test="casting-vote-form"]')
     await expect(dialog).toBeVisible()
-    await expect(dialog.locator('label').filter({ hasText: anna.name })).toContainText('1 Stimme')
+    await expect(dialog.locator('[data-test^="casting-candidate-"]').filter({ hasText: anna.name })).toContainText('1 Stimme')
 
     // The count rule is checked before anything is written.
-    await dialog.locator('label').filter({ hasText: anna.name }).click()
-    await dialog.locator('label').filter({ hasText: bernd.name }).click()
+    await dialog.locator('[data-test^="casting-candidate-"]').filter({ hasText: anna.name }).click()
+    await dialog.locator('[data-test^="casting-candidate-"]').filter({ hasText: bernd.name }).click()
     await dialog.locator('[data-test="casting-chair"]').fill('Erika Vorsitz')
     await dialog.locator('[data-test="confirm-casting-vote"]').click()
     await expect(dialog).toContainText('Wähle genau eine Person: Es geht um einen Sitz.')
 
-    await dialog.locator('label').filter({ hasText: anna.name }).click()
+    await dialog.locator('[data-test^="casting-candidate-"]').filter({ hasText: anna.name }).click()
     await dialog.locator('[data-test="confirm-casting-vote"]').click()
     await expect(dialog).toBeHidden()
 
