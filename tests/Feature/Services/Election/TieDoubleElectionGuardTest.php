@@ -126,7 +126,6 @@ it('P1b claim 7: (b) reachable without DB write: withdraw A from draft run-off, 
     $runOff = app(OpenRound::class)->handle($runOff->fresh());
     app(ElectionStewardship::class)->annul($runOff, $board, 'falsch');
     $castA = tieGuardCast($vorsitz, $board, [$a]);
-    dump('P1b castA: '.$castA);
     expect($castA)->toContain('blocked: The chair cannot decide for a candidate who is elected in the round "Kasse"')
         ->and(tieGuardCast($vorsitz, $board, [$b]))->toBe('ok')
         ->and(tieGuardElectedIn($election, $a))->toBe(['Kasse']);
@@ -208,8 +207,16 @@ it('P4b deadlock try: 2 of A,B,C with A and B elected elsewhere; exit by a new r
     $runOff = app(OpenRound::class)->handle($runOff->fresh());
     app(ElectionStewardship::class)->annul($runOff, $board, 'falsch');
     $r = [tieGuardCast($vorsitz, $board, [$a, $c]), tieGuardCast($vorsitz, $board, [$b, $c]), tieGuardCast($vorsitz, $board, [$c]), tieGuardCast($vorsitz, $board, [$a, $b])];
-    dump($r);
-    expect($r[0])->toContain('blocked')->and($r[1])->toContain('blocked')->and($r[2])->toContain('refused')->and($r[3])->toContain('blocked');
+    expect($r[0])->toContain('blocked')->and($r[1])->toContain('blocked')->and($r[2])->toContain('refused')
+        // A elected in „Kasse“ (position 1), B in „Sekretariat“ (position 0, the higher id): the round first in the order of the election is named, with its member.
+        ->and($r[3])->toBe('blocked: The chair cannot decide for a candidate who is elected in the round "Sekretariat" of the election already; decide for another candidate level in the tie.');
+    try {
+        app(RecordCastingVote::class)->handle($vorsitz->fresh(), $board, [tieGuardCand($vorsitz, $a), tieGuardCand($vorsitz, $b)], 'Erika');
+        $this->fail('The casting vote for A and B must be refused.');
+    } catch (ElectionCandidateBlockedException $refusal) {
+        expect([$refusal->memberId, $refusal->roundTitle])->toBe([$b, 'Sekretariat'])
+            ->and($sekretariat->id)->toBeGreaterThan($kasse->id);
+    }
     $runOff2 = app(CreateRunOff::class)->handle($vorsitz->fresh(), $board, resolvedByAssembly: true);
     foreach ([$a, $b] as $p) {
         app(Candidacies::class)->withdraw(ElectionCandidate::findOrFail(tieGuardCand($runOff2, $p)), $board, 'x');
@@ -238,17 +245,15 @@ it('P6 two elections side by side: no leak, and no double within one', function 
     $otherKasse = draftElectionRound(['position' => 1, 'title' => 'Kasse E2', 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 0, election: $other);
     tieGuardStand($otherKasse, $a);
     $ov = [electionVoter(), electionVoter()];
-    $o = tieGuardOutcome(fn () => app(OpenRound::class)->handle($otherKasse->fresh()));
-    dump('P6 other election open: '.$o);
+    // A level in the undecided tie of „Vorsitz“ in the first election does not hold back a round of the second.
+    expect(tieGuardOutcome(fn () => app(OpenRound::class)->handle($otherKasse->fresh())))->toBe('ok');
     $otherKasse = $otherKasse->fresh();
-    if ($otherKasse->opened_at !== null) {
-        foreach ($ov as $v) {
-            castElectionBallot($otherKasse, $v, [tieGuardCand($otherKasse, $a) => 'for']);
-        }
-        app(CloseRound::class)->handle($otherKasse);
+    foreach ($ov as $v) {
+        castElectionBallot($otherKasse, $v, [tieGuardCand($otherKasse, $a) => 'for']);
     }
+    app(CloseRound::class)->handle($otherKasse);
+    expect(tieGuardElectedIn($other, $a))->toBe(['Kasse E2']);
     $castA = tieGuardCast($vorsitz, $board, [$a]);
-    dump('P6 casting in E1 for A elected in E2: '.$castA);
     expect($castA)->toBe('ok');
     tieGuardStand($kasse, $a);
     expect(tieGuardOutcome(fn () => app(OpenRound::class)->handle($kasse->fresh())))->toContain('has been elected')

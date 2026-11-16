@@ -9,7 +9,8 @@ namespace App\Exceptions;
  * whose run-off is owed, standing in an earlier round that is not sealed yet,
  * or standing in another opened round that is not sealed yet. Or a casting
  * vote cannot be recorded because the chair decided for a candidate elected
- * in another round. Names the member and the title of that other round, so
+ * in another round, or standing in another opened round that is not sealed
+ * yet. Names the member and the title of that other round, so
  * the refusal can say who and where.
  */
 class ElectionCandidateBlockedException extends ElectionRoundStateException

@@ -3,6 +3,7 @@
 namespace App\Services\Election;
 
 use App\Enums\ElectionAuditAction;
+use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionOutcome;
 use App\Exceptions\ElectionActionRefusedException;
 use App\Exceptions\ElectionCandidateBlockedException;
@@ -27,7 +28,9 @@ use UnexpectedValueException;
  *  - a tie of yes = no: any of the tied up to the tied seats, none included —
  *    the chair may decide „nein“.
  *
- * Never for a candidate elected in another round of the election.
+ * Never for a candidate elected in another round of the election, nor for
+ * one standing in another round of the election that is opened and not
+ * sealed yet.
  *
  * Recorded once and never changed. Casting vote and run-off exclude each
  * other: no casting vote while a run-off of the round stands, and
@@ -136,6 +139,15 @@ class RecordCastingVote
      * which hands the decision back to the chair with A elected elsewhere
      * (gate j2g round 2, probe P1b). This check is the one that stops it.
      *
+     * The same path leaves A standing in an opened round of another contest
+     * that is not sealed yet: nobody knows whether A is elected there, and
+     * sealing it after the casting vote would elect A twice (gate j2i, D2).
+     * So the chair cannot decide for a member who stands as an approved
+     * candidate in an opened, unsealed, non-annulled round of the election
+     * either: fail closed, the chair names another candidate level in the tie
+     * or waits until that round is sealed. A draft does not count — once the
+     * casting vote elects A, `OpenRound` refuses a draft A stands in.
+     *
      * A sealed round whose stored votes cannot be counted cannot say who is
      * elected there: the casting vote is refused, never recorded on a guess.
      *
@@ -178,6 +190,27 @@ class RecordCastingVote
             if ($candidate !== null) {
                 throw new ElectionCandidateBlockedException(sprintf('The chair cannot decide for a candidate who is elected in the round "%s" of the election already; decide for another candidate level in the tie.', $other->title), (int) $candidate->einundzwanzig_pleb_id, $other->title);
             }
+        }
+
+        $undecided = ElectionRound::query()
+            ->where('election_event_id', $round->election_event_id)
+            ->whereKeyNot($round->getKey())
+            ->whereNotNull('opened_at')
+            ->whereNull('closed_at')
+            ->whereNull('annulled_at')
+            ->whereHas('candidates', fn (Builder $query): Builder => $query->whereIn('einundzwanzig_pleb_id', $members)->where('status', ElectionCandidateStatus::Approved))
+            ->with('candidates')
+            ->orderBy('position')
+            ->orderBy('id')
+            ->first();
+
+        if ($undecided !== null) {
+            $candidate = $undecided->candidates
+                ->filter(fn (ElectionCandidate $candidate): bool => in_array((int) $candidate->einundzwanzig_pleb_id, $members, true) && $candidate->status === ElectionCandidateStatus::Approved)
+                ->sortBy('id')
+                ->first();
+
+            throw new ElectionCandidateBlockedException(sprintf('The chair cannot decide for a candidate who also stands in the opened round "%s" of the election, which is not sealed, so nobody knows yet whether they are elected there; decide for another candidate level in the tie, or seal that round first.', $undecided->title), (int) $candidate?->einundzwanzig_pleb_id, $undecided->title);
         }
     }
 }
