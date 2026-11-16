@@ -32,6 +32,7 @@
  *    those target states.
  */
 
+use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Exceptions\ElectionActionRefusedException;
 use App\Exceptions\ElectionCandidateBlockedException;
@@ -39,6 +40,7 @@ use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
+use App\Models\ElectionCastingVote;
 use App\Models\ElectionRound;
 use App\Services\Election\Candidacies;
 use App\Services\Election\CloseRound;
@@ -403,3 +405,30 @@ it('K annulled after it elected A: the casting vote for A is taken', function (s
         ->and(invariantElected($election)[$a->id])->toBe(['Vorsitz']);
     expectNobodyElectedTwice($election);
 })->with('chosen position');
+
+it('A standing in an opened, unsealed round of another election does not hold back the casting vote for A in this one', function () {
+    [$board] = electionBoard(1);
+    $election = Election::factory()->create();
+    $vorsitz = draftElectionRound(['position' => 1, 'title' => 'Vorsitz', 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 0, election: $election);
+    [$a, $b] = [electionVoter(), electionVoter()];
+    invariantStand($vorsitz, $a, $board);
+    invariantStand($vorsitz, $b, $board);
+    $voters = [electionVoter(), electionVoter()];
+    $vorsitz = app(OpenRound::class)->handle($vorsitz->fresh());
+    castElectionBallot($vorsitz, $voters[0], [invariantCandidate($vorsitz, $a)->id => 'for']);
+    castElectionBallot($vorsitz, $voters[1], [invariantCandidate($vorsitz, $b)->id => 'for']);
+    $vorsitz = app(CloseRound::class)->handle($vorsitz);
+
+    $other = Election::factory()->create();
+    $otherKasse = draftElectionRound(['position' => 1, 'title' => 'Kasse E2', 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 0, election: $other);
+    invariantStand($otherKasse, $a, $board);
+    $otherKasse = app(OpenRound::class)->handle($otherKasse->fresh());
+    expect($otherKasse->opened_at)->not->toBeNull()
+        ->and($otherKasse->closed_at)->toBeNull()
+        ->and(invariantCandidate($otherKasse, $a)->status)->toBe(ElectionCandidateStatus::Approved);
+
+    expect(invariantCast($vorsitz, $board, [$a]))->toBe('ok')
+        ->and(ElectionCastingVote::query()->where('election_round_id', $vorsitz->id)->value('candidate_ids'))->toBe([(int) invariantCandidate($vorsitz, $a)->id])
+        ->and(invariantElected($election)[$a->id])->toBe(['Vorsitz']);
+    expectNobodyElectedTwice($election);
+});
