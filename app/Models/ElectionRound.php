@@ -183,6 +183,27 @@ class ElectionRound extends Model
     }
 
     /**
+     * The event ids of every vote of this round, sorted — the published list
+     * of plan decision E4. Empty until the round is sealed, so nobody can
+     * watch the list grow while the round is open. An id is a hash over the
+     * signed vote including a secret nonce from the member's browser
+     * (`VoteEvent`): it proves a vote is in, never what it says or whose it is.
+     * The manifest's `vote_event_ids_hash` is the hash of this list.
+     *
+     * @return list<string>
+     */
+    public function publishedVoteEventIds(): array
+    {
+        if (! $this->isSealed()) {
+            return [];
+        }
+
+        return $this->votes()->toBase()->pluck('event_id')
+            ->map(fn (mixed $id): string => (string) $id)
+            ->sort(SORT_STRING)->values()->all();
+    }
+
+    /**
      * What this round is at `$now`.
      *
      * Derived on every read instead of stored, so that no job has to close a

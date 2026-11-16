@@ -75,6 +75,11 @@ class MemberProposal extends Model
     /**
      * What to print for an author. An erased member has no profile and a
      * tombstone where the npub was — neither is a name, and neither is shown.
+     *
+     * Without a profile name the whole npub stands in for it, never a cut
+     * one: on a ballot or in a result a name is not shortened (checklist
+     * Q11), and 24 characters of an npub identify nobody. Every place that
+     * prints it lets a long word wrap.
      */
     public static function authorNameOf(?EinundzwanzigPleb $pleb): string
     {
@@ -83,7 +88,7 @@ class MemberProposal extends Model
         }
 
         return $pleb->profile?->name
-            ?: ($pleb->profile?->display_name ?: (string) str($pleb->npub)->limit(24));
+            ?: ($pleb->profile?->display_name ?: (string) $pleb->npub);
     }
 
     public function authorName(): string

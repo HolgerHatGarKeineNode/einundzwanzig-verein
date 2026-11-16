@@ -4,6 +4,7 @@ use App\Enums\ElectionBallotRefusal;
 use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionFeeRule;
+use App\Enums\ElectionOutcome;
 use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionBallotRefusedException;
 use App\Exceptions\ElectionBallotWriteException;
@@ -15,6 +16,7 @@ use App\Models\ElectionRound;
 use App\Models\MemberProposal;
 use App\Services\Election\Candidacies;
 use App\Services\Election\CastBallot;
+use App\Services\Election\ElectionStewardship;
 use App\Services\Election\ElectoralRoll;
 use App\Services\Election\TallyResult;
 use App\Services\Election\TallyRound;
@@ -482,11 +484,33 @@ new class extends Component
     }
 
     /**
-     * Who holds which office after the election: per round that members
-     * stood in, the names elected there or in its run-offs, and how many
-     * seats stay empty. Null until every round is closed.
+     * Rounds that are sealed and revealed but whose stored votes could not be
+     * counted (`results()` skipped them). They show "Ergebnis nicht lesbar"
+     * instead of a promise that the result is coming; the board checks them.
      *
-     * @return list<array{title: string, seats: int, names: list<string>, annulled: bool, open: int}>|null
+     * @return list<int>
+     */
+    #[Computed]
+    public function unreadable(): array
+    {
+        return $this->allRounds
+            ->filter(fn (ElectionRound $round): bool => $round->isSealed()
+                && ($round->reveal_at === null || ! $round->reveal_at->isFuture())
+                && ! isset($this->results[$round->getKey()]))
+            ->map(fn (ElectionRound $round): int => (int) $round->getKey())
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Who holds which office after the election: per office, the names
+     * elected in its round or that round's run-offs, and how many seats stay
+     * empty. An annulled round that was repeated is folded into its repeat,
+     * which carries the office's plain title; a struck round never ran.
+     * `undecided` says the board may still add a run-off or a repeat, so the
+     * page must not read as final. Null until every round is closed.
+     *
+     * @return list<array{title: string, seats: int, names: list<string>, annulled: bool, struck: bool, open: int, undecided: bool}>|null
      */
     #[Computed]
     public function outcome(): ?array
@@ -495,27 +519,92 @@ new class extends Component
             return null;
         }
 
+        $stewardship = app(ElectionStewardship::class);
+        $repeatSuffix = ' ('.__('Wiederholung').')';
         $rows = [];
 
         foreach ($this->allRounds->whereNull('parent_round_id') as $round) {
+            $isAnnulled = $round->annulled_at !== null;
+
+            // Repeated: the repeat's own row says what became of the office.
+            if ($isAnnulled && $round->opened_at !== null && ! $stewardship->awaitsRepeat($round)) {
+                continue;
+            }
+
+            $chain = $this->allRounds->filter(fn (ElectionRound $each): bool => $this->rootIdOf($each) === $round->getKey());
             $names = [];
 
-            foreach ($this->allRounds->filter(fn (ElectionRound $each): bool => $this->rootIdOf($each) === $round->getKey()) as $each) {
+            foreach ($chain as $each) {
                 foreach ($this->results[$each->getKey()]->elected ?? [] as $candidateId) {
                     $names[] = $this->candidateName($each, $candidateId);
                 }
             }
 
+            $open = max(0, $round->seats - count($names));
+            $last = $chain->reject(fn (ElectionRound $each): bool => $each->annulled_at !== null)->sortBy('id')->last();
+            $lastResult = $last === null ? null : ($this->results[$last->getKey()] ?? null);
+
             $rows[] = [
-                'title' => $round->title,
+                'title' => str_ends_with($round->title, $repeatSuffix) ? substr($round->title, 0, -strlen($repeatSuffix)) : $round->title,
                 'seats' => $round->seats,
                 'names' => $names,
-                'annulled' => $round->annulled_at !== null,
-                'open' => max(0, $round->seats - count($names)),
+                'annulled' => $isAnnulled && $round->opened_at !== null,
+                'struck' => $isAnnulled && $round->opened_at === null,
+                'open' => $open,
+                'undecided' => $open > 0 && (
+                    ($isAnnulled && $round->opened_at !== null)
+                    || ($last !== null && in_array((int) $last->getKey(), $this->unreadable, true))
+                    || ($lastResult !== null && $lastResult->outcome === ElectionOutcome::Tie && $lastResult->castingVote === null)
+                    || ($lastResult !== null && $lastResult->outcome === ElectionOutcome::Understaffed && $lastResult->rule === ElectionCountingRule::SingleMajority && $lastResult->elected === [])
+                ),
             ];
         }
 
         return $rows;
+    }
+
+    /**
+     * The event ids of every vote in a round whose result is shown, sorted:
+     * the published list a member finds their own "Kennung" in (plan
+     * decision E4). Compared in the browser; there is no endpoint to ask.
+     *
+     * @return array<int, list<string>>
+     */
+    #[Computed]
+    public function receipts(): array
+    {
+        $roundIds = array_keys($this->results);
+
+        if ($roundIds === []) {
+            return [];
+        }
+
+        return $this->allRounds
+            ->filter(fn (ElectionRound $round): bool => in_array($round->id, $roundIds, true))
+            ->mapWithKeys(fn (ElectionRound $round): array => [$round->id => $round->publishedVoteEventIds()])
+            ->all();
+    }
+
+    /**
+     * Open rounds whose roll the member is not on although the fee rule lets
+     * them vote now: paid after the round opened outside the payment path,
+     * or a status changed since. The top card must not say "Du darfst
+     * wählen." next to the round that says the opposite.
+     *
+     * @return Collection<int, ElectionRound>
+     */
+    #[Computed]
+    public function offRollOpenRounds(): Collection
+    {
+        if (! $this->isEntitled) {
+            return collect();
+        }
+
+        return $this->allRounds->filter(function (ElectionRound $round): bool {
+            $standing = $this->standing[$round->getKey()];
+
+            return $standing['state'] === ElectionRoundState::Open && ! $standing['onRoll'];
+        })->values();
     }
 
     /**
@@ -825,7 +914,7 @@ new class extends Component
 
     protected function clearCaches(): void
     {
-        unset($this->rounds, $this->allRounds, $this->standing, $this->ballotRounds, $this->results, $this->meeting, $this->outcome, $this->ownCandidacies, $this->withdrawableIds, $this->openForCandidacy, $this->primaryAction, $this->phase, $this->election, $this->elections);
+        unset($this->rounds, $this->allRounds, $this->standing, $this->ballotRounds, $this->results, $this->unreadable, $this->receipts, $this->offRollOpenRounds, $this->meeting, $this->outcome, $this->ownCandidacies, $this->withdrawableIds, $this->openForCandidacy, $this->primaryAction, $this->phase, $this->election, $this->elections);
     }
 };
 ?>
@@ -843,7 +932,7 @@ new class extends Component
 
 {{-- pb-32: the floating "Connect with Nostr" button of window.nostr.js sits
      at the bottom of the viewport; the last line must scroll clear of it. --}}
-<div class="mx-auto w-full max-w-5xl pb-32" @if ($this->election !== null) wire:poll.5s="syncRounds" @endif>
+<div class="election-ui mx-auto w-full max-w-5xl pb-32" @if ($this->election !== null) wire:poll.5s="syncRounds" @endif>
     @if (! $this->isMember)
         <div class="mx-auto max-w-2xl space-y-6">
             <flux:callout variant="warning" icon="exclamation-circle">
@@ -939,19 +1028,33 @@ new class extends Component
                 {{-- While a ballot is open, and while the receipt of a vote just
                      cast waits for its result, the round comes first on a phone
                      too: the receipt must not jump below the standing box. --}}
+                {{-- Once a result is out, it comes first as well: on the meeting
+                     day the member came for the result, not for the signer test. --}}
                 @php
                     $roundFirst = $this->ballotRounds->isNotEmpty()
+                        || $this->results !== []
                         || collect($this->standing)->contains(fn (array $each, int $id): bool => $each['eventId'] !== null && ! isset($this->results[$id]) && $each['state'] !== ElectionRoundState::Annulled);
+                    $offRoll = $this->offRollOpenRounds->first();
+                    $canVote = $this->isEntitled && $offRoll === null;
                 @endphp
                 <aside @class(['space-y-6 lg:col-start-2 lg:row-start-1', 'order-last lg:order-none' => $roundFirst]) aria-label="{{ __('Dein Stand') }}">
                     <section aria-labelledby="eligibility" @class([
                         'rounded-lg border p-5',
-                        'border-success/40 bg-bg-surface' => $this->isEntitled,
-                        'border-orange-700 bg-bg-surface' => ! $this->isEntitled,
+                        'border-success/40 bg-bg-surface' => $canVote,
+                        'border-orange-700 bg-bg-surface' => ! $canVote,
                     ])>
                         <h2 id="eligibility" class="text-lg font-bold text-text-primary">{{ __('Deine Wahlberechtigung') }}</h2>
 
-                        @if ($this->isEntitled)
+                        @if ($offRoll !== null)
+                            <p class="mt-3 flex items-start gap-2 text-base text-text-primary" data-test="eligibility-off-roll">
+                                <flux:icon.exclamation-triangle class="mt-0.5 size-5 shrink-0 text-orange-500" aria-hidden="true" />
+                                <span class="min-w-0 break-words">{{ __('Für „:round“ stehst du nicht im Wählerverzeichnis.', ['round' => $offRoll->title]) }}</span>
+                            </p>
+                            <p class="mt-2 text-sm leading-normal text-text-secondary">
+                                {{ __('Nach der Beitragsregel darfst du wählen.') }}
+                                {{ __('Melde dich im Call beim Vorstand, er kann dich nachtragen.') }}
+                            </p>
+                        @elseif ($this->isEntitled)
                             <p class="mt-3 flex items-start gap-2 text-base text-text-primary">
                                 <flux:icon.check-circle class="mt-0.5 size-5 shrink-0 text-success" aria-hidden="true" />
                                 <span>{{ __('Du darfst wählen.') }}</span>
@@ -984,7 +1087,9 @@ new class extends Component
                         @endif
                     </section>
 
-                    <x-election-signer-check :pubkey="$this->viewerPubkey" />
+                    @unless ($this->phase === 'result')
+                        <x-election-signer-check :pubkey="$this->viewerPubkey" />
+                    @endunless
                 </aside>
 
                 {{-- The timeline is the page: one step is open, it holds the action. --}}
@@ -1105,7 +1210,9 @@ new class extends Component
                                                         <form wire:submit="submitCandidacy" class="space-y-4 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-5">
                                                             <p class="max-w-prose text-base leading-normal text-text-primary">
                                                                 @if ($this->ownCandidacies->isEmpty())
-                                                                    {{ __('Du willst mitgestalten? Reich hier deine Kandidatur ein. Der Vorstand gibt sie frei, dann sehen alle Mitglieder deine Vorstellung.') }}
+                                                                    {{ __('Du willst mitgestalten? Reich hier deine Kandidatur ein.') }}
+                                                                    {{ __('Der Vorstand gibt sie frei.') }}
+                                                                    {{ __('Dann sehen alle Mitglieder deine Vorstellung.') }}
                                                                 @else
                                                                     {{ __('Du kannst zusätzlich für ein weiteres Amt kandidieren.') }}
                                                                 @endif
@@ -1164,8 +1271,13 @@ new class extends Component
                                                         <flux:icon.arrow-top-right-on-square class="size-4 shrink-0 text-text-secondary" aria-hidden="true" />
                                                     </a>
                                                 </p>
-                                            @elseif ($this->meeting['at'])
-                                                <p class="mt-1 text-sm text-text-secondary">{{ __('Den Link zum Call findest du am Sitzungstag hier.') }}</p>
+                                            @elseif ($this->meeting['at'] && ! $isDone)
+                                                {{-- Only what holds: before the day the link waits for it; on the day without a link, say there is none yet. --}}
+                                                @if ($isCurrent || $this->displayTime($this->meeting['at'], 'Y-m-d') <= $this->displayTime(now(), 'Y-m-d'))
+                                                    <p class="mt-1 text-sm text-text-secondary" data-test="call-link-missing">{{ __('Der Vorstand hat noch keinen Link zum Call hinterlegt.') }}</p>
+                                                @elseif (filled($this->election->call_url))
+                                                    <p class="mt-1 text-sm text-text-secondary">{{ __('Den Link zum Call findest du am Sitzungstag hier.') }}</p>
+                                                @endif
                                             @endif
                                             @if ($isCurrent && $this->ballotRounds->isEmpty())
                                                 <p class="mt-3 max-w-prose text-base leading-normal text-text-primary">
@@ -1175,30 +1287,48 @@ new class extends Component
                                             @break
 
                                         @case('result')
+                                            @php
+                                                $undecided = collect($this->outcome ?? [])->where('undecided', true)->pluck('title');
+                                            @endphp
                                             <p class="mt-1 text-sm text-text-secondary">
-                                                @if ($isCurrent)
-                                                    {{ __('Alle Wahlgänge sind geschlossen.') }}
-                                                @else
+                                                @if (! $isCurrent)
                                                     {{ __('Direkt nach dem letzten Wahlgang') }}
+                                                @elseif ($undecided->isNotEmpty())
+                                                    {{ __('Alle bisherigen Wahlgänge sind geschlossen.') }}
+                                                @else
+                                                    {{ __('Alle Wahlgänge sind geschlossen.') }}
                                                 @endif
                                             </p>
                                             @if ($isCurrent && $this->outcome !== null)
-                                                <section class="mt-4 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-5" aria-labelledby="after-election">
-                                                    <h4 id="after-election" class="text-lg font-bold text-text-primary">{{ __('Zustand nach der Wahl') }}</h4>
+                                                <section class="mt-4 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-5" aria-labelledby="after-election" data-test="after-election">
+                                                    <h4 id="after-election" class="text-lg font-bold text-text-primary">{{ $undecided->isNotEmpty() ? __('Stand jetzt') : __('Zustand nach der Wahl') }}</h4>
+                                                    @if ($undecided->isNotEmpty())
+                                                        {{-- Between a close and the run-off or repeat the board creates next, nothing here is final yet. --}}
+                                                        <p class="mt-2 max-w-prose break-words text-base leading-normal text-text-primary" data-test="after-election-pending">
+                                                            {{ trans_choice('Für :offices kann noch ein Wahlgang folgen.|Für :offices können noch Wahlgänge folgen.', $undecided->count(), ['offices' => $undecided->map(fn (string $title): string => '„'.$title.'“')->join(', ', ' und ')]) }}
+                                                            {{ __('Ob, sagt der Vorstand im Call.') }}
+                                                        </p>
+                                                    @endif
                                                     <dl class="mt-3 divide-y divide-border-subtle">
                                                         @foreach ($this->outcome as $office)
                                                             <div wire:key="after-{{ $loop->index }}" class="grid gap-1 py-3 sm:grid-cols-[12rem_minmax(0,1fr)] sm:gap-4">
-                                                                <dt class="text-base text-text-secondary">{{ $office['title'] }}</dt>
-                                                                <dd class="text-base text-text-primary">
-                                                                    @if ($office['annulled'])
-                                                                        {{ __('Wahlgang aufgehoben, das Amt ist nicht neu besetzt') }}
+                                                                <dt class="break-words text-base text-text-secondary">{{ $office['title'] }}</dt>
+                                                                <dd class="min-w-0 break-words text-base text-text-primary">
+                                                                    @if ($office['struck'])
+                                                                        {{ __('Wahlgang gestrichen, das Amt ist nicht besetzt') }}
+                                                                    @elseif ($office['annulled'])
+                                                                        {{ __('Wahlgang annulliert, das Amt ist nicht besetzt') }}
                                                                     @else
                                                                         @if ($office['names'] !== [])
                                                                             <span class="font-bold">{{ implode(', ', $office['names']) }}</span>
                                                                         @endif
                                                                         @if ($office['open'] > 0)
                                                                             <span @class(['block' => $office['names'] !== [], 'text-text-secondary'])>
-                                                                                {{ trans_choice(':count Sitz bleibt unbesetzt|:count Sitze bleiben unbesetzt', $office['open'], ['count' => $office['open']]) }}
+                                                                                @if ($office['undecided'])
+                                                                                    {{ trans_choice(':count Sitz ist noch offen|:count Sitze sind noch offen', $office['open'], ['count' => $office['open']]) }}
+                                                                                @else
+                                                                                    {{ trans_choice(':count Sitz bleibt unbesetzt|:count Sitze bleiben unbesetzt', $office['open'], ['count' => $office['open']]) }}
+                                                                                @endif
                                                                             </span>
                                                                         @endif
                                                                     @endif
@@ -1231,13 +1361,18 @@ new class extends Component
                                                         <flux:badge size="sm"
                                                                     :color="match (true) { $result !== null => 'zinc', $state === ElectionRoundState::Open => 'green', $state === ElectionRoundState::Closed, $state === ElectionRoundState::Annulled => 'zinc', default => 'yellow' }"
                                                                     :icon="match (true) { $result !== null => 'check', $state === ElectionRoundState::Open => 'play', $state === ElectionRoundState::Closed => 'lock-closed', $state === ElectionRoundState::Annulled => 'x-mark', default => 'clock' }">
-                                                            {{ match (true) { $result !== null => __('Ausgezählt'), $state === ElectionRoundState::Open => __('Offen'), $state === ElectionRoundState::Closed => __('Geschlossen'), $state === ElectionRoundState::Annulled => __('Aufgehoben'), default => __('Wartet') } }}
+                                                            {{ match (true) { $result !== null => __('Ausgezählt'), $state === ElectionRoundState::Open => __('Offen'), $state === ElectionRoundState::Closed => __('Geschlossen'), $state === ElectionRoundState::Annulled => __('Annulliert'), default => __('Wartet') } }}
                                                         </flux:badge>
                                                     </div>
 
                                                     @if ($isBallot)
                                                         <x-election-ballot :round="$round" :election="$this->election" :pubkey="$this->viewerPubkey" />
-                                                    @elseif ($standing['eventId'] !== null && $result === null)
+                                                    @elseif (in_array($round->id, $this->unreadable, true))
+                                                        {{-- Sealed, but the stored votes cannot be counted. Calm, no command: the board checks it. --}}
+                                                        <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary" data-test="unreadable-{{ $round->id }}">
+                                                            {{ __('Ergebnis nicht lesbar. Der Vorstand prüft das.') }}
+                                                        </p>
+                                                    @elseif ($standing['eventId'] !== null && $result === null && $state !== ElectionRoundState::Annulled)
                                                         {{-- Cast on this page: bring the receipt into view and give it the focus. --}}
                                                         <div role="status" class="mt-3 rounded-lg border border-success/50 bg-bg-surface p-4 sm:p-5"
                                                              @if (in_array($note, ['now', 'late'], true))
@@ -1246,21 +1381,22 @@ new class extends Component
                                                             <h5 x-ref="receipt" tabindex="-1" data-receipt
                                                                 class="flex items-start gap-3 rounded-sm text-lg font-bold leading-snug text-text-primary focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-orange-500">
                                                                 <flux:icon.check-circle class="mt-0.5 size-6 shrink-0 text-success" aria-hidden="true" />
+                                                                {{-- Arrived, not counted: counting happens when the board closes the round. --}}
                                                                 <span>
                                                                     @if ($note === 'late')
-                                                                        {{ __('Deine Stimme war schon angekommen. Sie ist gezählt.') }}
+                                                                        {{ __('Deine Stimme war schon angekommen.') }}
                                                                     @elseif ($note === 'now')
-                                                                        {{ __('Deine Stimme ist gezählt.') }}
+                                                                        {{ __('Deine Stimme ist angekommen.') }}
                                                                     @else
-                                                                        {{ __('Du hast in diesem Wahlgang schon gewählt. Deine Stimme ist gezählt.') }}
+                                                                        {{ __('Du hast in diesem Wahlgang schon gewählt.') }}
                                                                     @endif
                                                                 </span>
                                                             </h5>
-                                                            <p class="mt-2 pl-9 text-sm leading-normal text-text-secondary">
-                                                                {{ __('Kennung deiner Stimme: :id', ['id' => $this->shortEventId($standing['eventId'])]) }}
-                                                                <span class="block">{{ __('Sie ist der Fingerabdruck deiner signierten Stimme und belegt, dass genau diese angekommen ist. Notieren musst du sie nicht.') }}</span>
+                                                            <p class="mt-2 text-sm leading-normal text-text-secondary sm:pl-9">
+                                                                {{ __('Kennung deiner Stimme:') }} <span class="font-bold text-text-primary tabular-nums" data-test="receipt-id">{{ $this->shortEventId($standing['eventId']) }}</span>
+                                                                <span class="block">{{ __('Nach dem Schließen steht sie hier in der Liste aller Kennungen.') }}</span>
                                                             </p>
-                                                            <p class="mt-1 pl-9 text-sm leading-normal text-text-secondary">
+                                                            <p class="mt-1 text-sm leading-normal text-text-secondary sm:pl-9">
                                                                 {{ $state === ElectionRoundState::Open ? __('Das Ergebnis steht hier, sobald der Vorstand den Wahlgang schließt.') : __('Der Wahlgang ist geschlossen. Das Ergebnis steht hier, sobald es ausgezählt ist.') }}
                                                             </p>
                                                         </div>
@@ -1268,9 +1404,11 @@ new class extends Component
                                                         <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                                                             {{ __('Du stehst für diesen Wahlgang nicht im Wählerverzeichnis.') }}
                                                             @if ($this->ineligibleBecause === 'fee')
-                                                                {{ __('Wer den Beitrag bezahlt, solange der Wahlgang offen ist, kommt automatisch dazu. Danach erscheint hier dein Stimmzettel.') }}
+                                                                {{ __('Bezahlst du, solange er offen ist, kommst du automatisch dazu.') }}
+                                                                {{ __('Dann erscheint hier dein Stimmzettel.') }}
                                                             @else
-                                                                {{ __('Ins Verzeichnis kommt, wer beim Öffnen des Wahlgangs wählen darf oder seinen Beitrag bezahlt, solange er offen ist. Melde dich im Call beim Vorstand, wenn das nicht stimmt.') }}
+                                                                {{ __('Ins Verzeichnis kommt, wer beim Öffnen wählen darf.') }}
+                                                                {{ __('Stimmt das bei dir nicht, melde dich im Call beim Vorstand.') }}
                                                             @endif
                                                         </p>
                                                         @if ($this->ineligibleBecause === 'fee')
@@ -1298,11 +1436,23 @@ new class extends Component
                                                             {{ $round->isSealed() && $round->reveal_at ? __('Das Ergebnis steht hier ab :time Uhr.', ['time' => $this->displayTime($round->reveal_at, 'd.m.Y H:i')]) : __('Das Ergebnis steht hier, sobald es ausgezählt ist.') }}
                                                         </p>
                                                     @elseif ($state === ElectionRoundState::Annulled)
-                                                        <p class="mt-2 text-base text-text-secondary">{{ __('Der Vorstand hat diesen Wahlgang aufgehoben. Er zählt nicht.') }}</p>
+                                                        {{-- The minutes' words: a counted round keeps its result, marked invalid. --}}
+                                                        <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary" data-test="annulled-{{ $round->id }}">
+                                                            @if ($round->opened_at === null)
+                                                                {{ __('Der Vorstand hat diesen Wahlgang gestrichen.') }}
+                                                            @elseif ($round->closed_at !== null)
+                                                                {{ __('Annulliert nach dem Auszählen.') }}
+                                                                {{ __('Das ausgezählte Ergebnis ist ungültig.') }}
+                                                            @else
+                                                                {{ __('Der Vorstand hat diesen Wahlgang annulliert.') }}
+                                                                {{ __('Er wird nicht ausgezählt.') }}
+                                                            @endif
+                                                        </p>
                                                     @endif
 
                                                     @if ($result !== null)
-                                                        <x-election-round-result :round="$round" :result="$result" :ballots="$round->votes()->count()" :voted="$standing['eventId'] !== null" :run-off="$this->runOffOf($round)" />
+                                                        <x-election-round-result :round="$round" :result="$result" :ballots="$round->votes()->count()" :voted="$standing['eventId'] !== null" :run-off="$this->runOffOf($round)"
+                                                                                 :receipts="$this->receipts[$round->id] ?? []" :own-event-id="$standing['eventId']" />
                                                     @endif
                                                 </li>
                                             @endforeach

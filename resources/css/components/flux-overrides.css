@@ -131,8 +131,8 @@
 }
 
 /*
- * Accessibility floor for Flux controls on the election pages (board page,
- * share view, minutes; scoped by `.election-ui` so legacy pages and the group
+ * Accessibility floor for Flux controls on the election pages (member page,
+ * board page, share view, minutes; scoped by `.election-ui` so legacy pages and the group
  * package keep their look until they are measured themselves).
  *
  * Deliberately outside @layer: Flux sets these values with utilities
@@ -180,4 +180,19 @@
    the heading keeps clear of it (24px dialog padding + 40px = 64px ≥ 60px). */
 .election-ui dialog[data-modal] [data-flux-heading] {
     padding-inline-end: 2.5rem;
+}
+
+/* WCAG 2.3.3 / checklist Q20 — with reduced motion asked for, nothing on an
+   election page moves: no spinner (Flux keeps an `animate-spin` svg running
+   inside every hidden `data-flux-loading-indicator`), no dialog scale-in, no
+   chevron turn. State still shows through the static icon and the words. */
+@media (prefers-reduced-motion: reduce) {
+    .election-ui *,
+    .election-ui *::before,
+    .election-ui *::after {
+        animation: none !important;
+        transition-duration: 0s !important;
+        transition-delay: 0s !important;
+        scroll-behavior: auto !important;
+    }
 }

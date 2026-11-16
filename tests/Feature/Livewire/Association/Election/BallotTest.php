@@ -11,7 +11,11 @@ use App\Models\Profile;
 use App\Services\Election\CastBallot;
 use App\Services\Election\CloseRound;
 use App\Services\Election\CreateRunOff;
+use App\Services\Election\ElectionStewardship;
 use App\Services\Election\OpenRound;
+use App\Services\Election\Tally;
+use App\Services\Election\TallyResult;
+use App\Services\Election\TallyRound;
 use App\Services\Election\VoteEvent;
 use App\Services\Nostr\EventSigning;
 use App\Support\NostrAuth;
@@ -137,7 +141,7 @@ it('refuses to prepare a ballot that does not fit the rule', function () {
     expect($answer)->toBe(['message' => 'Dieser Stimmzettel ist nicht gültig ausgefüllt.']);
 });
 
-it('casts a signed vote and says it is counted, with the short event id', function () {
+it('casts a signed vote and says it arrived, not yet counted, with the short event id', function () {
     $round = namedDraftRound();
     $member = electionVoter();
     app(OpenRound::class)->handle($round);
@@ -146,7 +150,8 @@ it('casts a signed vote and says it is counted, with the short event id', functi
 
     $page->call('castBallot', $round->id, $event)
         ->assertReturned(['status' => 'counted'])
-        ->assertSee('Deine Stimme ist gezählt.')
+        ->assertSee('Deine Stimme ist angekommen.')
+        ->assertDontSee('gezählt.')
         ->assertSee(substr($event['id'], 0, 8).'…'.substr($event['id'], -8))
         ->assertDontSee('Leer abgeben, für keine Person');
 
@@ -170,14 +175,15 @@ it('keeps neither the choice nor the event in the component state after a cast',
         ->and($snapshot)->not->toContain('"for"');
 });
 
-it('shows a member who already voted that their vote is counted', function () {
+it('shows a member who already voted that their vote is in, without calling it counted while the round is open', function () {
     $round = namedDraftRound();
     $member = electionVoter();
     app(OpenRound::class)->handle($round);
     $event = castElectionBallot($round, $member);
 
     ballotPage($member)
-        ->assertSee('Du hast in diesem Wahlgang schon gewählt. Deine Stimme ist gezählt.')
+        ->assertSee('Du hast in diesem Wahlgang schon gewählt.')
+        ->assertDontSee('Deine Stimme ist gezählt.')
         ->assertSee(substr($event['id'], 0, 8))
         ->assertDontSee('Leer abgeben, für keine Person');
 });
@@ -191,7 +197,7 @@ it('treats a retry of the same signed vote as counted, and a second vote as alre
     // The answer of the first cast got lost; the browser sends the same event again.
     ballotPage($member)->call('castBallot', $round->id, $event)
         ->assertReturned(['status' => 'counted'])
-        ->assertSee('Deine Stimme war schon angekommen. Sie ist gezählt.');
+        ->assertSee('Deine Stimme war schon angekommen.');
 
     $this->travel(2)->seconds();
     $second = signedElectionVote($round, $member, [candidateIdOf($round, 'Bob Brenner') => 'for']);
@@ -217,7 +223,7 @@ it('asks after a lost answer whether the vote arrived', function () {
 
     $page->call('checkBallot', $round->id, $event['id'])
         ->assertReturned('counted')
-        ->assertSee('Deine Stimme war schon angekommen. Sie ist gezählt.');
+        ->assertSee('Deine Stimme war schon angekommen.');
 });
 
 it('tells the member in German why a vote was refused', function (ElectionBallotRefusal $reason) {
@@ -331,7 +337,7 @@ it('does not claim a missing vote when the member reached the review step and th
 
     $page->call('syncRounds')
         ->assertSee('Gewählt ist Alice Ambrosius.')
-        ->assertSee('Deine Stimme ist dabei.')
+        ->assertSee('steht in der Liste.')
         ->assertDontSee($line);
 });
 
@@ -375,13 +381,13 @@ it('shows the result only after the round is sealed, as counts without voters', 
     $page = ballotPage($voters[0])
         ->assertSee('Gewählt ist Alice Ambrosius.')
         ->assertSee('3 Stimmzettel abgegeben, davon 1 Enthaltung (leer).')
-        ->assertSee('Deine Stimme ist dabei.')
+        ->assertSee('steht in der Liste.')
         ->assertSee('Zustand nach der Wahl')
         ->assertDontSee('Wählerin Xenia')
         ->assertDontSee('Wähler Walter');
 
     expect($page->instance()->phase)->toBe('result')
-        ->and($page->instance()->outcome)->toBe([['title' => 'Präsidium', 'seats' => 1, 'names' => ['Alice Ambrosius'], 'annulled' => false, 'open' => 0]]);
+        ->and($page->instance()->outcome)->toBe([['title' => 'Präsidium', 'seats' => 1, 'names' => ['Alice Ambrosius'], 'annulled' => false, 'struck' => false, 'open' => 0, 'undecided' => false]]);
 });
 
 it('names a tie, an even split of a single-majority round included, and leaves it to the chair', function (ElectionCountingRule $rule, string $sentence) {
@@ -396,7 +402,11 @@ it('names a tie, an even split of a single-majority round included, and leaves i
         ->assertSee($sentence)
         ->assertSee('Die/der Vorsitzende fällt den Stichentscheid.')
         ->assertDontSee('Stichwahl')
-        ->assertSee('1 Sitz bleibt unbesetzt');
+        // Undecided until the chair decides: not final, so no "bleibt unbesetzt".
+        ->assertSee('Stand jetzt')
+        ->assertSee('Für „Präsidium“ kann noch ein Wahlgang folgen.')
+        ->assertSee('1 Sitz ist noch offen')
+        ->assertDontSee('bleibt unbesetzt');
 })->with([
     'most votes, level' => [ElectionCountingRule::MostVotes, 'Gleichstand um 1 Sitz zwischen Alice Ambrosius, Bob Brenner.'],
     // An even split of every vote is a Stimmengleichheit (statutes Art. 6), not a missed majority.
@@ -546,7 +556,7 @@ it('offers the ballot of a second run-off and counts its winner in the result', 
     app(CloseRound::class)->handle($second);
 
     expect(ballotPage($voters[0])->instance()->outcome)
-        ->toBe([['title' => 'Präsidium', 'seats' => 1, 'names' => ['Alice Ambrosius'], 'annulled' => false, 'open' => 0]]);
+        ->toBe([['title' => 'Präsidium', 'seats' => 1, 'names' => ['Alice Ambrosius'], 'annulled' => false, 'struck' => false, 'open' => 0, 'undecided' => false]]);
 });
 
 it('tells an unpaid member off the roll that paying now adds them, and a paid one whom to ask', function () {
@@ -556,13 +566,16 @@ it('tells an unpaid member off the roll that paying now adds them, and a paid on
     $unpaid = EinundzwanzigPleb::factory()->active()->create();
 
     ballotPage($unpaid)
-        ->assertSee('Wer den Beitrag bezahlt, solange der Wahlgang offen ist, kommt automatisch dazu.')
+        ->assertSee('Bezahlst du, solange er offen ist, kommst du automatisch dazu.')
         ->assertSee('Jetzt Beitrag bezahlen')
         ->assertSee(route('association.profile', ['from' => 'election']), false)
         ->assertDontSee('Melde dich im Call beim Vorstand');
 
+    // Paid, so entitled by the fee rule, but not on the roll: the top card says the same as the round.
     ballotPage($lateComer)
-        ->assertSee('oder seinen Beitrag bezahlt, solange er offen ist. Melde dich im Call beim Vorstand, wenn das nicht stimmt.')
+        ->assertSee('Stimmt das bei dir nicht, melde dich im Call beim Vorstand.')
+        ->assertSee('Für „Präsidium“ stehst du nicht im Wählerverzeichnis.')
+        ->assertDontSee('Du darfst wählen.')
         ->assertDontSee('Jetzt Beitrag bezahlen');
 });
 
@@ -621,7 +634,8 @@ it('explains the vote id and moves the focus to the receipt right after the cast
     $page = ballotPage($member);
 
     $page->call('castBallot', $round->id, signedElectionVote($round, $member, [candidateIdOf($round, 'Alice Ambrosius') => 'for']))
-        ->assertSee('Sie ist der Fingerabdruck deiner signierten Stimme')
+        ->assertSee('Nach dem Schließen steht sie hier in der Liste aller Kennungen.')
+        ->assertDontSee('belegt, dass genau diese angekommen ist')
         ->assertSeeHtml('$refs.receipt.focus(');
 
     // Coming back later is no fresh cast: no jump.
@@ -661,4 +675,147 @@ it('says on a tied round that its run-off decided, not that the seat stays empty
         ->assertSee('Gleichstand um 1 Sitz zwischen Alice Ambrosius, Bob Brenner.')
         ->assertSee('Entschieden hat die Stichwahl darunter.')
         ->assertDontSee('Wie es weitergeht, sagt der Vorstand im Call.');
+});
+
+/*
+ * Plan decision E4: after the close, the sorted list of every vote event id
+ * of the round, the member's own marked. Not while the round is open.
+ * Mutation that must turn this red: show the list before the seal, or drop
+ * the sort.
+ */
+it('publishes the sorted vote ids of a counted round and marks the member\'s own', function () {
+    $round = namedDraftRound();
+    $voters = [electionVoter(), electionVoter(), electionVoter()];
+    app(OpenRound::class)->handle($round);
+    $ids = array_map(fn (EinundzwanzigPleb $voter): string => castElectionBallot($round, $voter)['id'], $voters);
+
+    ballotPage($voters[1])
+        ->assertDontSeeHtml('data-receipt="')
+        ->assertDontSee('Kennungen ansehen');
+
+    expect($round->fresh()->publishedVoteEventIds())->toBe([]);
+
+    app(CloseRound::class)->handle($round);
+
+    $sorted = $ids;
+    sort($sorted, SORT_STRING);
+    $page = ballotPage($voters[1])
+        ->assertSee('Alle 3 Kennungen ansehen')
+        ->assertSee('Steht deine Kennung hier, ist deine Stimme unter den 3 gezählten.')
+        ->assertSee('Was du gewählt hast, verrät sie nicht.')
+        ->assertSeeHtmlInOrder(array_map(fn (string $id): string => 'data-receipt="'.$id.'"', $sorted));
+
+    expect(substr_count($page->html(), 'data-own-receipt'))->toBe(1)
+        ->and($page->html())->toMatch('/data-receipt="'.$ids[1].'"\s+data-own-receipt/');
+});
+
+/*
+ * Board M2: an annulled round that was repeated folds into its repeat, which
+ * carries the office's own title. The counted-then-annulled round keeps the
+ * minutes' words. Mutation that must turn this red: list annulled rounds again.
+ */
+it('folds a repeated round into its repeat after the election and names an annulled count invalid', function () {
+    [$board] = electionBoard(1);
+    $round = namedDraftRound(['Alice Ambrosius', 'Bob Brenner']);
+    $voters = [electionVoter(), electionVoter()];
+    $stewardship = app(ElectionStewardship::class);
+    app(OpenRound::class)->handle($round);
+    castElectionBallot($round, $voters[0], [candidateIdOf($round, 'Bob Brenner') => 'for']);
+    app(CloseRound::class)->handle($round);
+    $stewardship->annul($round->fresh(), $board, 'Falsche Liste');
+    $repeat = $stewardship->repeat($round->fresh(), $board);
+    app(OpenRound::class)->handle($repeat);
+    castElectionBallot($repeat->fresh(), $voters[0], [candidateIdOf($repeat, 'Alice Ambrosius') => 'for']);
+    castElectionBallot($repeat->fresh(), $voters[1], [candidateIdOf($repeat, 'Alice Ambrosius') => 'for']);
+    app(CloseRound::class)->handle($repeat->fresh());
+
+    $page = ballotPage($voters[0])
+        ->assertSee('Zustand nach der Wahl')
+        ->assertSee('Annulliert nach dem Auszählen.')
+        ->assertSee('Das ausgezählte Ergebnis ist ungültig.')
+        ->assertDontSee('Wahlgang aufgehoben')
+        ->assertDontSee('wird nicht ausgezählt');
+
+    expect($page->instance()->outcome)->toBe([
+        ['title' => 'Präsidium', 'seats' => 1, 'names' => ['Alice Ambrosius'], 'annulled' => false, 'struck' => false, 'open' => 0, 'undecided' => false],
+    ]);
+});
+
+/*
+ * Member L3: between the close of an undecided round and the run-off the board
+ * creates next, the page does not read as final.
+ */
+it('says a run-off may follow after a round closes without a majority', function () {
+    $round = namedDraftRound(['Alice Ambrosius', 'Bob Brenner', 'Carla Christ']);
+    $voters = [electionVoter(), electionVoter(), electionVoter(), electionVoter()];
+    app(OpenRound::class)->handle($round);
+    castElectionBallot($round, $voters[0], [candidateIdOf($round, 'Alice Ambrosius') => 'for']);
+    castElectionBallot($round, $voters[1], [candidateIdOf($round, 'Alice Ambrosius') => 'for']);
+    castElectionBallot($round, $voters[2], [candidateIdOf($round, 'Bob Brenner') => 'for']);
+    castElectionBallot($round, $voters[3], [candidateIdOf($round, 'Carla Christ') => 'for']);
+    app(CloseRound::class)->handle($round);
+
+    ballotPage($voters[0])
+        ->assertSee('Alle bisherigen Wahlgänge sind geschlossen.')
+        ->assertSee('Stand jetzt')
+        ->assertSee('Für „Präsidium“ kann noch ein Wahlgang folgen.')
+        ->assertSee('1 Sitz ist noch offen')
+        ->assertDontSee('Alle Wahlgänge sind geschlossen.')
+        ->assertDontSee('bleibt unbesetzt');
+});
+
+/*
+ * Member L2: on the meeting day without a call link the page says there is
+ * none yet, instead of "findest du am Sitzungstag hier".
+ */
+it('does not promise the call link on the meeting day when the board set none', function () {
+    $this->travelTo(now()->setTimezone('Europe/Berlin')->setTime(12, 0)->utc());
+    $election = Election::factory()->announced()->create(['meeting_at' => now()->addHours(2), 'call_url' => null]);
+    namedDraftRound(election: $election);
+
+    ballotPage(electionVoter())
+        ->assertSee('Der Vorstand hat noch keinen Link zum Call hinterlegt.')
+        ->assertDontSee('Den Link zum Call findest du am Sitzungstag hier.');
+});
+
+/*
+ * Item n: a sealed round whose stored votes cannot be counted reads as
+ * "Ergebnis nicht lesbar" for members — no command, no promise that the
+ * result is coming — and the other rounds show their result. The tally
+ * failure is faked; the merge with j2c brings the real one.
+ */
+it('names an unreadable round calmly on the member page and shows the other results', function () {
+    $chair = namedDraftRound(['Alice Ambrosius', 'Bob Brenner']);
+    $cash = namedDraftRound(['Carla Christ'], title: 'Kasse', election: $chair->election);
+    $voter = electionVoter();
+
+    foreach ([$chair, $cash] as $round) {
+        app(OpenRound::class)->handle($round->fresh());
+        castElectionBallot($round->fresh(), $voter, [$round->candidates()->value('id') => 'for']);
+        app(CloseRound::class)->handle($round->fresh());
+    }
+
+    app()->instance(TallyRound::class, new class(app(Tally::class), $cash->id) extends TallyRound
+    {
+        public function __construct(Tally $tally, private int $unreadableId)
+        {
+            parent::__construct($tally);
+        }
+
+        public function effective(ElectionRound $round): TallyResult
+        {
+            if ($round->getKey() === $this->unreadableId) {
+                throw new UnexpectedValueException('stored choices do not parse');
+            }
+
+            return parent::effective($round);
+        }
+    });
+
+    ballotPage($voter)
+        ->assertSeeHtml('data-test="unreadable-'.$cash->id.'"')
+        ->assertSee('Ergebnis nicht lesbar. Der Vorstand prüft das.')
+        ->assertSee('Gewählt ist Alice Ambrosius.')
+        ->assertDontSee('Das Ergebnis steht hier, sobald es ausgezählt ist.')
+        ->assertDontSee('bleibt unbesetzt');
 });

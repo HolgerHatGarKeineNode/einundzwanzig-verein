@@ -34,6 +34,7 @@ use App\Models\PlebDmRelay;
 use App\Models\Profile;
 use App\Services\Election\CastBallot;
 use App\Services\Election\ElectionStewardship;
+use App\Services\Election\RecordCastingVote;
 use App\Services\Election\VoteEvent;
 use App\Services\Nostr\EventSigning;
 use App\Support\Board;
@@ -185,6 +186,30 @@ function e2eCast(ElectionRound $round, array $voter, array $candidate): string
     return $event['id'];
 }
 
+/**
+ * One vote of `$voter` with an explicit selection: member id of the candidate => for|yes|no.
+ *
+ * @param  array{id: int, secret: string}  $voter
+ * @param  array<int, string>  $choices
+ */
+function e2eCastChoices(ElectionRound $round, array $voter, array $choices): string
+{
+    $pleb = EinundzwanzigPleb::query()->findOrFail($voter['id']);
+    $selection = [];
+
+    foreach ($choices as $memberId => $choice) {
+        $selection[(int) $round->candidates()->where('einundzwanzig_pleb_id', $memberId)->value('id')] = $choice;
+    }
+
+    $template = VoteEvent::template($round->fresh(), $selection, now()->getTimestamp());
+    $template['tags'][] = ['nonce', bin2hex(random_bytes(32))];
+    $event = EventSigning::sign($voter['secret'], $template['kind'], $template['tags'], $template['content'], $template['created_at']);
+
+    app(CastBallot::class)->handle($round->fresh(), $pleb, $event);
+
+    return $event['id'];
+}
+
 /** @return array<string, mixed> */
 function e2eScenario(string $name, string $state): array
 {
@@ -262,6 +287,95 @@ function e2eScenario(string $name, string $state): array
             $stewardship->closeEarly($round->fresh(), $boardPleb, 'Alle haben abgestimmt');
 
             return [...$result, 'election' => $election->id, 'round' => $round->id, 'long' => $long, 'chair' => $chair];
+
+        case 'share-yesno':
+        case 'share-yesno-long':
+            // A counted yes/no round with five people: the densest share view.
+            // The long variant has a 63-character name in it (one column) and a
+            // yes = no tie on that name, decided by a chair at the 60-character limit.
+            $long = $name === 'share-yesno-long';
+            $fifth = e2eMember($long ? 'Maximiliane Theodora Freifrau von Hohenzollern-Sigmaringen-Wied' : 'Erik Eberhardt');
+            $daniel = e2eMember('Daniel Dorn');
+            $people = [$anna, $bernd, $carla, $daniel, $fifth];
+            $election = e2eElection();
+            $round = e2eRound($election, 'Vorstand', 1, $people, ElectionCountingRule::YesNoPerCandidate, 5);
+            $stewardship->open($round, $boardPleb);
+            $everyoneYes = array_fill_keys(array_column($people, 'id'), 'yes');
+            $split = [...$everyoneYes, $fifth['id'] => 'no'];
+            e2eCastChoices($round, $board, $everyoneYes);
+            e2eCastChoices($round, $voters['voter1'], $everyoneYes);
+            e2eCastChoices($round, $voters['voter2'], $long ? $split : $everyoneYes);
+            e2eCastChoices($round, $voters['voter3'], $long ? $split : $everyoneYes);
+            $stewardship->closeEarly($round->fresh(), $boardPleb, 'Alle haben abgestimmt');
+            $chair = 'Erika Magdalena Mustermann-Vorsitz von der Leyen-Schwarzwald';
+
+            if ($long) {
+                $fifthCandidate = (int) $round->candidates()->where('einundzwanzig_pleb_id', $fifth['id'])->value('id');
+                app(RecordCastingVote::class)->handle($round->fresh(), $boardPleb, [$fifthCandidate], $chair);
+            }
+
+            return [...$result, 'election' => $election->id, 'round' => $round->id, 'fifth' => $fifth, 'chair' => $chair];
+
+        case 'tie-decided':
+            $long = e2eMember('Maximiliane Theodora Freifrau von Hohenzollern-Sigmaringen-Wied');
+            $chair = 'Erika Magdalena Mustermann-Vorsitz von der Leyen-Schwarzwald';
+            $election = e2eElection();
+            $round = e2eRound($election, 'Vorsitz', 1, [$long, $anna]);
+            $stewardship->open($round, $boardPleb);
+            e2eCast($round, $voters['voter1'], $long);
+            e2eCast($round, $voters['voter2'], $anna);
+            $stewardship->closeEarly($round->fresh(), $boardPleb, 'Alle haben abgestimmt');
+            $longCandidate = (int) $round->candidates()->where('einundzwanzig_pleb_id', $long['id'])->value('id');
+            app(RecordCastingVote::class)->handle($round->fresh(), $boardPleb, [$longCandidate], $chair);
+
+            return [...$result, 'election' => $election->id, 'round' => $round->id, 'long' => $long, 'chair' => $chair];
+
+        case 'off-roll':
+            // Lena paid, but only after the round opened and outside the payment
+            // path: entitled by the fee rule, not on the round's roll.
+            $election = e2eElection();
+            $round = e2eRound($election, 'Vorsitz', 1, [$anna, $bernd]);
+            $stewardship->open($round, $boardPleb);
+            $late = e2eMember('Lena Spätzahlerin');
+
+            return [...$result, 'election' => $election->id, 'round' => $round->id, 'late' => $late];
+
+        case 'runoff-pending':
+            // Closed without an absolute majority (2 of 4), no run-off created yet.
+            $election = e2eElection();
+            $round = e2eRound($election, 'Vorsitz', 1, [$anna, $bernd, $carla]);
+            $stewardship->open($round, $boardPleb);
+            e2eCast($round, $voters['voter1'], $anna);
+            e2eCast($round, $voters['voter2'], $anna);
+            e2eCast($round, $voters['voter3'], $bernd);
+            e2eCast($round, $board, $carla);
+            $stewardship->closeEarly($round->fresh(), $boardPleb, 'Alle haben abgestimmt');
+
+            return [...$result, 'election' => $election->id, 'round' => $round->id];
+
+        case 'repeat':
+            // Vorsitz counted, annulled after the count and repeated; the repeat
+            // elected Anna. Kasse counted normally. Every round is closed.
+            $election = e2eElection();
+            $chairRound = e2eRound($election, 'Vorsitz', 1, [$anna, $bernd]);
+            $cash = e2eRound($election, 'Kasse', 2, [$carla]);
+            $stewardship->open($chairRound, $boardPleb);
+            e2eCast($chairRound, $voters['voter1'], $bernd);
+            e2eCast($chairRound, $voters['voter2'], $bernd);
+            $stewardship->closeEarly($chairRound->fresh(), $boardPleb, 'Alle haben abgestimmt');
+            $stewardship->annul($chairRound->fresh(), $boardPleb, 'Falsche Liste ausgegeben');
+            $repeat = $stewardship->repeat($chairRound->fresh(), $boardPleb);
+            $stewardship->open($repeat->fresh(), $boardPleb);
+            e2eCast($repeat, $voters['voter1'], $anna);
+            e2eCast($repeat, $voters['voter2'], $anna);
+            e2eCast($repeat, $voters['voter3'], $bernd);
+            $stewardship->closeEarly($repeat->fresh(), $boardPleb, 'Alle haben abgestimmt');
+            $stewardship->open($cash->fresh(), $boardPleb);
+            e2eCast($cash, $voters['voter1'], $carla);
+            e2eCast($cash, $voters['voter2'], $carla);
+            $stewardship->closeEarly($cash->fresh(), $boardPleb, 'Alle haben abgestimmt');
+
+            return [...$result, 'election' => $election->id, 'round' => $chairRound->id, 'repeat' => $repeat->id, 'cash' => $cash->id];
 
         case 'dm':
             $election = e2eElection();
