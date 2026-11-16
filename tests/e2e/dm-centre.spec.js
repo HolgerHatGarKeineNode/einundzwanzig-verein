@@ -84,6 +84,17 @@ test('the board dry-runs, sends, sees the run in the history, and a repeat is sk
     expect(await page.evaluate(() => document.activeElement?.closest('dialog') !== null)).toBe(true)
     await expect(page.locator('[data-test="confirm-send"]')).not.toBeFocused()
 
+    // Reached by keyboard, the safe control shows the election pages' focus
+    // ring: the message centre sits inside `.election-ui`, which draws it.
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Shift+Tab')
+    await expect(cancel).toBeFocused()
+    const ring = await cancel.evaluate((el) => {
+        const style = getComputedStyle(el)
+        return `${style.outlineStyle} ${style.outlineWidth} ${style.outlineColor}`
+    })
+    expect(ring, 'focus ring of the confirm dialog\'s cancel button').toBe('solid 2px rgb(247, 147, 26)')
+
     await page.locator('[data-test="confirm-send"]').click()
 
     // The page switches to the history, with the new run open: every

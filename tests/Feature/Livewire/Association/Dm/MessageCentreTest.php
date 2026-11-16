@@ -73,6 +73,13 @@ it('is a board page: a guest sees a sign-in hint, a member gets 403, the board t
     NostrAuth::login($board->pubkey);
     $this->get(route('association.messages.admin'))->assertOk()->assertSee('Nachrichten an Mitglieder');
     $this->get(route('association.profile'))->assertSee(route('association.messages.admin'));
+
+    // The sidebar entry carries the page's own name, so the board finds the
+    // page by the word the guide and the page heading use. Measured on another
+    // page: the message centre itself already says it in its heading.
+    $this->get(route('association.profile'))
+        ->assertSee('Nachrichten an Mitglieder')
+        ->assertDontSee('Nachrichten senden');
 });
 
 it('answers 403 on every public method once the session belongs to a member who is not on the board', function () {
@@ -544,7 +551,8 @@ it('lists the member admin messages of the chosen member only', function () {
     expect($page->instance()->memberDeliveries->pluck('id')->all())->toBe([$annaDelivery->id]);
     $page->assertSee('Erinnerung an den Mitgliedsbeitrag')
         ->assertSee('An Relays übergeben')
-        ->assertDontSee('Ergebnis liegt vor');
+        ->assertDontSee('Ergebnis liegt vor')
+        ->assertSee('Alles Weitere steht unter „Nachrichten an Mitglieder“.');
 
     NostrAuth::login(electionVoter()->pubkey);
     Livewire::test('association.members.admin')->call('openMessages', $anna->id)->assertForbidden();
