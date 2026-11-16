@@ -278,8 +278,15 @@ test('the measures see a sideways scroll, a small tap target and an overflowing 
  *        and an orange border; the search finds it in the browser, says so in
  *        an aria-live region, and the typed id never leaves the browser.
  *   Q12  at 390 px no sentence runs over 3 lines; at 820 px and wider no line
- *        of running text holds more than 75 characters, and the paragraphs
- *        of the side column („Dein Stand“) hold at least 45.
+ *        of running text holds more than 75 characters, and every paragraph
+ *        of running text holds at least 45: each block of the side column
+ *        („Dein Stand“) and each `p` or `dd` of the main column (the
+ *        timeline). Measured in five states: tie-decided, measure,
+ *        runoff-pending, unreadable and off-roll (the side column's notice
+ *        for a member not on the roll).
+ *   Q9b  every `<summary>` the keyboard reaches on the member page, „Alle N
+ *        Kennungen ansehen“ among them, shows the same 2px orange outline on
+ *        keyboard focus (each carries its own focus-visible classes).
  *   Q20  with reduced motion asked for, document.getAnimations() is empty on
  *        the member page, Flux's hidden loading spinners included; without
  *        it the same probe sees them run (the positive control).
@@ -288,6 +295,10 @@ test('the measures see a sideways scroll, a small tap target and an overflowing 
  * and checkboxes; the npub fallback cut to 24 characters again; the own-id
  * border dropped to the plain one; the side column back at 20rem; the
  * reduced-motion rule scoped to .election-ui instead of the whole document.
+ * j2d2 (2026-11-16): the „Zustand nach der Wahl“ rows back on the viewport
+ * breakpoint sm:grid-cols-[12rem_…] (dd 20 characters at 1280 px); the
+ * off-roll notice back beside its icon (43 characters); the focus-visible
+ * classes cut from the summary of the sealed id list.
  */
 
 const ORANGE = 'rgb(247, 147, 26)'
@@ -343,6 +354,21 @@ test('every Flux button, field and link of the member page shows the 2px orange 
     }
 
     expect(rings.filter((ring) => ['flux-button', 'flux-checkbox', 'flux-field', 'link'].includes(ring.kind) && ring.outline !== `solid 2px ${ORANGE}`)).toEqual([])
+})
+
+test('every summary of the member page shows the 2px orange ring, the sealed id list included', async ({ page }) => {
+    const data = scenario('npub')
+
+    await login(page, data.voters.voter1.secret, '/association/election', '[data-location="election"] button')
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await page.goto('/association/election')
+    await expect(page.locator(`[data-test="receipts-${data.sealed}"] summary`)).toBeVisible()
+
+    // Reached by Tab, so each focus is a keyboard one and :focus-visible holds.
+    const summaries = (await tabRings(page, 80)).filter((ring) => ring.kind === 'summary')
+
+    expect(summaries.map((ring) => ring.key), 'the sealed id list among the focused summaries').toContain('summary "Alle 3 Kennungen ansehen"')
+    expect(summaries.filter((ring) => ring.outline !== `solid 2px ${ORANGE}`)).toEqual([])
 })
 
 test('a Flux checkbox of an election page shows the 2px orange ring', async ({ page }) => {
@@ -552,6 +578,7 @@ function textBlocks() {
         blocks.push({
             text: text.trim().slice(0, 50),
             aside: block.closest('aside') !== null,
+            prose: block.closest('p, dd') !== null,
             longestLine: Math.max(...perLine),
             capacity: Math.floor((block.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) / advance),
             sentenceLines,
@@ -561,13 +588,24 @@ function textBlocks() {
     return blocks
 }
 
-// The decided tie (a 63-character name, a 60-character chair), and a counted
-// round next to an open one the member has just voted in (the receipt).
-for (const [name, ready] of [['tie-decided', '[data-test^="casting-vote-"]'], ['measure', '[data-test="receipt-id"]']]) {
+// The decided tie (a 63-character name, a 60-character chair); a counted
+// round next to an open one the member has just voted in (the receipt); a
+// close without a majority, before the run-off („Stand jetzt“, a seat still
+// open); a round that cannot be counted; and a member who paid after the
+// round opened, so the side column says she is not on its roll.
+const LINE_STATES = [
+    { name: 'tie-decided', ready: '[data-test^="casting-vote-"]', viewer: (data) => data.voters.voter1 },
+    { name: 'measure', ready: '[data-test="receipt-id"]', viewer: (data) => data.voters.voter1 },
+    { name: 'runoff-pending', ready: '[data-test="after-election-pending"]', viewer: (data) => data.voters.voter1 },
+    { name: 'unreadable', ready: '[data-test^="unreadable-"]', viewer: (data) => data.voters.voter1 },
+    { name: 'off-roll', ready: '[data-test="eligibility-off-roll"]', viewer: (data) => data.late },
+]
+
+for (const { name, ready, viewer } of LINE_STATES) {
 test(`sentences run at most 3 lines at 390 px, and lines hold 45 to 75 characters from 820 px (${name})`, async ({ page }) => {
     const data = scenario(name)
 
-    await login(page, data.voters.voter1.secret, '/association/election', '[data-location="election"] button')
+    await login(page, viewer(data).secret, '/association/election', '[data-location="election"] button')
 
     for (const width of [390, 820, 1280, 1600]) {
         await page.setViewportSize({ width, height: 900 })
@@ -585,8 +623,15 @@ test(`sentences run at most 3 lines at 390 px, and lines hold 45 to 75 character
             expect.soft(blocks.filter((block) => block.capacity > 75).map((block) => `${block.capacity}: ${block.text}`), `${at}: room for over 75 characters`).toEqual([])
         }
 
-        if (width >= 1280) {
-            expect.soft(blocks.filter((block) => block.aside && block.capacity < 45).map((block) => `${block.capacity}: ${block.text}`), `${at}: side column under 45 characters`).toEqual([])
+        if (width >= 820) {
+            const prose = blocks.filter((block) => block.prose && ! block.aside)
+            const aside = blocks.filter((block) => block.aside)
+            const span = (list) => list.length === 0 ? null : { min: Math.min(...list.map((block) => block.capacity)), max: Math.max(...list.map((block) => block.capacity)), blocks: list.length }
+
+            keep({ page: 'member-lines', scenario: name, viewport: { width, height: 900 }, main_p_dd_capacity: span(prose), aside_capacity: span(aside) })
+
+            expect.soft(aside.filter((block) => block.capacity < 45).map((block) => `${block.capacity}: ${block.text}`), `${at}: side column under 45 characters`).toEqual([])
+            expect.soft(prose.filter((block) => block.capacity < 45).map((block) => `${block.capacity}: ${block.text}`), `${at}: main column p/dd under 45 characters`).toEqual([])
         }
     }
 })
