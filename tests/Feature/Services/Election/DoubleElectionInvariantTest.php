@@ -459,7 +459,8 @@ it('A standing in an opened, unsealed round of another election does not hold ba
     $other = Election::factory()->create();
     $otherKasse = draftElectionRound(['position' => 1, 'title' => 'Kasse E2', 'counting_rule' => ElectionCountingRule::MostVotes], candidates: 0, election: $other);
     invariantStand($otherKasse, $a, $board);
-    $otherKasse = app(OpenRound::class)->handle($otherKasse->fresh());
+    expect(invariantOutcome(fn () => app(OpenRound::class)->handle($otherKasse->fresh())))->toBe('ok');
+    $otherKasse = $otherKasse->fresh();
     expect($otherKasse->opened_at)->not->toBeNull()
         ->and($otherKasse->closed_at)->toBeNull()
         ->and(invariantCandidate($otherKasse, $a)->status)->toBe(ElectionCandidateStatus::Approved);
