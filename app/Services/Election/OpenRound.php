@@ -175,11 +175,17 @@ class OpenRound
      * resolve does not block it; whoever is elected in one of its own earlier
      * rounds still does.
      *
-     * Three further rules: a round under an annulled round has no result and
-     * never counts; nobody is elected twice, so a candidate elected in any
-     * other contest is refused whatever its order; and an unsealed round
-     * only counts candidacies that are not withdrawn or rejected, so
-     * withdrawing a candidacy frees the round it blocked.
+     * Further rules: a round under an annulled round has no result and never
+     * counts. Nobody is elected twice, whatever the order of the contests:
+     * a candidate elected in a sealed round of any other contest is refused,
+     * and so is one standing in an opened round of any other contest that is
+     * not sealed yet (open, scheduled, or over by the clock) — a later
+     * contest's draft does not count, so the earlier office keeps its first
+     * claim (Wahlreglement § 4 Nr. 1, § 3 Nr. 7). The way on is to seal that
+     * round or withdraw the candidacy in the round to open: the candidates of
+     * an opened round are frozen. An unsealed round only counts candidacies
+     * that are not withdrawn or rejected, so withdrawing a candidacy frees
+     * the round it blocked.
      *
      * Refusing instead of quietly dropping the candidate keeps the list of
      * candidates the election officer's to change.
@@ -228,6 +234,17 @@ class OpenRound
 
         foreach ($contests as $contest) {
             $this->assertContestDecidedFor($contest, $standing, $rounds);
+        }
+
+        // Nobody is elected twice: an opened round that is not sealed holds
+        // back every other contest it shares a candidate with, also
+        // one placed before it. An earlier contest has refused above already.
+        $undecided = $otherContests->flatten(1)->first(fn (ElectionRound $other): bool => $other->opened_at !== null
+            && ! $other->isSealed()
+            && $this->sharedCandidates($other, $standing, standingOnly: true) !== []);
+
+        if ($undecided !== null) {
+            throw $this->blocked(sprintf('A candidate of this round also stands in the opened round "%s" of the election, which is not sealed, so nobody knows yet whether they are elected there; seal that round first or withdraw the candidacy here.', $undecided->title), $undecided, $this->sharedCandidates($undecided, $standing, standingOnly: true));
         }
     }
 
@@ -311,7 +328,7 @@ class OpenRound
             ->sortBy('id')
             ->first();
 
-        return new ElectionCandidateBlockedException($message, (int) $candidate?->einundzwanzig_pleb_id);
+        return new ElectionCandidateBlockedException($message, (int) $candidate?->einundzwanzig_pleb_id, $other->title);
     }
 
     /**
