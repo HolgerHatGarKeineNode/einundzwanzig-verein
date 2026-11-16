@@ -152,6 +152,8 @@ const DM_PAGES = ['resources/views/livewire/association/messages.blade.php', 're
  * same check: does it let the DM code learn who voted?
  */
 const DM_ALLOWED_APP_CLASSES = [
+    // The board inbox reply (2026-11-16) reads a non-member's kind 10050 list: relay parsing and signature check, no votes.
+    'App\Console\Commands\Nostr\SyncDmRelays',
     'App\Enums\ElectionCandidateStatus',
     'App\Enums\ElectionFeeRule',
     'App\Models\EinundzwanzigPleb',
@@ -161,6 +163,7 @@ const DM_ALLOWED_APP_CLASSES = [
     'App\Services\Election\ElectoralRoll',
     'App\Services\Nostr\DirectMessageNotBuildable',
     'App\Services\Nostr\DirectMessageSigner',
+    'App\Services\Nostr\EventVerification',
     // The board inbox (2026-11-16): opens members' replies and reads the key's pubkey; neither touches votes.
     'App\Services\Nostr\GiftWrapOpener',
     'App\Services\Nostr\NotificationKey',

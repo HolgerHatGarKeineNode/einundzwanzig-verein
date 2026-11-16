@@ -4,6 +4,7 @@ use App\Jobs\Dm\SendInboxReply;
 use App\Models\DmInboxMessage;
 use App\Models\EinundzwanzigPleb;
 use App\Models\MemberProposal;
+use App\Models\Profile;
 use App\Services\Nostr\DirectMessageSigner;
 use App\Services\Nostr\NotificationKey;
 use App\Support\NostrAuth;
@@ -13,10 +14,11 @@ use Livewire\Attributes\Locked;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
 use Livewire\Component;
+use swentel\nostr\Key\Key;
 
 /**
- * The board inbox: what members answered to the portal's direct messages,
- * and the board's replies. Read by every board member; opening a thread marks
+ * The board inbox: every direct message to the association's key, from
+ * members and anyone else, and the board's replies. Read by every board member; opening a thread marks
  * the member's messages as read. Data helpers are protected, so a guest's
  * snapshot cannot call them over the wire.
  */
@@ -31,8 +33,9 @@ class extends Component
     #[Locked]
     public bool $isGuest = false;
 
-    #[Url(as: 'mitglied')]
-    public ?int $memberId = null;
+    /** The other side's pubkey (hex) of the open conversation. */
+    #[Url(as: 'kontakt')]
+    public ?string $contact = null;
 
     public string $reply = '';
 
@@ -46,27 +49,27 @@ class extends Component
 
         $this->actor();
 
-        if ($this->memberId !== null) {
-            $this->open($this->memberId);
+        if ($this->contact !== null) {
+            $this->open($this->contact);
         }
     }
 
-    public function open(int $memberId): void
+    public function open(string $contact): void
     {
         $this->actor();
 
-        if (! DmInboxMessage::query()->where('einundzwanzig_pleb_id', $memberId)->exists()) {
-            $this->memberId = null;
+        if (! DmInboxMessage::query()->where('counterparty_pubkey', $contact)->exists()) {
+            $this->contact = null;
 
             return;
         }
 
-        $this->memberId = $memberId;
+        $this->contact = $contact;
         $this->reply = '';
         $this->resetErrorBag();
 
         DmInboxMessage::query()
-            ->where('einundzwanzig_pleb_id', $memberId)
+            ->where('counterparty_pubkey', $contact)
             ->where('direction', DmInboxMessage::IN)
             ->whereNull('read_at')
             ->update(['read_at' => now()]);
@@ -75,7 +78,7 @@ class extends Component
     public function close(): void
     {
         $this->actor();
-        $this->memberId = null;
+        $this->contact = null;
         $this->reply = '';
     }
 
@@ -92,16 +95,18 @@ class extends Component
             ],
         );
 
-        $member = $this->memberId === null ? null : EinundzwanzigPleb::query()->notErased()->find($this->memberId);
+        $last = $this->contact === null ? null : DmInboxMessage::query()->where('counterparty_pubkey', $this->contact)->latest('id')->first();
+        $member = $this->memberFor($this->contact);
 
-        if ($member === null || strlen(trim($this->reply)) > DirectMessageSigner::MAX_TEXT_BYTES) {
+        if ($last === null || ($last->einundzwanzig_pleb_id !== null && $member === null) || strlen(trim($this->reply)) > DirectMessageSigner::MAX_TEXT_BYTES) {
             $this->addError('reply', __('Diese Antwort lässt sich nicht senden. Lade die Seite neu.'));
 
             return;
         }
 
         $message = DmInboxMessage::query()->create([
-            'einundzwanzig_pleb_id' => $member->id,
+            'einundzwanzig_pleb_id' => $member?->id,
+            'counterparty_pubkey' => $this->contact,
             'direction' => DmInboxMessage::OUT,
             'body' => trim($this->reply),
             'sent_at' => now(),
@@ -112,42 +117,45 @@ class extends Component
         SendInboxReply::dispatch((int) $message->id);
 
         $this->reply = '';
-        Flux::toast(__('Die Antwort an :name ist unterwegs.', ['name' => MemberProposal::authorNameOf($member)]), variant: 'success');
+        Flux::toast(__('Die Antwort an :name ist unterwegs.', ['name' => $this->nameOf($this->contact)]), variant: 'success');
     }
 
     /**
-     * One row per member who wrote, newest conversation first.
+     * One row per person who wrote, newest conversation first.
      *
-     * @return Collection<int, array{member_id: int, name: string, preview: string, last_at: \Illuminate\Support\Carbon, unread: int}>
+     * @return Collection<int, array{contact: string, name: string, is_member: bool, preview: string, last_at: \Illuminate\Support\Carbon, unread: int}>
      */
     protected function conversations(): Collection
     {
         $latest = DmInboxMessage::query()
-            ->selectRaw('einundzwanzig_pleb_id, max(id) as last_id')
-            ->groupBy('einundzwanzig_pleb_id')
+            ->whereNotNull('counterparty_pubkey')
+            ->selectRaw('counterparty_pubkey, max(id) as last_id')
+            ->groupBy('counterparty_pubkey')
             ->orderByDesc('last_id')
             ->limit(self::CONVERSATIONS_SHOWN)
-            ->pluck('last_id', 'einundzwanzig_pleb_id');
+            ->pluck('last_id', 'counterparty_pubkey');
 
         $unread = DmInboxMessage::query()
             ->where('direction', DmInboxMessage::IN)
             ->whereNull('read_at')
-            ->whereIn('einundzwanzig_pleb_id', $latest->keys())
-            ->selectRaw('einundzwanzig_pleb_id, count(*) as unread')
-            ->groupBy('einundzwanzig_pleb_id')
-            ->pluck('unread', 'einundzwanzig_pleb_id');
+            ->whereIn('counterparty_pubkey', $latest->keys())
+            ->selectRaw('counterparty_pubkey, count(*) as unread')
+            ->groupBy('counterparty_pubkey')
+            ->pluck('unread', 'counterparty_pubkey');
 
-        $last = DmInboxMessage::query()->with('member.profile')->whereIn('id', $latest->values())->get()->keyBy('id');
+        $last = DmInboxMessage::query()->whereIn('id', $latest->values())->get()->keyBy('id');
+        $members = EinundzwanzigPleb::query()->notErased()->whereIn('pubkey', $latest->keys())->pluck('id', 'pubkey');
 
-        return $latest->map(function (int $lastId, int $memberId) use ($last, $unread): array {
+        return $latest->map(function (int $lastId, string $contact) use ($last, $unread, $members): array {
             $message = $last[$lastId];
 
             return [
-                'member_id' => $memberId,
-                'name' => MemberProposal::authorNameOf($message->member),
+                'contact' => $contact,
+                'name' => $this->nameOf($contact),
+                'is_member' => $members->has($contact),
                 'preview' => ($message->direction === DmInboxMessage::OUT ? __('Vorstand: ') : '').str($message->body)->squish()->limit(90)->toString(),
                 'last_at' => $message->sent_at,
-                'unread' => (int) ($unread[$memberId] ?? 0),
+                'unread' => (int) ($unread[$contact] ?? 0),
             ];
         })->values();
     }
@@ -157,26 +165,58 @@ class extends Component
      */
     protected function thread(): Collection
     {
-        if ($this->memberId === null) {
+        if ($this->contact === null) {
             return collect();
         }
 
         return DmInboxMessage::query()
             ->with('author.profile')
-            ->where('einundzwanzig_pleb_id', $this->memberId)
+            ->where('counterparty_pubkey', $this->contact)
             ->orderBy('sent_at')
             ->orderBy('id')
             ->get();
     }
 
-    protected function memberName(): string
+    protected function memberFor(?string $contact): ?EinundzwanzigPleb
     {
-        return MemberProposal::authorNameOf(EinundzwanzigPleb::query()->with('profile')->find($this->memberId));
+        return $contact === null ? null : EinundzwanzigPleb::query()->notErased()->with(['profile', 'dmRelays'])->where('pubkey', $contact)->first();
+    }
+
+    /**
+     * A member's portal name; for anyone else the cached Nostr profile name or a short npub.
+     */
+    protected function nameOf(?string $contact): string
+    {
+        if ($contact === null) {
+            return '';
+        }
+
+        if (($member = $this->memberFor($contact)) !== null) {
+            return MemberProposal::authorNameOf($member);
+        }
+
+        $profile = Profile::query()->where('pubkey', $contact)->first();
+
+        if (filled($profile?->name) || filled($profile?->display_name)) {
+            return (string) ($profile->name ?: $profile->display_name);
+        }
+
+        $npub = (new Key)->convertPublicKeyToBech32($contact);
+
+        return substr($npub, 0, 12).'…'.substr($npub, -6);
+    }
+
+    protected function contactIsMember(): bool
+    {
+        return $this->memberFor($this->contact) !== null;
     }
 
     protected function memberHasInbox(): bool
     {
-        return EinundzwanzigPleb::query()->find($this->memberId)?->dmRelays()->exists() ?? false;
+        $member = $this->memberFor($this->contact);
+
+        // Anyone else's list is read when the answer is sent.
+        return $member === null || $member->dmRelays !== null;
     }
 
     protected function inboxIsOn(): bool
@@ -222,7 +262,7 @@ class extends Component
         <header class="mb-8 max-w-2xl">
             <h1 class="text-3xl font-bold leading-tight text-text-primary">{{ __('Posteingang des Vorstands') }}</h1>
             <p class="mt-2 text-base text-text-secondary">
-                {{ __('Antworten von Mitgliedern auf die Nostr-Nachrichten des Vereins. Jedes Vorstandsmitglied sieht alle Gespräche; eure Antwort geht als Nostr-Direktnachricht vom Vereinskonto.') }}
+                {{ __('Alle Nostr-Direktnachrichten an das Vereinskonto, von Mitgliedern und allen anderen. Jedes Vorstandsmitglied sieht alle Gespräche; eure Antwort geht als Nostr-Direktnachricht vom Vereinskonto.') }}
             </p>
         </header>
 
@@ -236,25 +276,25 @@ class extends Component
         @endunless
 
         <div class="grid gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-            <section aria-label="{{ __('Gespräche') }}" @class(['hidden md:block' => $memberId !== null])>
+            <section aria-label="{{ __('Gespräche') }}" @class(['hidden md:block' => $contact !== null])>
                 @if ($conversations->isEmpty())
-                    <p class="rounded-lg border border-border-default p-6 text-base text-text-secondary" data-test="inbox-empty">{{ __('Noch hat kein Mitglied geantwortet.') }}</p>
+                    <p class="rounded-lg border border-border-default p-6 text-base text-text-secondary" data-test="inbox-empty">{{ __('Noch ist keine Nachricht angekommen.') }}</p>
                 @else
                     <ul class="divide-y divide-border-subtle overflow-hidden rounded-lg border border-border-default">
                         @foreach ($conversations as $conversation)
-                            <li wire:key="conversation-{{ $conversation['member_id'] }}">
-                                <button type="button" wire:click="open({{ $conversation['member_id'] }})"
-                                        @class(['flex min-h-11 w-full flex-col gap-1 px-4 py-3 text-left hover:bg-bg-elevated', 'bg-bg-elevated' => $memberId === $conversation['member_id']])
-                                        @if ($memberId === $conversation['member_id']) aria-current="true" @endif
-                                        data-test="conversation-{{ $conversation['member_id'] }}">
+                            <li wire:key="conversation-{{ $conversation['contact'] }}">
+                                <button type="button" wire:click="open('{{ $conversation['contact'] }}')"
+                                        @class(['flex min-h-11 w-full flex-col gap-1 px-4 py-3 text-left hover:bg-bg-elevated', 'bg-bg-elevated' => $contact === $conversation['contact']])
+                                        @if ($contact === $conversation['contact']) aria-current="true" @endif
+                                        data-test="conversation-{{ $conversation['contact'] }}">
                                     <span class="flex w-full items-baseline justify-between gap-3">
-                                        <span class="min-w-0 break-words text-base font-bold text-text-primary">{{ $conversation['name'] }}</span>
+                                        <span class="min-w-0 break-words text-base font-bold text-text-primary">{{ $conversation['name'] }}@unless ($conversation['is_member'])<span class="ms-2 whitespace-nowrap text-sm font-normal text-text-tertiary" data-test="not-member">{{ __('kein Mitglied') }}</span>@endunless</span>
                                         <span class="shrink-0 text-sm tabular-nums text-text-tertiary">{{ $conversation['last_at']->timezone('Europe/Berlin')->format('d.m. H:i') }}</span>
                                     </span>
                                     <span class="flex w-full items-start justify-between gap-3">
                                         <span class="min-w-0 break-words text-sm text-text-secondary">{{ $conversation['preview'] }}</span>
                                         @if ($conversation['unread'] > 0)
-                                            <flux:badge color="orange" size="sm" class="shrink-0" data-test="unread-{{ $conversation['member_id'] }}">{{ trans_choice('{1} 1 neu|[2,*] :count neu', $conversation['unread'], ['count' => $conversation['unread']]) }}</flux:badge>
+                                            <flux:badge color="orange" size="sm" class="shrink-0" data-test="unread-{{ $conversation['contact'] }}">{{ trans_choice('{1} 1 neu|[2,*] :count neu', $conversation['unread'], ['count' => $conversation['unread']]) }}</flux:badge>
                                         @endif
                                     </span>
                                 </button>
@@ -264,12 +304,12 @@ class extends Component
                 @endif
             </section>
 
-            <section aria-label="{{ __('Gespräch') }}" @class(['hidden md:block' => $memberId === null])>
-                @if ($memberId === null)
+            <section aria-label="{{ __('Gespräch') }}" @class(['hidden md:block' => $contact === null])>
+                @if ($contact === null)
                     <p class="rounded-lg border border-dashed border-border-default p-6 text-base text-text-secondary">{{ __('Wähle links ein Gespräch.') }}</p>
                 @else
                     <div class="mb-4 flex items-center justify-between gap-3">
-                        <h2 class="min-w-0 break-words text-xl font-bold text-text-primary" data-test="thread-name">{{ $this->memberName() }}</h2>
+                        <h2 class="min-w-0 break-words text-xl font-bold text-text-primary" data-test="thread-name">{{ $this->nameOf($contact) }}@unless ($this->contactIsMember())<span class="ms-2 whitespace-nowrap text-sm font-normal text-text-tertiary">{{ __('kein Mitglied') }}</span>@endunless</h2>
                         <flux:button wire:click="close" variant="ghost" icon="arrow-left" class="min-h-11 md:hidden">{{ __('Alle Gespräche') }}</flux:button>
                     </div>
 

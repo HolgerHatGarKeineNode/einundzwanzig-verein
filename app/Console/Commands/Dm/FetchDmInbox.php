@@ -14,20 +14,20 @@ use Illuminate\Console\Command;
 use Illuminate\Database\UniqueConstraintViolationException;
 
 /**
- * Reads the members' replies to the notification key into the board inbox.
+ * Reads every direct message to the notification key into the board inbox.
  *
  * Asks each relay of `einundzwanzig.config.dm_inbox_relays` for the gift
  * wraps tagged for the key over the last LOOKBACK_DAYS. That window is wider
  * than the two days a wrap may be back-dated (NIP-59), so a run that was
  * missed for a few days still finds every reply. A reply several relays
- * return is stored once (unique rumor id). Wraps that do not open, and
- * messages from a pubkey that is no portal member, are counted and dropped.
+ * return is stored once (unique rumor id). Wraps that do not open are
+ * counted and dropped; messages from anyone else are kept, members are linked.
  */
 class FetchDmInbox extends Command
 {
     protected $signature = 'dm:fetch-inbox';
 
-    protected $description = 'Read members\' replies to the notification key into the board inbox';
+    protected $description = 'Read every direct message to the notification key into the board inbox';
 
     public const int LOOKBACK_DAYS = 7;
 
@@ -87,13 +87,8 @@ class FetchDmInbox extends Command
                 continue;
             }
 
+            // Anyone may write to the association; a member is linked so erasure finds the row.
             $member = EinundzwanzigPleb::query()->notErased()->where('pubkey', $message['sender'])->first();
-
-            if ($member === null) {
-                $strangers++;
-
-                continue;
-            }
 
             if (DmInboxMessage::query()->where('rumor_id', $message['rumor_id'])->exists()) {
                 continue;
@@ -101,7 +96,8 @@ class FetchDmInbox extends Command
 
             try {
                 DmInboxMessage::query()->create([
-                    'einundzwanzig_pleb_id' => $member->id,
+                    'einundzwanzig_pleb_id' => $member?->id,
+                    'counterparty_pubkey' => $message['sender'],
                     'direction' => DmInboxMessage::IN,
                     'rumor_id' => $message['rumor_id'],
                     'body' => $message['body'],
@@ -109,12 +105,13 @@ class FetchDmInbox extends Command
                     'sent_at' => CarbonImmutable::createFromTimestamp(min($message['created_at'], CarbonImmutable::now()->getTimestamp())),
                 ]);
                 $stored++;
+                $strangers += $member === null ? 1 : 0;
             } catch (UniqueConstraintViolationException) {
                 // A parallel run stored it first.
             }
         }
 
-        $this->line('wraps='.count($wraps)." stored={$stored} unreadable={$unreadable} not_members={$strangers}");
+        $this->line('wraps='.count($wraps)." stored={$stored} unreadable={$unreadable} from_non_members={$strangers}");
 
         return self::SUCCESS;
     }

@@ -1183,8 +1183,11 @@ class MembershipService
             // the anonymised member, whose record is updated, never deleted.
             $pleb->dmRelays()->delete();
 
-            // What the member wrote to the board and what the board answered.
-            DmInboxMessage::query()->where('einundzwanzig_pleb_id', $pleb->id)->delete();
+            // What the person wrote to the board and what the board answered,
+            // also from before they were a member (keyed by pubkey then).
+            DmInboxMessage::query()
+                ->where(fn ($query) => $query->where('einundzwanzig_pleb_id', $pleb->id)->orWhere('counterparty_pubkey', $pleb->pubkey))
+                ->delete();
 
             /*
              * DIRECT MESSAGES TO THIS MEMBER. The delivery row stays so a
