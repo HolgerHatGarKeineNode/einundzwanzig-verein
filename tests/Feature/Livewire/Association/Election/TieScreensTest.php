@@ -288,10 +288,28 @@ it('gives no per-row verdict in the void result of an annulled round, but keeps 
         ->toContain('2 Stimmen')
         ->not->toContain('gewählt');
 
+    // Statutes jury L3: never „gewählt ist“ for an annulled round, in either form.
+    expect($html)->toContain('Ausgezähltes Ergebnis (ungültig): die Zählung hätte Alice Ambrosius ergeben')
+        ->not->toContain('gewählt ist');
+
     expect(tieProtocol($election))
         ->toContain('Alice Ambrosius: 2 Stimmen')
         ->not->toContain('Alice Ambrosius: 2 Stimmen, gewählt')
-        ->toContain('Ausgezähltes Ergebnis (ungültig): gewählt ist Alice Ambrosius');
+        ->toContain('Ausgezähltes Ergebnis (ungültig): die Zählung hätte Alice Ambrosius ergeben')
+        ->not->toContain('gewählt ist');
+});
+
+/*
+ * Statutes jury M1: the minutes named the association „EINUNDZWANZIG e. V.“,
+ * a German registered association. It is a Verein under Art. 60 ff. ZGB
+ * named „EINUNDZWANZIG“ (statutes Art. 1).
+ */
+it('names the association without a legal form it does not have in the minutes', function () {
+    [, $election] = tiedEvening();
+
+    $this->get(route('association.election.admin.protocol', $election))->assertOk()
+        ->assertSee('Verein EINUNDZWANZIG, Beschlussprotokoll')
+        ->assertDontSee('e. V.');
 });
 
 /*

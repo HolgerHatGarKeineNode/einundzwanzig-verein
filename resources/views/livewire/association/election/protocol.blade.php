@@ -251,7 +251,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
         }
 
         $lines[] = '   '.__('Enthaltungen (leer): :blank', ['blank' => $result['blank']]);
-        $lines[] = '   '.($void ? __('Ausgezähltes Ergebnis (ungültig): :outcome', ['outcome' => $this->outcomeText($result)]) : __('Ergebnis: :outcome', ['outcome' => $this->outcomeText($result)]));
+        $lines[] = '   '.($void ? __('Ausgezähltes Ergebnis (ungültig): :outcome', ['outcome' => $this->outcomeText($result, void: true)]) : __('Ergebnis: :outcome', ['outcome' => $this->outcomeText($result)]));
 
         if (! $void && ($tieLine = $this->tieLine($result, $report)) !== null) {
             $lines[] = '   '.$tieLine;
@@ -320,12 +320,32 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
     }
 
     /**
+     * The outcome of a count in words. For the void result of an annulled
+     * round it never says „gewählt“ about anybody — nobody is elected by it,
+     * and a line from the minutes must not read as if they were, even when
+     * quoted on its own (statutes jury L3).
+     *
      * @param  array<string, mixed>  $result
      */
-    protected function outcomeText(array $result): string
+    protected function outcomeText(array $result, bool $void = false): string
     {
         $elected = collect($result['rows'])->where('elected', true)->pluck('name');
         $tied = collect($result['rows'])->where('tied', true)->pluck('name');
+
+        if ($void) {
+            $wouldHave = __('die Zählung hätte :names ergeben', ['names' => $elected->join(', ', ' und ')]);
+
+            return match ($result['outcome']) {
+                ElectionOutcome::Complete => $wouldHave,
+                ElectionOutcome::Tie => ($result['tie_kind'] === ElectionTieKind::YesEqualsNo
+                    ? trans_choice('{1} Gleichstand von Ja und Nein bei :names|[2,*] Gleichstand von Ja und Nein bei :names', $tied->count(), ['names' => $tied->join(', ', ' und ')])
+                    : trans_choice('{1} Gleichstand um einen Sitz|[2,*] Gleichstand um :count Sitze', $result['tied_seats'], ['count' => $result['tied_seats']]))
+                    .($elected->isNotEmpty() ? '; '.$wouldHave : ''),
+                ElectionOutcome::Understaffed => $elected->isEmpty()
+                    ? __('niemand hatte die nötige Mehrheit')
+                    : __('nicht alle Sitze besetzt; :outcome', ['outcome' => $wouldHave]),
+            };
+        }
 
         return match ($result['outcome']) {
             ElectionOutcome::Complete => trans_choice('{1} gewählt ist :names|[2,*] gewählt sind :names', $elected->count(), ['names' => $elected->join(', ', ' und ')]),
@@ -394,7 +414,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
     </nav>
 
     <header class="border-b border-border-default pb-6 print:border-black">
-        <p class="text-base text-text-secondary print:text-black">{{ __('EINUNDZWANZIG e. V., Beschlussprotokoll') }}</p>
+        <p class="text-base text-text-secondary print:text-black">{{ __('Verein EINUNDZWANZIG, Beschlussprotokoll') }}</p>
         <h1 class="mt-1 text-3xl font-bold leading-tight break-words">{{ $election->name }}</h1>
         @if ($election->is_test)
             <p class="mt-3 inline-flex items-center gap-2 text-lg font-bold text-warning print:text-black" data-test="protocol-test-marker">
@@ -456,7 +476,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
                         </table>
                         <p class="mt-3 text-base">{{ __('Enthaltungen (leer): :blank', ['blank' => $shown['blank']]) }}</p>
                         @if ($kind === 'void')
-                            <p class="mt-1 text-base font-bold break-words" data-test="protocol-outcome-{{ $round->id }}">{{ __('Ausgezähltes Ergebnis (ungültig): :outcome', ['outcome' => $this->outcomeText($shown)]) }}</p>
+                            <p class="mt-1 text-base font-bold break-words" data-test="protocol-outcome-{{ $round->id }}">{{ __('Ausgezähltes Ergebnis (ungültig): :outcome', ['outcome' => $this->outcomeText($shown, void: true)]) }}</p>
                         @else
                             <p class="mt-1 text-base font-bold break-words" data-test="protocol-outcome-{{ $round->id }}">{{ __('Ergebnis: :outcome', ['outcome' => $this->outcomeText($shown)]) }}</p>
                             @if (($tieLine = $this->tieLine($shown, $report)) !== null)
