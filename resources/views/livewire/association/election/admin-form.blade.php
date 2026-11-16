@@ -137,7 +137,7 @@
             </flux:button>
             @if ($isNew)
                 <flux:button wire:click="cancelCreate" variant="ghost" class="min-h-11 w-full sm:w-auto">{{ __('Abbrechen') }}</flux:button>
-            @elseif (! $form['is_test'])
+            @elseif (! $form['is_test'] && $editedElection?->announced_at === null)
                 <flux:modal.trigger name="delete-election">
                     <flux:button variant="ghost" icon="trash" class="min-h-11 w-full text-danger! sm:ml-auto sm:w-auto" data-test="delete-election">{{ __('Wahl löschen') }}</flux:button>
                 </flux:modal.trigger>

@@ -33,6 +33,7 @@ use App\Services\Election\TallyRound;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Flux\Flux;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -113,6 +114,9 @@ new class extends Component
     public array $castingCandidates = [];
 
     public string $castingChair = '';
+
+    /** In a yes-equals-no tie an empty selection decides everyone "Nein"; the chair must confirm that on purpose. */
+    public bool $castingAllNo = false;
 
     public string $castingNote = '';
 
@@ -281,6 +285,11 @@ new class extends Component
 
         try {
             $candidacies->approve($candidate, $actor);
+        } catch (AuthorizationException) {
+            Flux::toast(__('Über die Kandidatur von :name ist schon entschieden. Lade die Seite neu, vielleicht hat sie schon jemand bearbeitet.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]), variant: 'danger');
+            unset($this->elections, $this->selectedElection, $this->candidaciesByRound);
+
+            return;
         } catch (ElectionActionRefusedException) {
             Flux::toast(
                 __(':name ist nach der Beitragsregel dieser Wahl noch nicht wahlberechtigt. Freigeben geht nach der Zahlung. Hat :name bar bezahlt, tragt die Wahlberechtigung unter „Wählerverzeichnis“ von Hand ein.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]),
@@ -323,12 +332,18 @@ new class extends Component
 
         $candidate = ElectionCandidate::query()->with('pleb.profile')->findOrFail($this->decisionCandidateId);
 
-        if ($this->decisionKind === 'withdraw') {
-            $candidacies->withdraw($candidate, $actor, trim($this->decisionReason));
-            $message = __('Die Kandidatur von :name ist zurückgezogen.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]);
-        } else {
-            $candidacies->reject($candidate, $actor, trim($this->decisionReason));
-            $message = __('Die Kandidatur von :name ist abgelehnt.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]);
+        try {
+            if ($this->decisionKind === 'withdraw') {
+                $candidacies->withdraw($candidate, $actor, trim($this->decisionReason));
+                $message = __('Die Kandidatur von :name ist zurückgezogen.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]);
+            } else {
+                $candidacies->reject($candidate, $actor, trim($this->decisionReason));
+                $message = __('Die Kandidatur von :name ist abgelehnt.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]);
+            }
+        } catch (AuthorizationException) {
+            $this->addError('decisionReason', __('Über die Kandidatur von :name ist schon entschieden. Lade die Seite neu, vielleicht hat sie schon jemand bearbeitet.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]));
+
+            return;
         }
 
         Flux::modal('candidacy-decision')->close();
@@ -558,6 +573,7 @@ new class extends Component
         $this->tieRoundId = (int) $round->id;
         $this->castingCandidates = [];
         $this->castingChair = '';
+        $this->castingAllNo = false;
         $this->castingNote = '';
         $this->section = 'live';
         $this->resetErrorBag(['castingCandidates', 'castingChair', 'castingNote']);
@@ -595,6 +611,18 @@ new class extends Component
                 ],
             );
 
+            if (! $exact && $this->castingCandidates === [] && ! $this->castingAllNo) {
+                $this->addError('castingCandidates', __('Niemand ist angehakt. Hake an, wen die/der Vorsitzende mit Ja bestätigt, oder bestätige unten, dass alle mit Nein entschieden sind.'));
+
+                return;
+            }
+
+            if (! $exact && $this->castingCandidates !== [] && $this->castingAllNo) {
+                $this->addError('castingCandidates', __('Du hast Personen angehakt und zugleich „alle mit Nein“ bestätigt. Entscheide dich für eines.'));
+
+                return;
+            }
+
             $castingVotes->handle($round, $actor, array_map(intval(...), $this->castingCandidates), $this->castingChair, $this->castingNote);
         } catch (ElectionCandidateBlockedException $refusal) {
             $this->addError('castingCandidates', $this->refusalText('casting', $refusal));
@@ -614,6 +642,7 @@ new class extends Component
         $this->tieRoundId = null;
         $this->castingCandidates = [];
         $this->castingChair = '';
+        $this->castingAllNo = false;
         $this->castingNote = '';
         $this->refreshElection($round->election);
 
@@ -2019,6 +2048,12 @@ new class extends Component
                             </flux:checkbox.group>
                             <flux:error name="castingCandidates" />
                             <flux:error name="castingCandidates.*" />
+                            @if ($tie['kind'] === \App\Enums\ElectionTieKind::YesEqualsNo)
+                                <flux:field variant="inline" class="mt-4">
+                                    <flux:checkbox wire:model="castingAllNo" data-test="casting-all-no" />
+                                    <flux:label class="text-base!">{{ __('Die/der Vorsitzende hat alle mit Nein entschieden') }}</flux:label>
+                                </flux:field>
+                            @endif
                         </fieldset>
                     @else
                         <flux:error name="castingCandidates" />

@@ -520,3 +520,43 @@ it('names the earlier round with an unreadable count when opening is refused for
     expect($text)->toBe('Alice Ambrosius kandidiert auch in „Präsidium“, und dessen Ergebnis ist nicht lesbar. Prüft ihn mit „php artisan election:verify '.$round->id.'“ oder annulliert ihn.')
         ->not->toContain('Lade die Seite neu');
 });
+
+it('decides a yes = no tie with Nein only when the chair confirms it, never by an empty submit', function () {
+    [$board] = electionBoard(1);
+    $election = Election::factory()->announced()->create(['name' => 'Vorstandswahl Ja Nein']);
+    $round = ElectionRound::factory()->countingRule(ElectionCountingRule::YesNoPerCandidate, 1)->create(['election_event_id' => $election->id, 'title' => 'Kasse']);
+    $pleb = EinundzwanzigPleb::factory()->active()->create();
+    Profile::factory()->create(['pubkey' => $pleb->pubkey, 'name' => 'Gerd Gruber']);
+    $gerd = (int) ElectionCandidate::factory()->create(['election_round_id' => $round->id, 'einundzwanzig_pleb_id' => $pleb->id])->id;
+    $voters = [electionVoter(), electionVoter()];
+    $round = app(OpenRound::class)->handle($round->fresh());
+    castElectionBallot($round, $voters[0], [$gerd => 'yes']);
+    castElectionBallot($round, $voters[1], [$gerd => 'no']);
+    $round = app(CloseRound::class)->handle($round);
+    NostrAuth::login($board->pubkey);
+
+    tieAdmin()
+        ->call('startCastingVote', $round->id)
+        ->assertSeeHtml('data-test="casting-all-no"')
+        ->set('castingChair', 'Erika Vorsitz')
+        ->call('recordCastingVote')
+        ->assertHasErrors(['castingCandidates'])
+        ->assertSee('Niemand ist angehakt.')
+        ->set('castingCandidates', [$gerd])
+        ->set('castingAllNo', true)
+        ->call('recordCastingVote')
+        ->assertHasErrors(['castingCandidates'])
+        ->assertSee('Entscheide dich für eines.');
+
+    expect(ElectionCastingVote::query()->where('election_round_id', $round->id)->exists())->toBeFalse();
+
+    tieAdmin()
+        ->call('startCastingVote', $round->id)
+        ->set('castingChair', 'Erika Vorsitz')
+        ->set('castingAllNo', true)
+        ->call('recordCastingVote')
+        ->assertHasNoErrors();
+
+    expect(ElectionCastingVote::query()->where('election_round_id', $round->id)->sole()->candidate_ids)->toBe([])
+        ->and(app(TallyRound::class)->effective($round)->elected)->toBe([]);
+});

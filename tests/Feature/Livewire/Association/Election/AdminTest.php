@@ -262,6 +262,42 @@ it('deletes a draft election', function () {
         ->and(electionAuditOf($election))->toBe(['election_deleted']);
 });
 
+it('offers no delete for an announced election and refuses it on the wire', function () {
+    loggedInBoard();
+    $election = Election::factory()->announced()->create();
+    draftElectionRound(candidates: 1, election: $election);
+
+    electionAdmin()
+        ->assertDontSeeHtml('data-test="delete-election"')
+        ->call('deleteElection')
+        ->assertForbidden();
+
+    expect(Election::query()->count())->toBe(1);
+});
+
+it('answers a stale tab with a reload hint, not a 403, when a candidacy is already decided', function (string $action) {
+    loggedInBoard();
+    $election = Election::factory()->announced()->create();
+    $round = draftElectionRound(candidates: 0, election: $election);
+    $decided = ElectionCandidate::factory()->create(['election_round_id' => $round->id, 'einundzwanzig_pleb_id' => electionVoter()->id]);
+
+    $page = electionAdmin();
+
+    if ($action === 'approve') {
+        $page->call('approve', $decided->id)->assertOk();
+    } else {
+        $page->call('startDecision', $decided->id, $action)
+            ->set('decisionReason', 'Schon von jemand anderem entschieden')
+            ->call('confirmDecision')
+            ->assertOk()
+            ->assertHasErrors(['decisionReason'])
+            ->assertSee('Lade die Seite neu');
+    }
+
+    expect($decided->fresh()->status)->toBe(ElectionCandidateStatus::Approved)
+        ->and(electionAuditOf($election))->toBe([]);
+})->with(['approve', 'reject']);
+
 it('approves an entitled candidacy and refuses one whose fee is missing', function () {
     loggedInBoard();
     $election = Election::factory()->announced()->create();

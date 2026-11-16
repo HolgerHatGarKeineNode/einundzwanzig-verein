@@ -63,7 +63,7 @@ class ElectionPolicy
 
     public function delete(NostrUser $user, Election $election): bool
     {
-        return ! $this->hasOpenedRound($election) && $this->isBoard($user);
+        return $election->announced_at === null && ! $this->hasOpenedRound($election) && $this->isBoard($user);
     }
 
     /**

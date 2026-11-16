@@ -179,7 +179,7 @@
                             <div class="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                                 {{-- A tie: the chair's casting vote is the statutory way (Art. 6); a run-off only if the assembly resolves one. Both open a dialog. --}}
                                 @if ($result['outcome'] === \App\Enums\ElectionOutcome::Tie && ! $report['has_run_off'])
-                                    <flux:button wire:click="startCastingVote({{ $round->id }})" icon="scale" variant="primary" class="min-h-11 w-full sm:w-auto" data-test="casting-vote-{{ $round->id }}">{{ __('Stichentscheid eintragen') }}</flux:button>
+                                    <flux:button wire:click="startCastingVote({{ $round->id }})" icon="scale" variant="outline" class="min-h-11 w-full sm:w-auto" data-test="casting-vote-{{ $round->id }}">{{ __('Stichentscheid eintragen') }}</flux:button>
                                     <flux:button wire:click="startTieRunOff({{ $round->id }})" variant="outline" class="min-h-11 w-full sm:w-auto" data-test="tie-run-off-{{ $round->id }}">{{ __('Stichwahl anlegen') }}</flux:button>
                                 {{-- The run-off of a missed majority is set up from the next-step card, the one place it is offered. --}}
                                 @elseif ($report['run_off'] && ! $report['has_run_off'])

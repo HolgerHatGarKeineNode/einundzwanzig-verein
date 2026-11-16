@@ -141,6 +141,14 @@ it('deletes an election only while all of its rounds are drafts', function () {
     expect(electionGate($board[0])->allows('delete', $election))->toBeFalse();
 });
 
+it('keeps an announced election, which the guide says cannot be taken back', function () {
+    ['board' => $board, 'round' => $round] = electionRightsScene();
+    $election = $round->election;
+    $election->forceFill(['announced_at' => now()])->save();
+
+    expect(electionGate($board[0])->allows('delete', $election->fresh()))->toBeFalse();
+});
+
 it('lets the board announce an election, once', function () {
     $board = electionBoard(1);
     $member = electionVoter();
