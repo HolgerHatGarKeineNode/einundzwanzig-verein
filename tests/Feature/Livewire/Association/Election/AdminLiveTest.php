@@ -14,8 +14,13 @@ use App\Services\Election\CloseRound;
 use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\OpenRound;
+use App\Services\Election\RoundManifest;
+use App\Services\Election\RoundReport;
+use App\Services\Election\TallyRound;
 use App\Support\NostrAuth;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Livewire\Features\SupportTesting\Testable;
 use Livewire\Livewire;
@@ -70,7 +75,7 @@ function liveNamedVoter(ElectionRound $round, EinundzwanzigPleb $voter, array $s
 function liveShareBody(string $html): string
 {
     $start = strpos($html, 'data-test="share-screen"');
-    $end = strpos($html, '</footer>', (int) $start);
+    $end = strpos($html, '</main>', (int) $start);
 
     expect($start)->not->toBeFalse()->and($end)->not->toBeFalse();
 
@@ -1075,4 +1080,50 @@ it('shows the turnout in the close modal before the board confirms', function ()
 
     $page->call('startRoundAction', $round->id, 'close')
         ->assertSee('Abgestimmt haben bisher 1 von 4 Wahlberechtigten.');
+});
+
+/*
+ * Item n (service package j2c): RoundReport marks a sealed round whose stored
+ * votes cannot be counted as `unreadable`, with result and run_off null. The
+ * report shape is faked here; the merge brings the real service. Mutation that
+ * must turn this red: drop the `unreadable` case, and the screen says
+ * "Ausgezählt um" over an empty result.
+ */
+it('shows an unreadable round on the share view as one calm line and every other round normally', function () {
+    liveBoard();
+    $election = Election::factory()->announced()->create();
+    $round = draftElectionRound(['title' => 'Vorsitz', 'position' => 1], election: $election);
+    $voter = electionVoter();
+    app(OpenRound::class)->handle($round);
+    castElectionBallot($round, $voter, [$round->candidates()->value('id') => 'for']);
+    app(CloseRound::class)->handle($round);
+    $fakeUnreadable = function (?int $roundId): void {
+        app()->instance(RoundReport::class, new class(app(TallyRound::class), app(RoundManifest::class), app(CreateRunOff::class), $roundId) extends RoundReport
+        {
+            public function __construct(TallyRound $tally, RoundManifest $manifests, CreateRunOff $runOffs, private ?int $unreadableId)
+            {
+                parent::__construct($tally, $manifests, $runOffs);
+            }
+
+            public function forElection(Election $election, ?CarbonInterface $now = null): Collection
+            {
+                return parent::forElection($election, $now)->map(fn (array $report): array => $report['round']->getKey() === $this->unreadableId
+                    ? [...$report, 'unreadable' => true, 'result' => null, 'run_off' => null]
+                    : [...$report, 'unreadable' => false]);
+            }
+        });
+    };
+    $screen = fn () => Livewire::test('association.election.screen', ['election' => $election->id]);
+
+    $fakeUnreadable($round->id);
+    $screen()
+        ->assertSee('Ergebnis nicht lesbar')
+        ->assertDontSee('Ausgezählt um')
+        ->assertDontSee('php artisan');
+
+    $fakeUnreadable(null);
+    $screen()
+        ->assertSee('Ausgezählt um')
+        ->assertSee('Gewählt ist')
+        ->assertDontSee('Ergebnis nicht lesbar');
 });

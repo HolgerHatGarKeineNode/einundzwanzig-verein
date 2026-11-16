@@ -7,6 +7,7 @@ use App\Enums\ElectionTieKind;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionRound;
+use App\Services\Election\ElectionStewardship;
 use App\Services\Election\RoundReport;
 use App\Support\ElectionTieText;
 use App\Support\NostrAuth;
@@ -20,8 +21,10 @@ use Livewire\Component;
 /**
  * The view the board shares in the video call: the round that matters right
  * now, large and read-only. While a round is open it shows how many have
- * voted; after the seal, the result. It refreshes itself every few seconds,
- * so it can stay shared the whole evening.
+ * voted; after the seal, the result. It polls every second, also as a
+ * background tab (`keep-alive`: the board shares this tab while it works in
+ * the admin tab), so a change shows within 2 s (checklist Q19) and the view
+ * can stay shared the whole evening.
  *
  * No control and no voter on this page — counts and candidate names only.
  */
@@ -101,13 +104,18 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
 
         // The count is the agenda: rounds of their own that still stand. A run-off
         // belongs to its round, an annulled round is void and its repeat takes
-        // its place, so "Wahlgang 2 von 4" holds however often the board annuls.
+        // its place. An annulled round whose repeat is still owed keeps its
+        // place in the total, so "von 4" does not drop to 3 between the annul
+        // and the repeat. Numbers follow admin-live's list (same agenda).
         $agenda = $reports
             ->filter(fn (array $candidate): bool => $candidate['round']->parent_round_id === null && $candidate['state'] !== ElectionRoundState::Annulled)
             ->values();
+        $owed = $reports
+            ->filter(fn (array $candidate): bool => $candidate['state'] === ElectionRoundState::Annulled && app(ElectionStewardship::class)->awaitsRepeat($candidate['round']))
+            ->count();
         $number = $agenda->search(fn (array $candidate): bool => $candidate['round']->is($report['round']));
 
-        return ['report' => $report, 'number' => $number === false ? null : $number + 1, 'total' => $agenda->count()];
+        return ['report' => $report, 'number' => $number === false ? null : $number + 1, 'total' => $agenda->count() + $owed];
     }
 
     protected function clock(?CarbonInterface $moment = null): string
@@ -138,9 +146,9 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
     $isYesNo = $round?->counting_rule === ElectionCountingRule::YesNoPerCandidate;
 @endphp
 
-{{-- Type for a shared screen: sizes follow the viewport height, so the same page reads at 1280×720 and 1920×1080. --}}
-<div @if ($election !== null) wire:poll.3s @endif
-     class="election-ui flex min-h-screen flex-col px-[5vw] py-[4vh] [--s-meta:clamp(1.5rem,2.6vh,2rem)] [--s-body:clamp(1.5rem,3.4vh,2.5rem)] [--s-row:clamp(1.5rem,2.8vh,2rem)] [--s-state:clamp(1.5rem,4.5vh,3.25rem)] [--s-title:clamp(2rem,6.6vh,4.75rem)] [--s-figure:clamp(5rem,22vh,15rem)]"
+{{-- Type for a shared screen: sizes follow the viewport height, so the same page reads at 1280×720 and 1920×1080. Nothing is smaller than 28px (1.75rem, checklist Q19). --}}
+<div @if ($election !== null) wire:poll.1s.keep-alive @endif
+     class="election-ui flex min-h-screen flex-col px-[5vw] py-[4vh] [--s-meta:clamp(1.75rem,2.6vh,2rem)] [--s-body:clamp(1.75rem,3.4vh,2.5rem)] [--s-row:clamp(1.75rem,2.8vh,2rem)] [--s-state:clamp(1.75rem,4.5vh,3.25rem)] [--s-title:clamp(2.25rem,6.6vh,4.75rem)] [--s-figure:clamp(5rem,22vh,15rem)]"
      data-test="share-screen">
     @if ($election === null)
         <main class="flex flex-1 flex-col justify-center">
@@ -150,11 +158,15 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
     @else
     <header class="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-2 text-[length:var(--s-meta)] text-text-secondary">
         <p class="min-w-0 font-bold text-text-primary wrap-anywhere">EINUNDZWANZIG <span class="font-normal text-text-secondary">{{ $election->name }}</span></p>
-        @if ($election->is_test)
-            <p class="inline-flex items-center gap-2 font-bold text-warning" data-test="share-test-marker">
-                <flux:icon.beaker class="size-[1.2em]" aria-hidden="true" />{{ __('Probewahl') }}
-            </p>
-        @endif
+        {{-- The clock sits in the header instead of a footer of its own: one line less, so the densest result fits 1280×720 at 28 px. --}}
+        <p class="flex items-baseline gap-x-8">
+            @if ($election->is_test)
+                <span class="inline-flex items-center gap-2 self-center font-bold text-warning" data-test="share-test-marker">
+                    <flux:icon.beaker class="size-[1.2em]" aria-hidden="true" />{{ __('Probewahl') }}
+                </span>
+            @endif
+            <span class="tabular-nums" data-test="share-clock">{{ __('Stand :time Uhr', ['time' => $this->clock()]) }}</span>
+        </p>
     </header>
 
     {{-- The padding only shows when the round fills the screen (a short one is centred): 2vh keeps a 63-character elected name, a 60-character chair (RecordCastingVote::MAX_CHAIR_LENGTH) and both rows inside 1280×720. --}}
@@ -186,7 +198,12 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
                         @break
                     @case($report['state'] === ElectionRoundState::Annulled)
                         <flux:icon.no-symbol class="size-[1em] text-danger" aria-hidden="true" />
-                        <span>{{ __('Annulliert. Dieser Wahlgang wird nicht ausgezählt.') }}</span>
+                        <span>{{ $round->closed_at !== null ? __('Annulliert. Das ausgezählte Ergebnis ist ungültig.') : __('Annulliert. Dieser Wahlgang wird nicht ausgezählt.') }}</span>
+                        @break
+                    @case($report['unreadable'] ?? false)
+                        {{-- Sealed, but the stored votes cannot be counted (RoundReport). Calm, no command on the shared screen. --}}
+                        <flux:icon.exclamation-circle class="size-[1em] text-text-secondary" aria-hidden="true" />
+                        <span data-test="share-unreadable">{{ __('Ergebnis nicht lesbar') }}</span>
                         @break
                     @case($report['sealed'])
                         <flux:icon.check-circle class="size-[1em] text-success" aria-hidden="true" />
@@ -306,8 +323,5 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
         @endif
     </main>
 
-    <footer class="text-[length:var(--s-meta)] text-text-secondary">
-        {{ __('Stand :time Uhr. Aktualisiert sich von selbst.', ['time' => $this->clock()]) }}
-    </footer>
     @endif
 </div>
