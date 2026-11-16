@@ -78,6 +78,7 @@ it('counts a sealed round with every number written out', function () {
         'elected' => [$a],
         'tied' => [],
         'tied_seats' => 0,
+        'tie_kind' => null,
     ])->and(electionVoteCount($round))->toBe(7);
 });
 
@@ -286,7 +287,7 @@ it('checks the result of a run-off placed at the end before a later draft with i
 
     // A later round opens before the run-off exists, so the run-off lands at the end.
     app(CloseRound::class)->handle(app(OpenRound::class)->handle($assessor));
-    $runOff = app(CreateRunOff::class)->handle($chair, $boardMember);
+    $runOff = app(CreateRunOff::class)->handle($chair, $boardMember, resolvedByAssembly: true);
     expect($runOff->position)->toBeGreaterThan($treasurer->fresh()->position);
 
     $runOff = app(OpenRound::class)->handle($runOff);

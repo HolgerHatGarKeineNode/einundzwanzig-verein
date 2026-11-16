@@ -6,6 +6,7 @@ use App\Enums\ElectionAuditAction;
 use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionOutcome;
 use App\Enums\ElectionRoundState;
+use App\Enums\ElectionTieKind;
 use App\Models\Election;
 use App\Models\ElectionAuditEntry;
 use App\Models\ElectionCandidate;
@@ -24,9 +25,19 @@ use Illuminate\Support\Collection;
  * `TallyRound`, which refuses until the round is sealed; nothing here can say
  * who voted, let alone how.
  *
- * @phpstan-type ResultRow array{candidate_id: int, name: string, for: int, yes: int, no: int, elected: bool, tied: bool}
- * @phpstan-type Result array{outcome: ElectionOutcome, blank: int, tied_seats: int, rows: list<ResultRow>}
- * @phpstan-type Report array{round: ElectionRound, state: ElectionRoundState, sealed: bool, over_by_clock: bool, roll: int, cast: int, candidates: list<string>, result: Result|null, manifest: array{hash: string, intact: bool}|null, reason: string|null, run_off: array{candidates: list<string>, seats: int}|null, has_run_off: bool}
+ * The result is the effective one (`TallyRound::effective()`): with the
+ * chair's casting vote applied once it is recorded. `casting_vote` then says
+ * who decided what; the counts are the raw ones either way.
+ *
+ * A round annulled after its seal has no result, but its count stays on
+ * record as `void_result` (jury run 1, F3): the minutes show it, marked as
+ * not valid. Nothing else reads it.
+ *
+ * @phpstan-type ResultRow array{candidate_id: int, name: string, for: int, yes: int, no: int, elected: bool, tied: bool, by_casting_vote: bool}
+ * @phpstan-type CastingVote array{chair: string, note: string|null, elected: list<string>, tied: list<string>, tied_seats: int, recorded_at: CarbonInterface}
+ * @phpstan-type Result array{outcome: ElectionOutcome, blank: int, tied_seats: int, tie_kind: ElectionTieKind|null, casting_vote: CastingVote|null, rows: list<ResultRow>}
+ * @phpstan-type Manifest array{hash: string, intact: bool}
+ * @phpstan-type Report array{round: ElectionRound, state: ElectionRoundState, sealed: bool, over_by_clock: bool, roll: int, cast: int, candidates: list<string>, result: Result|null, manifest: Manifest|null, void_result: array{result: Result, manifest: Manifest|null}|null, reason: string|null, run_off: array{candidates: list<string>, seats: int, needs_resolution: bool}|null, has_run_off: bool, run_off_resolved: bool}
  */
 class RoundReport
 {
@@ -69,24 +80,13 @@ class RoundReport
         $result = null;
         $manifest = null;
         $runOff = null;
+        $voidResult = null;
+        $tiedRaw = false;
 
         if ($sealed) {
-            $tally = $this->tally->handle($round);
-            $rows = collect($tally->counts)
-                ->map(fn (array $count, int $id): array => [
-                    'candidate_id' => $id,
-                    'name' => $names->get($id, ''),
-                    'for' => $count['for'],
-                    'yes' => $count['yes'],
-                    'no' => $count['no'],
-                    'elected' => in_array($id, $tally->elected, true),
-                    'tied' => in_array($id, $tally->tied, true),
-                ])
-                ->sortByDesc(fn (array $row): int => ($row['elected'] ? 1_000_000 : 0) + max($row['for'], $row['yes']) * 1000 - $row['no'])
-                ->values()
-                ->all();
-
-            $result = ['outcome' => $tally->outcome, 'blank' => $tally->blank, 'tied_seats' => $tally->tiedSeats, 'rows' => $rows];
+            $effective = $this->tally->effective($round);
+            $tiedRaw = $effective->outcome === ElectionOutcome::Tie || $effective->castingVote !== null;
+            $result = $this->resultOf($effective, $names);
             $manifest = $this->manifestOf($round);
 
             $proposal = $this->runOffs->proposal($round);
@@ -95,9 +95,21 @@ class RoundReport
                 $runOff = [
                     'candidates' => array_map(fn (int $id): string => $names->get($id, ''), $proposal['candidates']),
                     'seats' => $proposal['seats'],
+                    'needs_resolution' => $proposal['needs_resolution'],
                 ];
             }
+        } elseif ($round->closed_at !== null && $round->annulled_at !== null) {
+            try {
+                $voidResult = [
+                    'result' => $this->resultOf($this->tally->count($round, $round->votes()->pluck('choices')->all()), $names),
+                    'manifest' => $this->manifestOf($round, annulled: true),
+                ];
+            } catch (\UnexpectedValueException) {
+                $voidResult = null;
+            }
         }
+
+        $hasRunOff = $round->children->whereNull('annulled_at')->isNotEmpty();
 
         return [
             'round' => $round,
@@ -114,9 +126,51 @@ class RoundReport
                 ->all(),
             'result' => $result,
             'manifest' => $manifest,
+            'void_result' => $voidResult,
             'reason' => $this->reasonOf($round),
             'run_off' => $runOff,
-            'has_run_off' => $round->children->whereNull('annulled_at')->isNotEmpty(),
+            'has_run_off' => $hasRunOff,
+            // A run-off of a tie is there because the assembly resolved one.
+            'run_off_resolved' => $hasRunOff && $tiedRaw,
+        ];
+    }
+
+    /**
+     * @param  Collection<int, string>  $names  candidate id => name
+     * @return Result
+     */
+    protected function resultOf(TallyResult $tally, Collection $names): array
+    {
+        $decision = $tally->castingVote;
+        $rows = collect($tally->counts)
+            ->map(fn (array $count, int $id): array => [
+                'candidate_id' => $id,
+                'name' => $names->get($id, ''),
+                'for' => $count['for'],
+                'yes' => $count['yes'],
+                'no' => $count['no'],
+                'elected' => in_array($id, $tally->elected, true),
+                'tied' => in_array($id, $tally->tied, true),
+                'by_casting_vote' => $decision !== null && in_array($id, $decision->candidates, true),
+            ])
+            ->sortByDesc(fn (array $row): int => ($row['elected'] ? 1_000_000 : 0) + max($row['for'], $row['yes']) * 1000 - $row['no'])
+            ->values()
+            ->all();
+
+        return [
+            'outcome' => $tally->outcome,
+            'blank' => $tally->blank,
+            'tied_seats' => $tally->tiedSeats,
+            'tie_kind' => $tally->tieKind,
+            'casting_vote' => $decision === null ? null : [
+                'chair' => $decision->chair,
+                'note' => $decision->note,
+                'elected' => array_map(fn (int $id): string => $names->get($id, ''), $decision->candidates),
+                'tied' => array_map(fn (int $id): string => $names->get($id, ''), $decision->tied),
+                'tied_seats' => $decision->tiedSeats,
+                'recorded_at' => $decision->recordedAt,
+            ],
+            'rows' => $rows,
         ];
     }
 
@@ -125,14 +179,21 @@ class RoundReport
      * the tables still give it. The full check, signatures included, is
      * `election:verify`.
      *
-     * @return array{hash: string, intact: bool}|null
+     * The votes of an annulled round are not read any more, so for one only
+     * the stored text is checked against its hash.
+     *
+     * @return Manifest|null
      */
-    protected function manifestOf(ElectionRound $round): ?array
+    protected function manifestOf(ElectionRound $round, bool $annulled = false): ?array
     {
         $manifest = ElectionManifest::query()->where('election_round_id', $round->getKey())->first();
 
         if ($manifest === null) {
             return null;
+        }
+
+        if ($annulled) {
+            return ['hash' => (string) $manifest->hash, 'intact' => hash_equals($manifest->hash, RoundManifest::hash($manifest->body))];
         }
 
         try {

@@ -5,6 +5,7 @@ namespace App\Services\Election;
 use App\Enums\ElectionChoice;
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionOutcome;
+use App\Enums\ElectionTieKind;
 use UnexpectedValueException;
 
 /**
@@ -16,15 +17,20 @@ use UnexpectedValueException;
  *  - `single_majority`: the candidate with MORE than half of the votes cast
  *    for candidates. Blank ballots are abstentions and not part of that base.
  *    Nobody above half → nobody elected (understaffed; the run-off of the two
- *    best placed is a round of its own).
+ *    best placed is a round of its own) — unless the candidates sharing the
+ *    top score together hold every vote cast for candidates (5:5, 3:3:3):
+ *    that is a Stimmengleichheit, a tie between them for the open seat.
  *  - `yes_no_per_candidate`: every candidate with more yes than no. Should
  *    more qualify than there are seats, those with the most yes votes take
- *    them.
+ *    them. A candidate with as many yes as no (at least one) is tied on their
+ *    own confirmation for whatever seats the qualified leave over.
  *  - `most_votes`: the candidates named most often, at least once.
  *
  * Wherever the last seats would have to be split among candidates with the
  * same number of votes, nobody among them is elected and the result is a
- * tie. The order of candidates never decides anything.
+ * tie. The order of candidates never decides anything, and neither does this
+ * class: a tie stays a tie until the chair's casting vote is recorded
+ * (statutes Art. 6, `RecordCastingVote`).
  */
 class Tally
 {
@@ -60,6 +66,12 @@ class Tally
 
         [$qualified, $score] = $this->qualified($rule, $counts);
         [$elected, $tied, $tiedSeats] = $this->allocate($qualified, $score, max(0, $seats));
+        $tieKind = $tied === [] ? null : ElectionTieKind::Candidates;
+
+        if ($tied === [] && count($elected) < $seats) {
+            [$tied, $tieKind] = $this->stimmengleichheit($rule, $counts);
+            $tiedSeats = $tied === [] ? 0 : $seats - count($elected);
+        }
 
         $outcome = match (true) {
             $tied !== [] => ElectionOutcome::Tie,
@@ -67,7 +79,7 @@ class Tally
             default => ElectionOutcome::Complete,
         };
 
-        return new TallyResult($rule, $seats, $outcome, $counts, $blank, $elected, $tied, $tiedSeats);
+        return new TallyResult($rule, $seats, $outcome, $counts, $blank, $elected, $tied, $tiedSeats, $tieKind);
     }
 
     /**
@@ -94,6 +106,35 @@ class Tally
         }, $counts);
 
         return [$qualified, $score];
+    }
+
+    /**
+     * The ties no seat allocation shows, for the seats still open after it:
+     * an even split of every vote among the best placed in a single-majority
+     * round, and yes = no on a candidate's confirmation.
+     *
+     * @param  array<int, array{for: int, yes: int, no: int}>  $counts
+     * @return array{0: list<int>, 1: ElectionTieKind|null}
+     */
+    protected function stimmengleichheit(ElectionCountingRule $rule, array $counts): array
+    {
+        if ($rule === ElectionCountingRule::SingleMajority) {
+            $top = $counts === [] ? 0 : max(array_column($counts, 'for'));
+            $level = array_keys(array_filter($counts, fn (array $count): bool => $count['for'] === $top));
+
+            // 4:4:2 is no Stimmengleichheit: the two best placed do not hold every vote.
+            return $top > 0 && count($level) >= 2 && $top * count($level) === array_sum(array_column($counts, 'for'))
+                ? [$level, ElectionTieKind::Candidates]
+                : [[], null];
+        }
+
+        if ($rule === ElectionCountingRule::YesNoPerCandidate) {
+            $level = array_keys(array_filter($counts, fn (array $count): bool => $count['yes'] > 0 && $count['yes'] === $count['no']));
+
+            return $level === [] ? [[], null] : [$level, ElectionTieKind::YesEqualsNo];
+        }
+
+        return [[], null];
     }
 
     /**

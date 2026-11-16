@@ -9,10 +9,13 @@
 
 @use('App\Enums\ElectionCountingRule')
 @use('App\Enums\ElectionOutcome')
+@use('App\Enums\ElectionTieKind')
 @use('App\Models\MemberProposal')
+@use('App\Support\ElectionTieText')
 
-{{-- The count of one sealed round. Numbers per candidate only — nothing in
-     here names who voted, let alone how. --}}
+{{-- The effective result of one sealed round: the count, with the chair's
+     casting vote applied once it is recorded. Numbers per candidate only —
+     nothing in here names who voted, let alone how. --}}
 @php
     $yesNo = $result->rule === ElectionCountingRule::YesNoPerCandidate;
     $nameOf = fn (int $id): string => MemberProposal::authorNameOf($round->candidates->firstWhere('id', $id)?->pleb);
@@ -32,10 +35,17 @@
         @if ($elected !== [])
             {{ $sentence(trans_choice('Gewählt ist :names.|Gewählt sind :names.', count($elected), ['names' => implode(', ', $elected)])) }}
         @endif
+        @if ($result->castingVote !== null)
+            <span class="block" data-test="casting-vote-{{ $round->id }}">{{ $sentence(ElectionTieText::decided($result->tieKind, $result->castingVote->chair, array_map($nameOf, $result->castingVote->candidates), array_map($nameOf, $result->castingVote->tied))) }}</span>
+        @endif
         @switch($result->outcome)
             @case(ElectionOutcome::Tie)
-                {{ $sentence(trans_choice('Gleichstand um :count Sitz zwischen :names.|Gleichstand um :count Sitze zwischen :names.', $result->tiedSeats, ['count' => $result->tiedSeats, 'names' => implode(', ', $tied)])) }}
-                {{ $next }}
+                @if ($result->tieKind === ElectionTieKind::YesEqualsNo)
+                    {{ $sentence(ElectionTieText::yesEqualsNo($tied)) }}
+                @else
+                    {{ $sentence(trans_choice('Gleichstand um :count Sitz zwischen :names.|Gleichstand um :count Sitze zwischen :names.', $result->tiedSeats, ['count' => $result->tiedSeats, 'names' => implode(', ', $tied)])) }}
+                @endif
+                {{ $runOff === null ? ElectionTieText::pending() : ElectionTieText::runOffResolved().' '.$next }}
                 @break
             @case(ElectionOutcome::Understaffed)
                 @if ($result->rule === ElectionCountingRule::SingleMajority && $elected === [])

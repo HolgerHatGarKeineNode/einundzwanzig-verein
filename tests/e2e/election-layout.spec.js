@@ -6,7 +6,8 @@ import { test, expect, scenario, login } from './support/election.js'
  * Layout of the election pages, measured in the real browser with the real
  * font, and written to a JSON file for the plan:
  *
- *   member page, admin-live, minutes (protocol), share view
+ *   member page, admin-live, minutes (protocol), share view, and the two
+ *   tie dialogs of admin-live (casting vote, run-off)
  *   at 390, 820, 1280 and 1600 px wide; the share view also at 1280x720 and
  *   1920x1080, the sizes it is shared at in a call.
  *
@@ -72,7 +73,7 @@ function keep(entry) {
 /** The numbers of one page at the current viewport. */
 function measure(page) {
     return page.evaluate(() => {
-        const selector = 'a[href], button, input:not([type="hidden"]), select, textarea, summary, [role="button"], [role="tab"], [role="link"]'
+        const selector = 'a[href], button, input:not([type="hidden"]), select, textarea, summary, [role="button"], [role="tab"], [role="link"], [role="checkbox"]'
         const small = []
         const inlineSmall = []
         const shellSmall = []
@@ -99,10 +100,14 @@ function measure(page) {
                 continue
             }
 
-            // A checkbox or radio is tapped through its label.
+            // A checkbox or radio is tapped through its label. A Flux checkbox
+            // (ui-checkbox, role="checkbox") is tapped through its inline field,
+            // box and label together; that every point of such a row really
+            // toggles is pinned in tests/e2e/election-tie.spec.js.
+            const fluxField = element.matches('[data-flux-checkbox]') ? element.closest('[data-flux-field]') : null
             const target = (element.type === 'checkbox' || element.type === 'radio') && element.closest('label')
                 ? element.closest('label')
-                : element
+                : (fluxField?.querySelector(':scope > [data-flux-label]') ? fluxField : element)
             const box = target.getBoundingClientRect()
             const style = getComputedStyle(target)
 
@@ -198,10 +203,41 @@ test('admin-live, the minutes and the share view keep their limits', async ({ pa
     await measurePage(page, 'share view (call)', `${admin}/${data.election}/screen`, SHARE_SCREENS, { fit: true, ready: '[data-test="share-screen"]' })
 })
 
+test('the tie dialogs keep their limits at every width', async ({ page }) => {
+    const data = scenario('tie')
+    const admin = '/association/election/admin'
+
+    await login(page, data.board.secret, admin)
+
+    for (const viewport of atWidths) {
+        await page.setViewportSize(viewport)
+        await page.goto(admin)
+        await page.locator('[data-test="tab-live"]').click()
+
+        for (const [name, button, form] of [['casting-vote dialog', 'casting-vote', 'casting-vote-form'], ['run-off dialog', 'tie-run-off', 'tie-run-off-form']]) {
+            await page.locator(`[data-test="${button}-${data.round}"]`).click()
+            await expect(page.locator(`[data-test="${form}"]`)).toBeVisible()
+            // The modal scales in: measured before its transition ends, every box is a few px short.
+            await page.evaluate(() => Promise.all([document.fonts.ready, ...document.getAnimations().filter((animation) => animation.effect?.getComputedTiming().endTime !== Infinity).map((animation) => animation.finished)]))
+
+            const values = await measure(page)
+            keep({ page: name, path: `${admin} (Sitzung, ${name})`, ...values })
+
+            const at = `${name} at ${viewport.width}x${viewport.height}`
+            expect.soft(values.body_scroll_width, `${at}: body.scrollWidth`).toBeLessThanOrEqual(values.viewport.width)
+            expect.soft(values.tap_targets_under_44_detail, `${at}: tap targets under 44 px`).toEqual([])
+
+            await page.keyboard.press('Escape')
+            await expect(page.locator(`[data-test="${form}"]`)).toBeHidden()
+        }
+    }
+})
+
 /*
  * Positive control: the three measures above report zero on every page, so
  * each must be seen reporting a fault. A box wider than the screen, a small
- * button and a tall block are put on the share view; nothing is kept.
+ * button, an 18 px checkbox role (a Flux checkbox outside a labelled row) and
+ * a tall block are put on the share view; nothing is kept.
  */
 test('the measures see a sideways scroll, a small tap target and an overflowing share view', async ({ page }) => {
     const data = scenario('measure')
@@ -218,11 +254,11 @@ test('the measures see a sideways scroll, a small tap target and an overflowing 
 
     await page.evaluate(() => {
         const main = document.querySelector('[data-test="share-screen"] main')
-        main.insertAdjacentHTML('beforeend', '<div style="width:2000px;height:600px">wide and tall</div><button type="button" style="width:30px;height:30px">x</button>')
+        main.insertAdjacentHTML('beforeend', '<div style="width:2000px;height:600px">wide and tall</div><button type="button" style="width:30px;height:30px">x</button><span role="checkbox" tabindex="0" aria-label="box" style="display:inline-block;width:18px;height:18px"></span>')
     })
 
     const faulty = await measure(page)
     expect(faulty.body_scroll_width).toBeGreaterThan(faulty.viewport.width)
     expect(faulty.scroll_height).toBeGreaterThan(faulty.viewport.height)
-    expect(faulty.tap_targets_under_44_detail).toEqual([expect.stringMatching(/^button\S* "x" 30x30$/)])
+    expect(faulty.tap_targets_under_44_detail).toEqual([expect.stringMatching(/^button\S* "x" 30x30$/), expect.stringMatching(/^span\S* "box" 18x18$/)])
 })

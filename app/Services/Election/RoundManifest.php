@@ -13,6 +13,10 @@ use App\Models\ElectionRound;
  * were on the roll, how many votes there are, and a hash over the sorted
  * event ids of those votes. Neither members nor choices of a single vote.
  *
+ * The raw count, as it stood at the seal: a tie stays a tie here. The chair's
+ * casting vote comes later and has its own row and audit line;
+ * `election:verify` checks the two against each other.
+ *
  * The same text is built twice: by `CloseRound` when the round is sealed,
  * and by `election:verify` from the tables as they are now. A vote or roll
  * entry changed after the close makes the two differ. Changes before the
@@ -25,7 +29,7 @@ class RoundManifest
      * Raise whenever the content of `body()` changes, so an old manifest is
      * never compared with a text built by different rules.
      */
-    public const VERSION = 2;
+    public const VERSION = 3;
 
     public function __construct(protected TallyRound $tally) {}
 
@@ -81,6 +85,7 @@ class RoundManifest
             'elected' => $result->elected,
             'tied' => $result->tied,
             'tied_seats' => $result->tiedSeats,
+            'tie_kind' => $result->tieKind?->value,
             'roll_size' => $round->rollEntries()->count(),
             'votes_cast' => count($voteEventIds),
             'vote_event_ids_hash' => self::voteEventIdsHash($voteEventIds),

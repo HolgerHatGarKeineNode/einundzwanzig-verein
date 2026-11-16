@@ -35,7 +35,11 @@ enum ElectionAuditAction: string
     /** The meeting time or the call link changed after a round was opened. */
     case ElectionMeetingUpdated = 'election_meeting_updated';
 
+    /** A run-off was set up; for a tie the line carries `resolution: assembly`, the assembly having resolved it. */
     case RunOffCreated = 'run_off_created';
+
+    /** The election officer entered the chair's casting vote on a tie (statutes Art. 6). */
+    case CastingVoteRecorded = 'casting_vote_recorded';
 
     /** An annulled round was set up again as a new draft; the line names the annulled round. */
     case RoundRepeated = 'round_repeated';

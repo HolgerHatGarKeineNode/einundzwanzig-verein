@@ -4,9 +4,11 @@ use App\Enums\AssociationStatus;
 use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionFeeRule;
+use App\Enums\ElectionOutcome;
 use App\Enums\ElectionRollReason;
 use App\Enums\ElectionRollSource;
 use App\Enums\ElectionRoundState;
+use App\Enums\ElectionTieKind;
 use App\Exceptions\ElectionActionRefusedException;
 use App\Exceptions\ElectionCandidateBlockedException;
 use App\Exceptions\ElectionRoundStateException;
@@ -18,13 +20,16 @@ use App\Models\ElectionRound;
 use App\Models\MemberProposal;
 use App\Services\Election\Candidacies;
 use App\Services\Election\CreateRunOff;
+use App\Services\Election\ElectionAuditLog;
 use App\Services\Election\ElectionSetup;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\ElectoralRoll;
 use App\Services\Election\EnrolByHand;
 use App\Services\Election\OpenRound;
 use App\Services\Election\PurgeTestElection;
+use App\Services\Election\RecordCastingVote;
 use App\Services\Election\RoundReport;
+use App\Services\Election\TallyRound;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Flux\Flux;
@@ -99,6 +104,19 @@ new class extends Component
     public ?string $pendingRoundAction = null;
 
     public string $roundReason = '';
+
+    /** The tied round the casting-vote or tie run-off dialog is about. */
+    #[Locked]
+    public ?int $tieRoundId = null;
+
+    /** @var list<int|string> candidate ids the chair decided for */
+    public array $castingCandidates = [];
+
+    public string $castingChair = '';
+
+    public string $castingNote = '';
+
+    public bool $runOffResolved = false;
 
     public function mount(): void
     {
@@ -524,12 +542,122 @@ new class extends Component
         Flux::toast(__('„:round“ ist ausgezählt.', ['round' => $round->title]), variant: 'success');
     }
 
+    /**
+     * Open the dialog in which the election officer enters the chair's
+     * casting vote on the tie of a sealed round (statutes Art. 6).
+     */
+    public function startCastingVote(int $roundId): void
+    {
+        $this->actor();
+        $round = $this->tieRound($roundId);
+
+        $this->tieRoundId = (int) $round->id;
+        $this->castingCandidates = [];
+        $this->castingChair = '';
+        $this->castingNote = '';
+        $this->section = 'live';
+        $this->resetErrorBag(['castingCandidates', 'castingChair', 'castingNote']);
+
+        Flux::modal('casting-vote')->show();
+    }
+
+    public function recordCastingVote(RecordCastingVote $castingVotes, TallyRound $tally): void
+    {
+        $actor = $this->actor();
+        $round = ElectionRound::query()->findOrFail($this->tieRoundId ?? abort(404));
+
+        // The tally refuses a round annulled while the dialog was open, so it
+        // sits in the same try as the recording and reaches the same refusal.
+        try {
+            $result = $tally->handle($round);
+            $exact = $result->tieKind === ElectionTieKind::Candidates;
+
+            $this->validate(
+                [
+                    'castingCandidates' => array_filter(['array', $exact ? 'size:'.$result->tiedSeats : 'max:'.$result->tiedSeats, $exact ? 'required' : null]),
+                    'castingCandidates.*' => ['integer', Rule::in($result->tied)],
+                    'castingChair' => ['required', 'string', 'min:2', 'max:'.RecordCastingVote::MAX_CHAIR_LENGTH],
+                    'castingNote' => ['nullable', 'string', 'max:'.ElectionAuditLog::MAX_REASON_LENGTH],
+                ],
+                [
+                    'castingCandidates.required' => trans_choice('{1} Wähle die Person, für die die/der Vorsitzende entschieden hat.|[2,*] Wähle die :count Personen, für die die/der Vorsitzende entschieden hat.', $result->tiedSeats, ['count' => $result->tiedSeats]),
+                    'castingCandidates.size' => trans_choice('{1} Wähle genau eine Person: Es geht um einen Sitz.|[2,*] Wähle genau :count Personen: Es geht um :count Sitze.', $result->tiedSeats, ['count' => $result->tiedSeats]),
+                    'castingCandidates.max' => trans_choice('{1} Höchstens eine Person kann mit Ja bestätigt werden: Es ist ein Sitz frei.|[2,*] Höchstens :count Personen können mit Ja bestätigt werden: Es sind :count Sitze frei.', $result->tiedSeats, ['count' => $result->tiedSeats]),
+                    'castingCandidates.*' => __('Wähle nur Personen aus dem Gleichstand.'),
+                    'castingChair.required' => __('Nenne die/den Vorsitzenden. Der Name steht im Protokoll.'),
+                    'castingChair.min' => __('Nenne die/den Vorsitzenden mit mindestens zwei Zeichen.'),
+                    'castingChair.max' => __('Der Name darf höchstens :max Zeichen lang sein.', ['max' => RecordCastingVote::MAX_CHAIR_LENGTH]),
+                    'castingNote.max' => __('Die Anmerkung darf höchstens :max Zeichen lang sein.', ['max' => ElectionAuditLog::MAX_REASON_LENGTH]),
+                ],
+            );
+
+            $castingVotes->handle($round, $actor, array_map(intval(...), $this->castingCandidates), $this->castingChair, $this->castingNote);
+        } catch (ElectionActionRefusedException|ElectionRoundStateException) {
+            $this->addError('castingCandidates', __('Für „:round“ lässt sich kein Stichentscheid eintragen: Er ist schon eingetragen, es gibt eine Stichwahl, oder der Wahlgang ist annulliert. Lade die Seite neu.', ['round' => $round->title]));
+
+            return;
+        }
+
+        Flux::modal('casting-vote')->close();
+        $this->tieRoundId = null;
+        $this->castingCandidates = [];
+        $this->castingChair = '';
+        $this->castingNote = '';
+        $this->refreshElection($round->election);
+
+        Flux::toast(__('Der Stichentscheid zu „:round“ ist eingetragen.', ['round' => $round->title]), variant: 'success');
+    }
+
+    /**
+     * Open the dialog for the run-off of a tie: the statutes have the chair
+     * decide, so a run-off only follows a resolution of the assembly.
+     */
+    public function startTieRunOff(int $roundId): void
+    {
+        $this->actor();
+        $round = $this->tieRound($roundId);
+
+        $this->tieRoundId = (int) $round->id;
+        $this->runOffResolved = false;
+        $this->section = 'live';
+        $this->resetErrorBag('runOffResolved');
+
+        Flux::modal('tie-run-off')->show();
+    }
+
+    public function confirmTieRunOff(CreateRunOff $runOffs): void
+    {
+        $actor = $this->actor();
+        $round = ElectionRound::query()->findOrFail($this->tieRoundId ?? abort(404));
+
+        $this->validate(
+            ['runOffResolved' => ['accepted']],
+            ['runOffResolved.accepted' => __('Eine Stichwahl gibt es bei Gleichstand nur, wenn die Versammlung sie beschlossen hat. Sonst fällt die/der Vorsitzende den Stichentscheid.')],
+        );
+
+        try {
+            $runOff = $runOffs->handle($round, $actor, resolvedByAssembly: true);
+        } catch (ElectionActionRefusedException|ElectionRoundStateException) {
+            $this->addError('runOffResolved', __('Für „:round“ gibt es keine Stichwahl anzulegen: Der Stichentscheid ist schon eingetragen, oder es gibt die Stichwahl schon. Lade die Seite neu.', ['round' => $round->title]));
+
+            return;
+        }
+
+        Flux::modal('tie-run-off')->close();
+        $this->tieRoundId = null;
+        $this->runOffResolved = false;
+        $this->refreshElection($round->election);
+
+        Flux::toast(__('„:round“ ist angelegt. Öffnet sie, wenn alle bereit sind.', ['round' => $runOff->title]), variant: 'success');
+    }
+
     public function createRunOff(int $roundId, CreateRunOff $runOffs): void
     {
         $actor = $this->actor();
         $round = ElectionRound::query()->findOrFail($roundId);
 
         try {
+            // A tie needs the assembly's resolution, given in the dialog of startTieRunOff(); here it is refused.
             $runOff = $runOffs->handle($round, $actor);
         } catch (ElectionActionRefusedException|ElectionRoundStateException) {
             Flux::toast(__('Für „:round“ gibt es keine Stichwahl anzulegen.', ['round' => $round->title]), variant: 'danger');
@@ -948,9 +1076,28 @@ new class extends Component
         }
 
         $runOffs = app(CreateRunOff::class);
-        $level = $all->first(fn (ElectionRound $round): bool => $round->isSealed()
-            && $all->where('parent_round_id', $round->id)->whereNull('annulled_at')->isEmpty()
-            && $runOffs->proposal($round)['candidates'] !== []);
+        $proposals = [];
+        $level = $all->first(function (ElectionRound $round) use ($all, $runOffs, &$proposals): bool {
+            if (! $round->isSealed() || $all->where('parent_round_id', $round->id)->whereNull('annulled_at')->isNotEmpty()) {
+                return false;
+            }
+
+            $proposals[$round->id] = $runOffs->proposal($round);
+
+            return $proposals[$round->id]['candidates'] !== [];
+        });
+
+        // A tie: the chair casts the deciding vote (statutes Art. 6); a run-off only if the assembly resolves one.
+        if ($level !== null && $proposals[$level->id]['needs_resolution']) {
+            return $this->step(
+                __('„:round“ endet im Gleichstand.', ['round' => $level->title]),
+                __('Nach den Statuten fällt die/der Vorsitzende den Stichentscheid. Tragt ihn ein, sobald er gefallen ist. Eine Stichwahl gibt es nur, wenn die Versammlung sie beschließt.'),
+                label: __('Stichentscheid eintragen'),
+                click: "startCastingVote({$level->id})",
+                secondaryLabel: __('Stichwahl anlegen'),
+                secondaryClick: "startTieRunOff({$level->id})",
+            );
+        }
 
         if ($level !== null) {
             return $this->step(
@@ -1157,7 +1304,7 @@ new class extends Component
             $action === 'open' && str_contains($message, 'run-off') => __('Die Stichwahl lässt sich erst öffnen, wenn ihr Wahlgang ausgezählt ist.'),
             $action === 'open' && $name !== null && str_contains($message, 'not sealed yet') => __(':name kandidiert auch in einem früheren Wahlgang, der noch nicht ausgezählt ist. Zählt ihn zuerst aus, oder zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück.', ['name' => $name]),
             $action === 'open' && $name !== null && str_contains($message, 'has been elected') => __(':name ist in einem früheren Wahlgang schon gewählt. Zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück, dann lässt sich der Wahlgang öffnen. Kann danach niemand mehr antreten, streicht den Wahlgang.', ['name' => $name]),
-            $action === 'open' && $name !== null && str_contains($message, 'undecided tie') => __(':name steht in einem früheren Wahlgang im Gleichstand, und dafür ist noch keine Stichwahl ausgezählt. Legt die Stichwahl an und zählt sie aus, oder zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück.', ['name' => $name]),
+            $action === 'open' && $name !== null && str_contains($message, 'undecided tie') => __(':name steht in einem früheren Wahlgang im Gleichstand, und der ist noch nicht entschieden. Tragt den Stichentscheid der/des Vorsitzenden ein, oder zieht die Kandidatur von :name hier unter „Kandidaturen“ zurück.', ['name' => $name]),
             $action === 'open' && str_contains($message, 'fee year') => __('Die Beitragsregel dieser Wahl braucht ein Beitragsjahr. Tragt es unter „Einstellungen“ ein.'),
             $action === 'open' => __('Dieser Wahlgang lässt sich gerade nicht öffnen. Lade die Seite neu, vielleicht hat ihn schon jemand geöffnet.'),
             $action === 'close' => __('Der Wahlgang nimmt keine Stimmen mehr an. Lade die Seite neu, vielleicht hat ihn schon jemand geschlossen.'),
@@ -1213,6 +1360,56 @@ new class extends Component
             ->whereNotNull('opened_at')
             ->get()
             ->first(fn (ElectionRound $other): bool => $other->stateAt($now) === ElectionRoundState::Open);
+    }
+
+    /**
+     * A sealed round of the election whose tie nobody has decided yet.
+     */
+    protected function tieRound(int $roundId): ElectionRound
+    {
+        $round = ElectionRound::query()->findOrFail($roundId);
+
+        if ((int) $round->election_event_id !== $this->selectedElectionId) {
+            $this->select($round->election);
+        }
+
+        abort_unless($round->isSealed() && app(TallyRound::class)->effective($round)->outcome === ElectionOutcome::Tie, 404);
+
+        return $round;
+    }
+
+    /**
+     * The tied candidates of the round in the tie dialogs, with their counts.
+     *
+     * @return array{round: ElectionRound, kind: ElectionTieKind, seats: int, candidates: list<array{id: int, name: string, for: int, yes: int, no: int}>}|null
+     */
+    #[Computed]
+    public function tie(): ?array
+    {
+        $this->actor();
+
+        $round = $this->tieRoundId === null ? null : ElectionRound::query()->with('candidates.pleb.profile')->find($this->tieRoundId);
+
+        if ($round === null || ! $round->isSealed()) {
+            return null;
+        }
+
+        $result = app(TallyRound::class)->handle($round);
+
+        if ($result->tieKind === null) {
+            return null;
+        }
+
+        return [
+            'round' => $round,
+            'kind' => $result->tieKind,
+            'seats' => $result->tiedSeats,
+            'candidates' => array_map(fn (int $id): array => [
+                'id' => $id,
+                'name' => MemberProposal::authorNameOf($round->candidates->firstWhere('id', $id)?->pleb),
+                ...$result->counts[$id],
+            ], $result->tied),
+        ];
     }
 
     protected function canRepeat(ElectionRound $round): bool
@@ -1651,6 +1848,97 @@ new class extends Component
                                 default => __('Wahlgang öffnen'),
                             } }}
                         </flux:button>
+                    </div>
+                </form>
+            </flux:modal>
+
+            @php $tie = $this->tie; @endphp
+            {{-- The chair's casting vote on a tie (statutes Art. 6): the election officer enters it as the chair announced it. --}}
+            <flux:modal name="casting-vote" class="w-full max-w-lg">
+                <form wire:submit="recordCastingVote" class="space-y-6" data-test="casting-vote-form">
+                    <div>
+                        <flux:heading size="lg">{{ $tie ? __('Stichentscheid zu „:round“', ['round' => $tie['round']->title]) : __('Stichentscheid') }}</flux:heading>
+                        <flux:text class="mt-2">
+                            @if ($tie && $tie['kind'] === \App\Enums\ElectionTieKind::YesEqualsNo)
+                                {{ trans_choice('{1} Bei gleich vielen Ja- wie Nein-Stimmen fällt die/der Vorsitzende den Stichentscheid. Hake an, wen sie oder er mit Ja bestätigt; wer nicht angehakt ist, ist mit Nein entschieden. Frei ist ein Sitz.|[2,*] Bei gleich vielen Ja- wie Nein-Stimmen fällt die/der Vorsitzende den Stichentscheid. Hake an, wen sie oder er mit Ja bestätigt; wer nicht angehakt ist, ist mit Nein entschieden. Frei sind :count Sitze.', $tie['seats'], ['count' => $tie['seats']]) }}
+                            @elseif ($tie)
+                                {{ trans_choice('{1} Bei Stimmengleichheit fällt die/der Vorsitzende den Stichentscheid. Hake die Person an, für die sie oder er entschieden hat.|[2,*] Bei Stimmengleichheit fällt die/der Vorsitzende den Stichentscheid. Hake die :count Personen an, für die sie oder er entschieden hat.', $tie['seats'], ['count' => $tie['seats']]) }}
+                            @endif
+                            {{ __('Der Eintrag steht im Protokoll und lässt sich nicht ändern.') }}
+                        </flux:text>
+                    </div>
+                    @if ($tie)
+                        <fieldset>
+                            <legend class="text-sm font-medium text-text-primary">{{ __('Entschieden für') }}</legend>
+                            {{-- Every point of a row ticks: the label covers the row from the box to the counts, and the box column above and below the 18 px box is the checkbox's own transparent ::before, stretched to the row's height. --}}
+                            <flux:checkbox.group wire:model="castingCandidates">
+                                <ul class="mt-2 divide-y divide-border-subtle border-y border-border-subtle">
+                                    @foreach ($tie['candidates'] as $candidate)
+                                        <li wire:key="casting-{{ $tie['round']->id }}-{{ $candidate['id'] }}">
+                                            <flux:field variant="inline" class="relative items-center gap-x-0!">
+                                                <flux:checkbox value="{{ $candidate['id'] }}" :autofocus="$loop->first" class="before:absolute before:inset-y-0 before:start-0 before:w-[1.125rem] before:cursor-pointer" data-test="casting-checkbox-{{ $candidate['id'] }}" />
+                                                <flux:label class="flex! min-h-11 cursor-pointer items-center gap-3 py-2 ps-3 text-base!" data-test="casting-candidate-{{ $candidate['id'] }}">
+                                                    <span class="min-w-0 flex-1 font-bold break-words text-text-primary">{{ $candidate['name'] }}</span>
+                                                    <span class="shrink-0 text-sm font-normal tabular-nums text-text-secondary">
+                                                        @if ($tie['kind'] === \App\Enums\ElectionTieKind::YesEqualsNo || $tie['round']->counting_rule === \App\Enums\ElectionCountingRule::YesNoPerCandidate)
+                                                            {{ __(':yes Ja, :no Nein', ['yes' => $candidate['yes'], 'no' => $candidate['no']]) }}
+                                                        @else
+                                                            {{ trans_choice('{0} 0 Stimmen|{1} 1 Stimme|[2,*] :count Stimmen', $candidate['for'], ['count' => $candidate['for']]) }}
+                                                        @endif
+                                                    </span>
+                                                </flux:label>
+                                            </flux:field>
+                                        </li>
+                                    @endforeach
+                                </ul>
+                            </flux:checkbox.group>
+                            <flux:error name="castingCandidates" />
+                            <flux:error name="castingCandidates.*" />
+                        </fieldset>
+                    @else
+                        <flux:error name="castingCandidates" />
+                    @endif
+                    <flux:field class="[&_input]:min-h-11">
+                        <flux:label>{{ __('Name der/des Vorsitzenden') }}</flux:label>
+                        <flux:input wire:model="castingChair" maxlength="{{ \App\Services\Election\RecordCastingVote::MAX_CHAIR_LENGTH }}" autocomplete="off" data-test="casting-chair" />
+                        <flux:error name="castingChair" />
+                    </flux:field>
+                    <flux:field>
+                        <flux:label badge="{{ __('optional') }}">{{ __('Anmerkung für das Protokoll') }}</flux:label>
+                        <flux:textarea wire:model="castingNote" rows="2" maxlength="{{ \App\Services\Election\ElectionAuditLog::MAX_REASON_LENGTH }}" data-test="casting-note" />
+                        <flux:error name="castingNote" />
+                    </flux:field>
+                    <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                        <flux:modal.close>
+                            <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto" data-test="cancel-casting-vote">{{ __('Abbrechen') }}</flux:button>
+                        </flux:modal.close>
+                        <flux:button type="submit" variant="primary" class="min-h-11 w-full sm:w-auto" data-test="confirm-casting-vote">{{ __('Stichentscheid eintragen') }}</flux:button>
+                    </div>
+                </form>
+            </flux:modal>
+
+            {{-- A run-off for a tie exists only by resolution of the assembly. --}}
+            <flux:modal name="tie-run-off" class="w-full max-w-lg">
+                <form wire:submit="confirmTieRunOff" class="space-y-6" data-test="tie-run-off-form">
+                    <div>
+                        <flux:heading size="lg">{{ $tie ? __('Stichwahl zu „:round“ anlegen?', ['round' => $tie['round']->title]) : __('Stichwahl anlegen?') }}</flux:heading>
+                        <flux:text class="mt-2">
+                            {{ __('Nach den Statuten fällt bei Stimmengleichheit die/der Vorsitzende den Stichentscheid. Eine Stichwahl gibt es nur, wenn die Versammlung sie beschlossen hat. Endet auch sie im Gleichstand, fällt die/der Vorsitzende den Stichentscheid.') }}
+                        </flux:text>
+                    </div>
+                    {{-- As in the casting-vote rows: the label and the checkbox's stretched ::before cover the whole row. The error sits below the field, outside the row the ::before spans. --}}
+                    <div>
+                        <flux:field variant="inline" class="relative items-center gap-x-0!" data-test="run-off-row">
+                            <flux:checkbox wire:model="runOffResolved" autofocus class="before:absolute before:inset-y-0 before:start-0 before:w-[1.125rem] before:cursor-pointer" data-test="run-off-resolved" />
+                            <flux:label class="flex! min-h-11 cursor-pointer items-center py-2 ps-3 text-base! break-words" data-test="run-off-resolved-label">{{ __('Die Versammlung hat eine Stichwahl beschlossen.') }}</flux:label>
+                        </flux:field>
+                        <flux:error name="runOffResolved" />
+                    </div>
+                    <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                        <flux:modal.close>
+                            <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto" data-test="cancel-tie-run-off">{{ __('Abbrechen') }}</flux:button>
+                        </flux:modal.close>
+                        <flux:button type="submit" variant="primary" class="min-h-11 w-full sm:w-auto" data-test="confirm-tie-run-off">{{ __('Stichwahl anlegen') }}</flux:button>
                     </div>
                 </form>
             </flux:modal>

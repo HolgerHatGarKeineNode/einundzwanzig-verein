@@ -6,6 +6,7 @@ use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionAuditEntry;
 use App\Models\ElectionCandidate;
+use App\Models\ElectionCastingVote;
 use App\Models\ElectionManifest;
 use App\Models\ElectionRound;
 use App\Models\Profile;
@@ -155,7 +156,15 @@ function liveRefusalScenario(string $kind, EinundzwanzigPleb $board): array
             castElectionBallot($round, $board, [$a => 'yes', $b => 'yes']);
             app(ElectionStewardship::class)->closeEarly($round, $board, 'Fertig');
 
-            return [livePage(), fn (Testable $page) => $page->call('createRunOff', $round->id), fn (): bool => ! ElectionRound::query()->where('parent_round_id', $round->id)->exists()];
+            return [livePage()->call('startTieRunOff', $round->id)->set('runOffResolved', true), fn (Testable $page) => $page->call('confirmTieRunOff'), fn (): bool => ! ElectionRound::query()->where('parent_round_id', $round->id)->exists()];
+        })(),
+        'casting vote' => (function () use ($election, $board): array {
+            $round = openElectionRound(['counting_rule' => ElectionCountingRule::YesNoPerCandidate], election: $election);
+            [$a, $b] = $round->candidates()->pluck('id')->all();
+            castElectionBallot($round, $board, [$a => 'yes', $b => 'yes']);
+            app(ElectionStewardship::class)->closeEarly($round, $board, 'Fertig');
+
+            return [livePage()->call('startCastingVote', $round->id)->set('castingCandidates', [$a])->set('castingChair', 'Erika Vorsitz'), fn (Testable $page) => $page->call('recordCastingVote'), fn (): bool => ! ElectionCastingVote::query()->where('election_round_id', $round->id)->exists()];
         })(),
         'repeat' => (function () use ($election, $board): array {
             $round = app(ElectionStewardship::class)->annul(openElectionRound(election: $election), $board, 'Falsche Liste');
@@ -192,7 +201,7 @@ it('refuses each live action itself once the session belongs to a member, and wr
     expect($untouched())->toBeTrue()
         ->and(ElectionAuditEntry::query()->count())->toBe($audit)
         ->and(ElectionRound::query()->count())->toBe($rounds);
-})->with(['open', 'close early', 'annul', 'seal', 'run-off', 'repeat', 'meeting', 'purge']);
+})->with(['open', 'close early', 'annul', 'seal', 'run-off', 'casting vote', 'repeat', 'meeting', 'purge']);
 
 it('asks before a round action, and the question itself is board-only', function () {
     [$board] = electionBoard(1);
@@ -290,7 +299,7 @@ it('shows the result after the seal on the board page', function () {
         ->assertSee(ElectionManifest::query()->where('election_round_id', $round->id)->value('hash'));
 });
 
-it('offers a run-off on a tie and sets it up right after its round', function () {
+it('sets up the run-off of a tie only on the resolution of the assembly, right after its round', function () {
     $board = liveBoard();
     $election = Election::factory()->announced()->create();
     $voters = [electionVoter(), electionVoter()];
@@ -306,8 +315,18 @@ it('offers a run-off on a tie and sets it up right after its round', function ()
 
     $page = livePage()
         ->assertSee('Gleichstand um einen Sitz.')
+        ->assertSee('Die/der Vorsitzende fällt den Stichentscheid.')
+        ->assertSee('Stichentscheid eintragen')
         ->assertSee('Stichwahl anlegen')
-        ->call('createRunOff', $round->id);
+        // Without the assembly's resolution there is no run-off of a tie, by either way in.
+        ->call('createRunOff', $round->id)
+        ->call('startTieRunOff', $round->id)
+        ->call('confirmTieRunOff')
+        ->assertHasErrors(['runOffResolved' => 'accepted']);
+
+    expect(ElectionRound::query()->where('parent_round_id', $round->id)->exists())->toBeFalse();
+
+    $page->set('runOffResolved', true)->call('confirmTieRunOff')->assertHasNoErrors();
 
     $runOff = ElectionRound::query()->where('parent_round_id', $round->id)->sole();
 
@@ -318,10 +337,14 @@ it('offers a run-off on a tie and sets it up right after its round', function ()
         ->and($later->fresh()->position)->toBe(3)
         ->and($runOff->candidates()->where('status', ElectionCandidateStatus::Approved)->pluck('einundzwanzig_pleb_id')->sort()->values()->all())
         ->toBe($round->candidates()->pluck('einundzwanzig_pleb_id')->sort()->values()->all())
-        ->and(liveAudit($election))->toBe(['round_closed_early', 'run_off_created']);
+        ->and(liveAudit($election))->toBe(['round_closed_early', 'run_off_created'])
+        ->and(ElectionAuditEntry::query()->where('action', 'run_off_created')->sole()->details)->toBe(['resolution' => 'assembly']);
 
     $page->assertSee('„Stichwahl Vorstand“ öffnen')
-        ->call('createRunOff', $round->id);
+        ->assertSee('Die Versammlung hat statt des Stichentscheids eine Stichwahl beschlossen.');
+
+    livePage()->call('startTieRunOff', $round->id)->set('runOffResolved', true)->call('confirmTieRunOff')
+        ->assertHasErrors(['runOffResolved']);
 
     expect(ElectionRound::query()->where('parent_round_id', $round->id)->count())->toBe(1);
 
@@ -523,8 +546,8 @@ it('opens the next round once a run-off has settled the tie of a candidate who s
     [, $presidency, $treasury, $voters, $ids] = liveSharedCandidateEvening();
 
     $page = liveVoteRound(livePage(), $presidency, $voters, [$ids['a'], $ids['a'], $ids['b'], $ids['b']])
-        ->assertSee('„Vorsitz“ ist ohne Entscheidung ausgezählt.')
-        ->call('createRunOff', $presidency->id);
+        ->assertSee('„Vorsitz“ endet im Gleichstand.')
+        ->call('startTieRunOff', $presidency->id)->set('runOffResolved', true)->call('confirmTieRunOff');
 
     $runOff = ElectionRound::query()->where('parent_round_id', $presidency->id)->sole();
     $runOffA = (int) $runOff->candidates()
@@ -561,7 +584,7 @@ it('says in German which earlier result keeps the next round shut', function (st
 
     expect($treasury->fresh()->opened_at)->toBeNull();
 })->with([
-    'tie without run-off' => ['tie', 'steht in einem früheren Wahlgang im Gleichstand, und dafür ist noch keine Stichwahl ausgezählt'],
+    'tie without run-off' => ['tie', 'steht in einem früheren Wahlgang im Gleichstand, und der ist noch nicht entschieden. Tragt den Stichentscheid der/des Vorsitzenden ein'],
     'elected earlier' => ['elected', 'ist in einem früheren Wahlgang schon gewählt'],
     'earlier not counted' => ['not counted', 'kandidiert auch in einem früheren Wahlgang, der noch nicht ausgezählt ist. Zählt ihn zuerst aus'],
 ]);
@@ -650,7 +673,7 @@ it('keeps every other round shut while one is open, on the page and in the actio
     expect($second->fresh()->opened_at)->not->toBeNull();
 });
 
-it('offers the run-off of a tie once, in the next-step card', function () {
+it('offers the casting vote first and the resolved run-off second for a tie, and never the plain run-off', function () {
     $board = liveBoard();
     $election = Election::factory()->announced()->create();
     $voter = electionVoter();
@@ -663,12 +686,14 @@ it('offers the run-off of a tie once, in the next-step card', function () {
     // From the next-step card to the round list of the meeting.
     $cardStart = (int) strpos($html, 'data-test="next-step"');
     $card = substr($html, $cardStart, (int) strpos($html, 'data-test="live"') - $cardStart);
+    $resultCard = substr($html, (int) strpos($html, 'data-test="live-round-'.$round->id.'"'));
 
     expect($cardStart)->toBeGreaterThan(0)
-        ->and(substr_count($html, 'Stichwahl anlegen'))->toBe(1)
-        ->and($card)->toContain('Stichwahl anlegen')
-        ->and($card)->toContain("createRunOff({$round->id})")
-        ->and($html)->not->toContain('data-test="run-off-'.$round->id.'"');
+        ->and($card)->toContain('„Vorstand“ endet im Gleichstand.')
+        ->and(strpos($card, "startCastingVote({$round->id})"))->toBeLessThan(strpos($card, "startTieRunOff({$round->id})"))
+        ->and($resultCard)->toContain('data-test="casting-vote-'.$round->id.'"')
+        ->and($resultCard)->toContain('data-test="tie-run-off-'.$round->id.'"')
+        ->and($html)->not->toContain("createRunOff({$round->id})");
 });
 
 /*
@@ -688,7 +713,7 @@ it('treats a run-off annulled along with its round as void on the card, the live
     castElectionBallot($chair, $voters[0], [$first => 'for']);
     castElectionBallot($chair, $voters[1], [$second => 'for']);
     $chair = app(CloseRound::class)->handle($chair);
-    $runOff = app(CreateRunOff::class)->handle($chair, $board);
+    $runOff = app(CreateRunOff::class)->handle($chair, $board, resolvedByAssembly: true);
 
     $page = livePage()
         ->assertSee('„'.$runOff->title.'“ öffnen')
@@ -733,7 +758,7 @@ it('names the annulled round, not its run-off, as the last one on the card and t
 
     $chair = $level($chair);
     $this->travel(5)->minutes();
-    $level(app(CreateRunOff::class)->handle($chair, $board));
+    $level(app(CreateRunOff::class)->handle($chair, $board, resolvedByAssembly: true));
     $this->travel(5)->minutes();
 
     // The cascade crosses a second boundary right after the chair is stamped.
@@ -848,7 +873,7 @@ it('labels a run-off by name on the live list and keeps the next round\'s number
     castElectionBallot($round, $voters[0], [$a => 'for']);
     castElectionBallot($round, $voters[1], [$b => 'for']);
     app(ElectionStewardship::class)->closeEarly($round, $board, 'Fertig');
-    app(CreateRunOff::class)->handle($round->fresh(), $board);
+    app(CreateRunOff::class)->handle($round->fresh(), $board, resolvedByAssembly: true);
 
     livePage()->assertSeeInOrder(['Wahlgang 1:', 'Vorstand', 'Stichwahl:', 'Wahlgang 2:', 'Kasse']);
 });

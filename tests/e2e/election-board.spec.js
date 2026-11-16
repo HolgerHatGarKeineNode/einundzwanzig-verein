@@ -127,3 +127,50 @@ test('the board enters a cash payer as entitled, and the next round puts her on 
     await openSection(page, 'roll')
     await expect(page.locator('[data-test="roll-row"]').filter({ hasText: data.cash.name })).toHaveCount(1)
 })
+
+test('the board enters the chair\'s casting vote on a tie, and the share view shows the decided result', async ({ page, context }) => {
+    const data = scenario('board-close')
+    const { anna, bernd } = data.candidates
+
+    await login(page, data.board.secret, ADMIN)
+    await openSection(page, 'live')
+    await page.locator(`[data-test="open-round-${data.round}"]`).click()
+    await confirmRoundAction(page)
+
+    // One vote each: a Stimmengleichheit, decided by the chair (statutes Art. 6).
+    castVotes(data.round, anna.id, 1)
+    castVotes(data.round, bernd.id, 1)
+
+    await page.locator(`[data-test="close-round-${data.round}"]`).click()
+    await confirmRoundAction(page, 'Alle Anwesenden haben abgestimmt')
+    await expect(page.locator(`[data-test="live-tie-next-${data.round}"]`)).toHaveText('Die/der Vorsitzende fällt den Stichentscheid.')
+
+    await page.locator(`[data-test="casting-vote-${data.round}"]`).click()
+    const dialog = page.locator('[data-test="casting-vote-form"]')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('[data-test^="casting-candidate-"]').filter({ hasText: anna.name })).toContainText('1 Stimme')
+
+    // The count rule is checked before anything is written.
+    await dialog.locator('[data-test^="casting-candidate-"]').filter({ hasText: anna.name }).click()
+    await dialog.locator('[data-test^="casting-candidate-"]').filter({ hasText: bernd.name }).click()
+    await dialog.locator('[data-test="casting-chair"]').fill('Erika Vorsitz')
+    await dialog.locator('[data-test="confirm-casting-vote"]').click()
+    await expect(dialog).toContainText('Wähle genau eine Person: Es geht um einen Sitz.')
+
+    await dialog.locator('[data-test^="casting-candidate-"]').filter({ hasText: anna.name }).click()
+    await dialog.locator('[data-test="confirm-casting-vote"]').click()
+    await expect(dialog).toBeHidden()
+
+    const decided = `Stichentscheid der/des Vorsitzenden Erika Vorsitz: gewählt ist ${bernd.name}.`
+    await expect(page.locator(`[data-test="live-casting-vote-${data.round}"]`)).toContainText(decided)
+    await expect(page.locator(`[data-test="casting-vote-${data.round}"]`)).toHaveCount(0)
+
+    const [screen] = await Promise.all([
+        context.waitForEvent('page'),
+        page.locator('[data-test="open-screen"]').click(),
+    ])
+    await screen.waitForLoadState()
+    await expect(screen.locator('[data-test="share-outcome"]')).toContainText(bernd.name)
+    await expect(screen.locator('[data-test="share-casting-vote"]')).toHaveText('Entschieden durch Stichentscheid der/des Vorsitzenden Erika Vorsitz.')
+    await expect(screen.locator('[data-test="share-tie-next"]')).toHaveCount(0)
+})

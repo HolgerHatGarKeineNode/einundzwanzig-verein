@@ -249,6 +249,20 @@ function e2eScenario(string $name, string $state): array
 
             return [...$result, 'election' => $election->id, 'round' => $round->id];
 
+        case 'tie':
+            // A counted Stimmengleichheit between a 63-character name and Anna, and
+            // a chair name at the 60-character limit for the casting vote.
+            $long = e2eMember('Maximiliane Theodora Freifrau von Hohenzollern-Sigmaringen-Wied');
+            $chair = 'Erika Magdalena Mustermann-Vorsitz von der Leyen-Schwarzwald';
+            $election = e2eElection();
+            $round = e2eRound($election, 'Vorsitz', 1, [$long, $anna]);
+            $stewardship->open($round, $boardPleb);
+            e2eCast($round, $voters['voter1'], $long);
+            e2eCast($round, $voters['voter2'], $anna);
+            $stewardship->closeEarly($round->fresh(), $boardPleb, 'Alle haben abgestimmt');
+
+            return [...$result, 'election' => $election->id, 'round' => $round->id, 'long' => $long, 'chair' => $chair];
+
         case 'dm':
             $election = e2eElection();
             e2eRound($election, 'Vorsitz', 1, [$anna, $bernd]);

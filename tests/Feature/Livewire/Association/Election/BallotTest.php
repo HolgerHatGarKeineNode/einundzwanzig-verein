@@ -384,7 +384,7 @@ it('shows the result only after the round is sealed, as counts without voters', 
         ->and($page->instance()->outcome)->toBe([['title' => 'Präsidium', 'seats' => 1, 'names' => ['Alice Ambrosius'], 'annulled' => false, 'open' => 0]]);
 });
 
-it('names a tie, and says when nobody got more than half', function (ElectionCountingRule $rule, string $sentence) {
+it('names a tie, an even split of a single-majority round included, and leaves it to the chair', function (ElectionCountingRule $rule, string $sentence) {
     $round = namedDraftRound(['Alice Ambrosius', 'Bob Brenner'], $rule);
     $voters = [electionVoter(), electionVoter()];
     app(OpenRound::class)->handle($round);
@@ -394,10 +394,13 @@ it('names a tie, and says when nobody got more than half', function (ElectionCou
 
     ballotPage($voters[0])
         ->assertSee($sentence)
+        ->assertSee('Die/der Vorsitzende fällt den Stichentscheid.')
+        ->assertDontSee('Stichwahl')
         ->assertSee('1 Sitz bleibt unbesetzt');
 })->with([
     'most votes, level' => [ElectionCountingRule::MostVotes, 'Gleichstand um 1 Sitz zwischen Alice Ambrosius, Bob Brenner.'],
-    'single majority, nobody above half' => [ElectionCountingRule::SingleMajority, 'Niemand hat mehr als die Hälfte der Stimmen für Personen bekommen.'],
+    // An even split of every vote is a Stimmengleichheit (statutes Art. 6), not a missed majority.
+    'single majority, even split' => [ElectionCountingRule::SingleMajority, 'Gleichstand um 1 Sitz zwischen Alice Ambrosius, Bob Brenner.'],
 ]);
 
 it('lands the board on the real election, the newer test election only through the switcher', function () {
@@ -529,7 +532,7 @@ it('offers the ballot of a second run-off and counts its winner in the result', 
         castElectionBallot($round, $voters[0], [$ids[0] => 'for']);
         castElectionBallot($round, $voters[1], [$ids[1] => 'for']);
 
-        return app(CreateRunOff::class)->handle(app(CloseRound::class)->handle($round), $board);
+        return app(CreateRunOff::class)->handle(app(CloseRound::class)->handle($round), $board, resolvedByAssembly: true);
     };
 
     $second = app(OpenRound::class)->handle($level($level($round)));
@@ -577,7 +580,7 @@ it('names the crosses in the legend, announces the counter and shows a run-off t
     $ids = $round->candidates()->orderBy('id')->pluck('id')->all();
     castElectionBallot($round, $voters[0], [$ids[0] => 'for', $ids[1] => 'for']);
     castElectionBallot($round, $voters[1], [$ids[0] => 'for', $ids[2] => 'for']);
-    $runOff = app(OpenRound::class)->handle(app(CreateRunOff::class)->handle(app(CloseRound::class)->handle($round), $board));
+    $runOff = app(OpenRound::class)->handle(app(CreateRunOff::class)->handle(app(CloseRound::class)->handle($round), $board, resolvedByAssembly: true));
 
     expect($runOff->title)->toBe('Stichwahl Präsidium');
 
@@ -647,7 +650,7 @@ it('says on a tied round that its run-off decided, not that the seat stays empty
     $ids = $round->candidates()->orderBy('id')->pluck('id')->all();
     castElectionBallot($round, $voters[0], [$ids[0] => 'for']);
     castElectionBallot($round, $voters[1], [$ids[1] => 'for']);
-    $runOff = app(OpenRound::class)->handle(app(CreateRunOff::class)->handle(app(CloseRound::class)->handle($round), $board));
+    $runOff = app(OpenRound::class)->handle(app(CreateRunOff::class)->handle(app(CloseRound::class)->handle($round), $board, resolvedByAssembly: true));
 
     ballotPage($voters[0])->assertSee('Dazu gibt es eine Stichwahl, sie steht darunter.');
 

@@ -2,11 +2,13 @@
 
 namespace App\Console\Commands\Election;
 
+use App\Enums\ElectionAuditAction;
 use App\Enums\ElectionBallotRefusal;
 use App\Enums\ElectionCandidateStatus;
 use App\Exceptions\ElectionBallotRefusedException;
 use App\Exceptions\ElectionRoundStateException;
 use App\Models\ElectionAuditEntry;
+use App\Models\ElectionCastingVote;
 use App\Models\ElectionManifest;
 use App\Models\ElectionRound;
 use App\Models\ElectionVote;
@@ -41,6 +43,10 @@ use UnexpectedValueException;
  *     it. Without (4) a line written before the seal — say the reason for a
  *     voter enrolled by hand — could be edited, or deleted with the rest of
  *     the chain re-hashed, and this command still said OK (jury run 1, A).
+ *  5. The chair's casting vote, if the round's tie has one: it fits the
+ *     tie of the count and equals its audit line. The manifest holds the raw
+ *     count from the seal; the effective result, with the casting vote, is
+ *     printed on its own line.
  *
  * Exit 0: nothing differs. Exit 1: discrepancies — the output names vote ids
  * and check names or manifest fields, never a choice. Exit 2: there is
@@ -53,7 +59,7 @@ class VerifyRound extends Command
     protected $description = 'Re-verify the signed votes of a sealed election round, recount them and compare with the stored manifest';
 
     /** Manifest fields a recount from the signed events must reproduce. */
-    private const RECOUNTED_FIELDS = ['counts', 'blank', 'outcome', 'elected', 'tied', 'tied_seats'];
+    private const RECOUNTED_FIELDS = ['counts', 'blank', 'outcome', 'elected', 'tied', 'tied_seats', 'tie_kind'];
 
     public function handle(RoundManifest $manifests, TallyRound $tally, ElectionAuditLog $audit): int
     {
@@ -91,11 +97,12 @@ class VerifyRound extends Command
 
         $clean = $this->verifyVotes($round, $tally, is_array($stored) ? $stored : []);
         $auditHolds = $this->verifyAuditLog($round, $audit, is_array($stored) ? ($stored['audit_head_hash'] ?? null) : null);
+        $castingVoteHolds = $this->verifyCastingVote($round, $tally);
 
         $storedIntact = hash_equals($manifest->hash, RoundManifest::hash($manifest->body));
         $tablesUnchanged = $recomputed !== null && hash_equals($manifest->hash, RoundManifest::hash($recomputed));
 
-        if ($clean && $auditHolds && $storedIntact && $tablesUnchanged) {
+        if ($clean && $auditHolds && $castingVoteHolds && $storedIntact && $tablesUnchanged) {
             $this->info('OK round '.$round->getKey().' manifest '.$manifest->hash);
 
             return self::SUCCESS;
@@ -152,6 +159,53 @@ class VerifyRound extends Command
         if (! $anchored) {
             $this->error('MISMATCH: the audit log head the manifest anchored at the seal is no longer a line of the audit log.');
             $holds = false;
+        }
+
+        return $holds;
+    }
+
+    /**
+     * Check (5). Silent for a round without a casting vote; otherwise one
+     * line with the effective result, or one per failure.
+     */
+    private function verifyCastingVote(ElectionRound $round, TallyRound $tally): bool
+    {
+        $castingVote = ElectionCastingVote::query()->where('election_round_id', $round->getKey())->first();
+
+        if ($castingVote === null) {
+            return true;
+        }
+
+        try {
+            $result = $tally->handle($round);
+        } catch (UnexpectedValueException) {
+            return false;
+        }
+
+        $decision = $castingVote->decision($result->tied, $result->tiedSeats);
+        $holds = true;
+
+        if (! $decision->fits($result)) {
+            $this->error('MISMATCH: the recorded casting vote does not fit the tie of the count.');
+            $holds = false;
+        }
+
+        $lines = ElectionAuditEntry::query()
+            ->where('election_round_id', $round->getKey())
+            ->where('action', ElectionAuditAction::CastingVoteRecorded->value)
+            ->get();
+        $details = $lines->count() === 1 && is_array($lines->first()->details) ? $lines->first()->details : null;
+
+        if ($details === null
+            || ($details['chair'] ?? null) !== $decision->chair
+            || ($details['decided_for'] ?? null) !== implode(',', $decision->candidates)
+            || ($details['reason'] ?? null) !== $decision->note) {
+            $this->error('MISMATCH: the recorded casting vote differs from its line in the audit log.');
+            $holds = false;
+        }
+
+        if ($holds) {
+            $this->line('Casting vote of the chair ('.$decision->chair.'): elected '.json_encode($result->decided($decision)->elected).' of tied '.json_encode($result->tied).'.');
         }
 
         return $holds;

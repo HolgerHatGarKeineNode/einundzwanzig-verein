@@ -75,7 +75,11 @@
                         </div>
                         <p class="mt-1 text-sm text-text-secondary break-words">
                             @if ($isRunOff)
-                                {{ trans_choice('{1} Stichwahl zu „:parent“, ein Sitz. Gewählt ist, wer die meisten Stimmen hat.|[2,*] Stichwahl zu „:parent“, :count Sitze. Gewählt sind, die am häufigsten genannt werden.', $round->seats, ['parent' => $titles->get($round->parent_round_id, ''), 'count' => $round->seats]) }}
+                                @if ($isYesNo)
+                                    {{ trans_choice('{1} Stichwahl zu „:parent“, ein Sitz. Abgestimmt wird mit Ja oder Nein.|[2,*] Stichwahl zu „:parent“, :count Sitze. Abgestimmt wird mit Ja oder Nein.', $round->seats, ['parent' => $titles->get($round->parent_round_id, ''), 'count' => $round->seats]) }}
+                                @else
+                                    {{ trans_choice('{1} Stichwahl zu „:parent“, ein Sitz. Gewählt ist, wer die meisten Stimmen hat.|[2,*] Stichwahl zu „:parent“, :count Sitze. Gewählt sind, die am häufigsten genannt werden.', $round->seats, ['parent' => $titles->get($round->parent_round_id, ''), 'count' => $round->seats]) }}
+                                @endif
                             @else
                                 {{ $this->countingRuleLabel($round->counting_rule) }}, {{ trans_choice('{1} ein Sitz|[2,*] :count Sitze', $round->seats, ['count' => $round->seats]) }}.
                             @endif
@@ -106,7 +110,8 @@
                                         {{ $sentence(trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $electedNames->count(), ['names' => $electedNames->join(', ', ' und ')])) }}
                                         @break
                                     @case(\App\Enums\ElectionOutcome::Tie)
-                                        <span class="inline-flex items-center gap-1.5 text-warning"><flux:icon.scale variant="mini" class="size-5" aria-hidden="true" />{{ trans_choice('{1} Gleichstand um einen Sitz.|[2,*] Gleichstand um :count Sitze.', $result['tied_seats'], ['count' => $result['tied_seats']]) }}</span>
+                                        <span class="inline-flex items-center gap-1.5 text-warning"><flux:icon.scale variant="mini" class="size-5" aria-hidden="true" />{{ $result['tie_kind'] === \App\Enums\ElectionTieKind::YesEqualsNo ? $sentence(\App\Support\ElectionTieText::yesEqualsNo(collect($result['rows'])->where('tied', true)->pluck('name')->all())) : trans_choice('{1} Gleichstand um einen Sitz.|[2,*] Gleichstand um :count Sitze.', $result['tied_seats'], ['count' => $result['tied_seats']]) }}</span>
+                                        <span class="block text-base font-normal text-text-primary" data-test="live-tie-next-{{ $round->id }}">{{ $report['run_off_resolved'] ? \App\Support\ElectionTieText::runOffResolved() : \App\Support\ElectionTieText::pending() }}</span>
                                         @if ($electedNames->isNotEmpty())
                                             <span class="block text-base font-normal text-text-primary">{{ $sentence(trans_choice('{1} Gewählt ist schon :names.|[2,*] Gewählt sind schon :names.', $electedNames->count(), ['names' => $electedNames->join(', ', ' und ')])) }}</span>
                                         @endif
@@ -117,6 +122,9 @@
                                             <span class="block text-base font-normal text-text-primary">{{ $sentence(trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $electedNames->count(), ['names' => $electedNames->join(', ', ' und ')])) }}</span>
                                         @endif
                                 @endswitch
+                                @if ($result['casting_vote'] !== null)
+                                    <span class="mt-1 block text-base font-normal text-text-primary" data-test="live-casting-vote-{{ $round->id }}">{{ $sentence(\App\Support\ElectionTieText::decided($result['tie_kind'], $result['casting_vote']['chair'], $result['casting_vote']['elected'], $result['casting_vote']['tied'])) }}@if ($result['casting_vote']['note']) {{ __('Anmerkung: :note', ['note' => $result['casting_vote']['note']]) }}@endif</span>
+                                @endif
                             </p>
 
                             <ul class="mt-4 max-w-2xl divide-y divide-border-subtle border-y border-border-subtle" data-test="live-result-{{ $round->id }}">
@@ -156,8 +164,12 @@
                             @endif
 
                             <div class="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                                {{-- The run-off itself is set up from the next-step card, the one place it is offered. --}}
-                                @if ($report['run_off'] && ! $report['has_run_off'])
+                                {{-- A tie: the chair's casting vote is the statutory way (Art. 6); a run-off only if the assembly resolves one. Both open a dialog. --}}
+                                @if ($result['outcome'] === \App\Enums\ElectionOutcome::Tie && ! $report['has_run_off'])
+                                    <flux:button wire:click="startCastingVote({{ $round->id }})" icon="scale" variant="primary" class="min-h-11 w-full sm:w-auto" data-test="casting-vote-{{ $round->id }}">{{ __('Stichentscheid eintragen') }}</flux:button>
+                                    <flux:button wire:click="startTieRunOff({{ $round->id }})" variant="outline" class="min-h-11 w-full sm:w-auto" data-test="tie-run-off-{{ $round->id }}">{{ __('Stichwahl anlegen') }}</flux:button>
+                                {{-- The run-off of a missed majority is set up from the next-step card, the one place it is offered. --}}
+                                @elseif ($report['run_off'] && ! $report['has_run_off'])
                                     <p class="min-w-0 text-sm text-text-secondary break-words sm:mr-4">{{ trans_choice('{1} Zwischen :names, um einen Sitz.|[2,*] Zwischen :names, um :count Sitze.', $report['run_off']['seats'], ['names' => implode(', ', $report['run_off']['candidates']), 'count' => $report['run_off']['seats']]) }}</p>
                                 @endif
                                 <flux:button wire:click="startRoundAction({{ $round->id }}, 'annul')" variant="ghost" class="min-h-11 w-full text-danger! sm:w-auto" data-test="annul-round-{{ $round->id }}">{{ __('Wahlgang annullieren') }}</flux:button>

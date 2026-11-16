@@ -156,7 +156,10 @@ class OpenRound
      *
      *  - elected in any sealed round of that contest → refused;
      *  - level in the tie of the contest's decisive result → refused, the tie
-     *    is not decided yet;
+     *    is not decided yet. Results are effective results
+     *    (`TallyRound::effective()`): once the chair's casting vote is
+     *    recorded the tie is decided, whom it elected counts as elected and
+     *    the others are free;
      *  - standing in a round of that contest that is not sealed (a draft,
      *    open, or merely over by the clock) → refused, nobody can say yet
      *    whether that candidate is elected there.
@@ -193,7 +196,7 @@ class OpenRound
         $root = $chain[0];
 
         foreach (array_slice($chain, 0, -1) as $ancestor) {
-            if ($ancestor->isSealed() && ($elected = array_intersect($this->sharedCandidates($ancestor, $standing), $this->tally->handle($ancestor)->elected)) !== []) {
+            if ($ancestor->isSealed() && ($elected = array_intersect($this->sharedCandidates($ancestor, $standing), $this->tally->effective($ancestor)->elected)) !== []) {
                 throw $this->blocked('A candidate of this round has been elected in an earlier round of the election.', $ancestor, $elected);
             }
         }
@@ -208,7 +211,7 @@ class OpenRound
 
         // Nobody is elected twice, whatever the order of the contests.
         foreach ($otherContests->flatten(1)->filter(fn (ElectionRound $other): bool => $other->isSealed()) as $other) {
-            if (($elected = array_intersect($this->sharedCandidates($other, $standing), $this->tally->handle($other)->elected)) !== []) {
+            if (($elected = array_intersect($this->sharedCandidates($other, $standing), $this->tally->effective($other)->elected)) !== []) {
                 throw $this->blocked('A candidate of this round has been elected in an earlier round of the election.', $other, $elected);
             }
         }
@@ -238,7 +241,7 @@ class OpenRound
         }
 
         foreach ($sharing->filter(fn (ElectionRound $other): bool => $other->isSealed()) as $other) {
-            if (($elected = array_intersect($this->sharedCandidates($other, $standing), $this->tally->handle($other)->elected)) !== []) {
+            if (($elected = array_intersect($this->sharedCandidates($other, $standing), $this->tally->effective($other)->elected)) !== []) {
                 throw $this->blocked('A candidate of this round has been elected in an earlier round of the election.', $other, $elected);
             }
         }
@@ -248,7 +251,7 @@ class OpenRound
             ->sortByDesc(fn (ElectionRound $other): int => count($this->chainOf($other, $rounds)))
             ->first();
 
-        if ($decisive !== null && ($tied = array_intersect($this->sharedCandidates($decisive, $standing), $this->tally->handle($decisive)->tied)) !== []) {
+        if ($decisive !== null && ($tied = array_intersect($this->sharedCandidates($decisive, $standing), $this->tally->effective($decisive)->tied)) !== []) {
             throw $this->blocked('A candidate of this round is level in an undecided tie of an earlier round of the election.', $decisive, $tied);
         }
 

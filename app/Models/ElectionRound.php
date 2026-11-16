@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 /**
  * One ballot question of an election.
@@ -129,6 +130,17 @@ class ElectionRound extends Model
     public function children(): HasMany
     {
         return $this->hasMany(self::class, 'parent_round_id');
+    }
+
+    /**
+     * The chair's casting vote on the tie of this round, if one is recorded.
+     * Only counts while the round is sealed: `TallyRound::effective()`.
+     *
+     * @return HasOne<ElectionCastingVote, $this>
+     */
+    public function castingVote(): HasOne
+    {
+        return $this->hasOne(ElectionCastingVote::class);
     }
 
     /**
