@@ -12,6 +12,8 @@ declare(strict_types=1);
  *   php tests/e2e/support/election-fixture.php cast <roundId> <memberId> <count>
  *       casts <count> votes for the candidate with member id <memberId> through CastBallot, signed by
  *       voters of the scenario who have not voted in that round yet
+ *   php tests/e2e/support/election-fixture.php close <roundId>
+ *       closes the round early as the board, through ElectionStewardship
  *
  * Every key here is made up on the spot and dies with the run. The board the
  * server believes in is the one written to $E2E_STATE_DIR/board.json, read by
@@ -51,7 +53,7 @@ if (! is_string($state) || $state === '' || ! is_dir($state) || ! is_string($dat
 
 $command = $argv[1] ?? '';
 
-if ($command !== 'cast') {
+if (! in_array($command, ['cast', 'close'], true)) {
     if (! is_file($state.'/base.sqlite')) {
         fwrite(STDERR, "election-fixture.php: {$state}/base.sqlite is missing.\n");
         exit(2);
@@ -301,7 +303,8 @@ function e2eScenario(string $name, string $state): array
             $round = e2eRound($election, 'Vorstand', 1, $people, ElectionCountingRule::YesNoPerCandidate, 5);
             $stewardship->open($round, $boardPleb);
             $everyoneYes = array_fill_keys(array_column($people, 'id'), 'yes');
-            $split = [...$everyoneYes, $fifth['id'] => 'no'];
+            // array_replace, not a spread: a spread renumbers the integer member ids.
+            $split = array_replace($everyoneYes, [$fifth['id'] => 'no']);
             e2eCastChoices($round, $board, $everyoneYes);
             e2eCastChoices($round, $voters['voter1'], $everyoneYes);
             e2eCastChoices($round, $voters['voter2'], $long ? $split : $everyoneYes);
@@ -377,6 +380,41 @@ function e2eScenario(string $name, string $state): array
 
             return [...$result, 'election' => $election->id, 'round' => $chairRound->id, 'repeat' => $repeat->id, 'cash' => $cash->id];
 
+        case 'unreadable':
+            // Vorsitz counted normally; Kasse sealed with one stored vote that no
+            // longer fits its candidates (a corrupted row), so it cannot be counted.
+            $election = e2eElection();
+            $chairRound = e2eRound($election, 'Vorsitz', 1, [$anna, $bernd]);
+            $cash = e2eRound($election, 'Kasse', 2, [$carla]);
+            $stewardship->open($chairRound, $boardPleb);
+            e2eCast($chairRound, $voters['voter1'], $anna);
+            $stewardship->closeEarly($chairRound->fresh(), $boardPleb, 'Alle haben abgestimmt');
+            $stewardship->open($cash->fresh(), $boardPleb);
+            e2eCast($cash, $voters['voter1'], $carla);
+            $stewardship->closeEarly($cash->fresh(), $boardPleb, 'Alle haben abgestimmt');
+            $cash->votes()->toBase()->update(['choices' => json_encode(['999999' => 'for'])]);
+
+            return [...$result, 'election' => $election->id, 'round' => $chairRound->id, 'unreadable' => $cash->id];
+
+        case 'npub':
+            // A candidate without any profile name: the page prints the whole npub.
+            // Counted (not elected) in Vorsitz, where voter1 voted; on the ballot of the open Kasse.
+            $bare = e2eMember('Ohne Namen');
+            Profile::query()->where('pubkey', $bare['pubkey'])->delete();
+            $election = e2eElection();
+            $chairRound = e2eRound($election, 'Vorsitz', 1, [$bare, $anna]);
+            $cash = e2eRound($election, 'Kasse', 2, [$bare, $carla]);
+            $stewardship->open($chairRound, $boardPleb);
+            e2eCast($chairRound, $voters['voter1'], $anna);
+            e2eCast($chairRound, $voters['voter2'], $anna);
+            e2eCast($chairRound, $voters['voter3'], $bare);
+            $stewardship->closeEarly($chairRound->fresh(), $boardPleb, 'Alle haben abgestimmt');
+            $stewardship->open($cash->fresh(), $boardPleb);
+            // A call link, so the page has a plain link to focus (never followed).
+            $election->forceFill(['call_url' => 'https://call.e2e.invalid/vorstandswahl'])->save();
+
+            return [...$result, 'election' => $election->id, 'round' => $cash->id, 'sealed' => $chairRound->id, 'bare' => $bare];
+
         case 'dm':
             $election = e2eElection();
             e2eRound($election, 'Vorsitz', 1, [$anna, $bernd]);
@@ -403,6 +441,19 @@ function e2eScenario(string $name, string $state): array
 
     fwrite(STDERR, "election-fixture.php: unknown scenario '{$name}'.\n");
     exit(2);
+}
+
+if ($command === 'close') {
+    // Closes <roundId> early as the board, the way admin-live does.
+    $round = ElectionRound::query()->findOrFail((int) ($argv[2] ?? 0));
+    $boardNpubs = json_decode((string) file_get_contents($state.'/board.json'), true);
+    config(['einundzwanzig.config.current_board' => $boardNpubs]);
+    Board::flush();
+    $board = EinundzwanzigPleb::query()->whereIn('npub', $boardNpubs)->firstOrFail();
+    app(ElectionStewardship::class)->closeEarly($round, $board, 'Alle haben abgestimmt');
+
+    echo json_encode(['closed' => $round->id]);
+    exit(0);
 }
 
 if ($command === 'cast') {
