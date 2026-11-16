@@ -40,7 +40,9 @@
             {{ $sentence(trans_choice('Gewählt ist :names.|Gewählt sind :names.', count($elected), ['names' => implode(', ', $elected)])) }}
         @endif
         @if ($result->castingVote !== null)
-            <span class="block" data-test="casting-vote-{{ $round->id }}">{{ $sentence(ElectionTieText::decided($result->tieKind, $result->castingVote->chair, array_map($nameOf, $result->castingVote->candidates), array_map($nameOf, $result->castingVote->tied))) }}</span>
+            {{-- The sentence above names who is elected; the decision says only who decided, and the chair stands on a line of its own. A 60-character chair inside one sentence with a 63-character name ran 7 lines at 390 px (checklist Q12: at most 3). --}}
+            <span class="block" data-test="casting-vote-{{ $round->id }}">{{ __('Entschieden durch Stichentscheid.') }}</span>
+            <span class="block text-text-secondary">{{ __('Vorsitz: :chair', ['chair' => $result->castingVote->chair]) }}</span>
         @endif
         @switch($result->outcome)
             @case(ElectionOutcome::Tie)
@@ -109,7 +111,7 @@
         </tbody>
     </table>
 
-    <p class="mt-3 text-sm leading-normal text-text-secondary">
+    <p class="mt-3 max-w-prose text-sm leading-normal text-text-secondary">
         {{ trans_choice(':count Stimmzettel abgegeben, davon :blank Enthaltung (leer).|:count Stimmzettel abgegeben, davon :blank Enthaltungen (leer).', $result->blank, ['count' => $ballots, 'blank' => $result->blank]) }}
         @if ($ownEventId !== null && in_array($ownEventId, $receipts, true))
             {{ __('Deine Kennung') }} <span class="font-bold text-text-primary tabular-nums">{{ substr($ownEventId, 0, 8).'…'.substr($ownEventId, -8) }}</span> {{ __('steht in der Liste.') }}
@@ -157,7 +159,7 @@
                 </p>
 
                 <div class="max-w-sm">
-                    <flux:input x-model="query" :label="__('Kennung suchen')" autocomplete="off" spellcheck="false" class:input="tabular-nums" data-test="receipt-search" />
+                    <flux:input x-model="query" :label="__('Kennung suchen')" autocomplete="off" spellcheck="false" class:input="min-h-11 tabular-nums" data-test="receipt-search" />
                     <p class="mt-2 min-h-6 text-sm leading-normal text-text-primary" aria-live="polite" x-text="verdict" data-test="receipt-verdict"></p>
                 </div>
 

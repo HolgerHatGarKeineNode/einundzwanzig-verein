@@ -183,10 +183,12 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
                     {{ __('Wahlgang :number von :total', ['number' => $current['number'], 'total' => $current['total']]) }}
                 @endif
             </p>
-            <h1 class="mt-[1vh] text-[length:var(--s-title)] font-bold leading-[1.1] break-words" data-test="share-round-title">{{ $round->title }}</h1>
+            {{-- Landscape: the state stands on the title's line, right of it, and moves below when both do not fit. One line less, so a dense result fits 1280×720 at 28 px. --}}
+            <div class="mt-[1vh] lg:flex lg:flex-wrap lg:items-baseline lg:justify-between lg:gap-x-[3vw] lg:gap-y-[1vh]">
+            <h1 class="min-w-0 text-[length:var(--s-title)] font-bold leading-[1.1] break-words" data-test="share-round-title">{{ $round->title }}</h1>
 
             {{-- State: icon and word, never colour alone. --}}
-            <p class="mt-[2vh] flex items-center gap-[0.4em] text-[length:var(--s-state)] font-bold" data-test="share-state">
+            <p class="mt-[2vh] flex items-center gap-[0.4em] text-[length:var(--s-state)] font-bold lg:mt-0" data-test="share-state">
                 @switch(true)
                     @case($report['state'] === ElectionRoundState::Open)
                         <span class="block size-[0.55em] shrink-0 rounded-full bg-orange-500" aria-hidden="true"></span>
@@ -214,6 +216,7 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
                         <span>{{ __('Noch nicht geöffnet') }}</span>
                 @endswitch
             </p>
+            </div>
 
             @if ($report['state'] === ElectionRoundState::Open || $report['over_by_clock'])
                 {{-- Turnout: the count, then a tally — one stroke per vote cast, struck through in fives. --}}
@@ -245,30 +248,34 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
                     $elected = collect($result['rows'])->where('elected', true)->pluck('name');
                     // A name may end in a full stop ("Erik E."); the sentence must not add a second one.
                     $sentence = fn (string $text): string => preg_replace('/(?<=\S)\.\.(?=\s|$)/u', '.', $text);
+                    $dense = count($result['rows']) > 3;
+                    $split = $dense && collect($result['rows'])->max(fn (array $row): int => mb_strlen($row['name'])) <= 40;
                 @endphp
                 <div class="mt-[3vh]" data-test="share-result">
                     <p class="text-[length:var(--s-body)] font-bold break-words" data-test="share-outcome">
                         @switch($result['outcome'])
                             @case(ElectionOutcome::Complete)
-                                {{ $sentence(trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $elected->count(), ['names' => $elected->join(', ', ' und ')])) }}
+                                {{-- Dense: the rows below name everyone with „gewählt“; the sentence counts instead of listing the same names a second time. --}}
+                                @if ($dense)
+                                    {{ trans_choice('{1} Der Sitz ist besetzt.|[2,*] Alle :count Sitze sind besetzt.', $elected->count(), ['count' => $elected->count()]) }}
+                                @else
+                                    {{ $sentence(trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $elected->count(), ['names' => $elected->join(', ', ' und ')])) }}
+                                @endif
                                 @break
                             @case(ElectionOutcome::Tie)
                                 <span class="inline-flex items-center gap-[0.4em] text-warning"><flux:icon.scale class="size-[1.1em]" aria-hidden="true" />{{ $result['tie_kind'] === ElectionTieKind::YesEqualsNo ? $sentence(ElectionTieText::yesEqualsNo(collect($result['rows'])->where('tied', true)->pluck('name')->all())) : __('Gleichstand.') }}</span>
                                 <span class="block" data-test="share-tie-next">{{ $report['run_off_resolved'] ? ElectionTieText::runOffResolved() : ElectionTieText::pending() }}</span>
                                 @break
                             @default
-                                <span class="inline-flex items-center gap-[0.4em] text-warning"><flux:icon.exclamation-triangle class="size-[1.1em]" aria-hidden="true" />{{ $elected->isEmpty() ? __('Niemand hat die nötige Mehrheit.') : $sentence(trans_choice('{1} Gewählt ist :names. Nicht alle Sitze sind besetzt.|[2,*] Gewählt sind :names. Nicht alle Sitze sind besetzt.', $elected->count(), ['names' => $elected->join(', ', ' und ')])) }}</span>
+                                <span class="inline-flex items-center gap-[0.4em] text-warning"><flux:icon.exclamation-triangle class="size-[1.1em]" aria-hidden="true" />{{ $elected->isEmpty() ? __('Niemand hat die nötige Mehrheit.') : ($dense ? trans_choice('{1} 1 von :seats Sitzen ist besetzt.|[2,*] :count von :seats Sitzen sind besetzt.', $elected->count(), ['count' => $elected->count(), 'seats' => $round->seats]) : $sentence(trans_choice('{1} Gewählt ist :names. Nicht alle Sitze sind besetzt.|[2,*] Gewählt sind :names. Nicht alle Sitze sind besetzt.', $elected->count(), ['names' => $elected->join(', ', ' und ')]))) }}</span>
                         @endswitch
+                        {{-- The chair's decision runs on in the outcome's paragraph, in regular weight: no line of its own, so five rows with a 63-character name and a 60-character chair fit 1280×720. --}}
+                        @if ($result['casting_vote'] !== null)
+                            <span class="font-normal" data-test="share-casting-vote">{{ $sentence(ElectionTieText::decidedBy($result['casting_vote']['chair'])) }}</span>
+                        @endif
                     </p>
-                    @if ($result['casting_vote'] !== null)
-                        <p class="mt-[1.5vh] text-[length:var(--s-meta)] break-words" data-test="share-casting-vote">{{ $sentence(ElectionTieText::decidedBy($result['casting_vote']['chair'])) }}</p>
-                    @endif
 
                     {{-- More than three rows are dense: below 800px height the bars give way to the numbers they repeat. On a landscape screen they go into two columns, unless a name is too long for half the width — a column holds about 38 characters per line at 1280×720, and a long name with long words then needs three lines. Such a list stays in one column, where the name gets the full width. Names are never cut. --}}
-                    @php
-                        $dense = count($result['rows']) > 3;
-                        $split = $dense && collect($result['rows'])->max(fn (array $row): int => mb_strlen($row['name'])) <= 40;
-                    @endphp
                     <ol @class([
                             'mt-[3vh]',
                             'space-y-[2vh]' => ! $dense,

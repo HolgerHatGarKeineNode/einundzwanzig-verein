@@ -931,8 +931,11 @@ new class extends Component
 @endphp
 
 {{-- pb-32: the floating "Connect with Nostr" button of window.nostr.js sits
-     at the bottom of the viewport; the last line must scroll clear of it. --}}
-<div class="election-ui mx-auto w-full max-w-5xl pb-32" @if ($this->election !== null) wire:poll.5s="syncRounds" @endif>
+     at the bottom of the viewport; the last line must scroll clear of it.
+     [&_:is(p,dd)]:max-w-prose: no line of running text holds more than 65
+     characters (65ch of the monospace house font), wherever a paragraph sits
+     (checklist Q12, 45–75). Pinned in tests/e2e/election-layout.spec.js. --}}
+<div class="election-ui mx-auto w-full max-w-5xl pb-32 [&_:is(p,dd)]:max-w-prose" @if ($this->election !== null) wire:poll.5s="syncRounds" @endif>
     @if (! $this->isMember)
         <div class="mx-auto max-w-2xl space-y-6">
             <flux:callout variant="warning" icon="exclamation-circle">
@@ -1013,7 +1016,7 @@ new class extends Component
 
         @if ($this->election === null)
             {{-- Empty state: nothing announced. The signer check is useful anyway. --}}
-            <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
+            <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_26rem]">
                 <section class="rounded-lg border border-dashed border-border-default px-6 py-10" aria-labelledby="no-election">
                     <h2 id="no-election" class="text-xl font-bold text-text-primary">{{ __('Gerade steht keine Wahl an') }}</h2>
                     <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
@@ -1023,7 +1026,7 @@ new class extends Component
                 <x-election-signer-check :pubkey="$this->viewerPubkey" />
             </div>
         @else
-            <div class="grid gap-x-10 gap-y-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
+            <div class="grid gap-x-10 gap-y-8 lg:grid-cols-[minmax(0,1fr)_26rem]">
                 {{-- Your standing: first on a phone, the right column on a desk. --}}
                 {{-- While a ballot is open, and while the receipt of a vote just
                      cast waits for its result, the round comes first on a phone

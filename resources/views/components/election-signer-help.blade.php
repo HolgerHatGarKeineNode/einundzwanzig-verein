@@ -19,7 +19,7 @@
         {{ __('Den Schlüssel selbst bekommt sie nie zu sehen.') }}
     </p>
 
-    <dl class="mt-4 space-y-3 text-sm leading-normal">
+    <dl class="mt-4 max-w-prose space-y-3 text-sm leading-normal">
         <div>
             <dt class="font-bold text-text-primary">{{ __('Am Computer') }}</dt>
             <dd class="text-text-secondary">{{ __('Die Browser-Erweiterung Alby oder nos2x installieren.') }} {{ __('Deinen Schlüssel dort hinterlegen und diese Seite neu laden.') }}</dd>
