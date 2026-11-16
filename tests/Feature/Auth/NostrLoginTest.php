@@ -308,3 +308,42 @@ it('renders the app origin for the login client next to the challenge', function
     Livewire\Livewire::test('auth-button')
         ->assertSeeHtml('data-nostr-login-url="'.NostrAuth::loginUrl().'"');
 });
+
+/*
+ * Jury run 2, H-1: a guest tab older than the challenge TTL could not log in.
+ * The client now asks for a fresh challenge per attempt, and a refusal is
+ * told to the browser instead of being a silent HTTP 200.
+ */
+it('hands the login client a fresh challenge that replaces the expired one', function () {
+    $component = Livewire\Livewire::test('auth-button');
+    $rendered = $component->get('nostrChallenge');
+
+    $this->travel(301)->seconds();
+    $fresh = $component->call('requestNostrChallenge')->effects['returns'][0];
+
+    expect($fresh)->toBeNostrHexKey()
+        ->and($fresh)->not->toBe($rendered)
+        ->and(Session::get('nostr_login_challenge'))->toBe($fresh);
+
+    ['event' => $signedEvent, 'pubkey' => $pubkey] = makeSignedLoginEvent($fresh, createdAt: now()->timestamp);
+    $component->dispatch('nostrLoggedIn', signedEvent: $signedEvent, location: 'sidebar')
+        ->assertHasNoErrors()
+        ->assertNotDispatched('nostr-login-refused');
+
+    expect(NostrAuth::pubkey())->toBe($pubkey);
+});
+
+it('tells the login client when the server refuses the login event', function () {
+    $component = Livewire\Livewire::test('auth-button');
+    $rendered = $component->get('nostrChallenge');
+
+    $this->travel(301)->seconds();
+    ['event' => $signedEvent] = makeSignedLoginEvent($rendered, createdAt: now()->timestamp);
+
+    $component->dispatch('nostrLoggedIn', signedEvent: $signedEvent, location: 'sidebar')
+        ->assertHasErrors('nostr')
+        ->assertDispatched('nostr-login-refused');
+
+    expect(NostrAuth::check())->toBeFalse()
+        ->and($component->effects['xjs'] ?? [])->toBe([]);
+});

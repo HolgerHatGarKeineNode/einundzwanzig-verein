@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * Router for `php -S` in the election/DM e2e run (scripts/e2e-election.sh).
  *
- * It is public/index.php plus four overrides, applied after the providers
+ * It is public/index.php plus five overrides, applied after the providers
  * booted and before the request is routed, so the application code itself
  * stays exactly what production runs:
  *
@@ -18,6 +18,11 @@ declare(strict_types=1);
  *     is a list of real npubs whose keys a test can never hold.
  *   - Sessions and the log live in $E2E_STATE_DIR, not in storage/, so a run
  *     neither reads nor leaves state in the developer's checkout.
+ *   - Time travel: when $E2E_STATE_DIR/clock-offset exists, every request runs
+ *     that many seconds in the future (Carbon::setTestNow). A spec moves the
+ *     page clock by the same amount, so an idle tab can be aged past a TTL
+ *     without waiting for it (tests/e2e/login-stale-tab.spec.js). No file,
+ *     no offset.
  *
  * Static files under public/ are served by the built-in server itself, as
  * vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php does.
@@ -26,6 +31,7 @@ declare(strict_types=1);
 use App\Services\Nostr\RelayTransport;
 use App\Support\Board;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Tests\Support\FakeRelayTransport;
 
 $root = dirname(__DIR__, 3);
@@ -51,6 +57,12 @@ $_SERVER['SCRIPT_FILENAME'] = $public.'/index.php';
 $_SERVER['SCRIPT_NAME'] = '/index.php';
 
 require $root.'/vendor/autoload.php';
+
+$clockOffset = $state.'/clock-offset';
+
+if (is_file($clockOffset)) {
+    Carbon::setTestNow(Carbon::now()->addSeconds((int) trim((string) file_get_contents($clockOffset))));
+}
 
 $app = require $root.'/bootstrap/app.php';
 
