@@ -59,20 +59,39 @@ use Symfony\Component\Finder\Finder;
  *    `dm:send-due`), under Queue::fake(): it does not run the fan-out.
  *  - tests/Feature/Services/Dm/DirectMessageSendPathBallotSecrecyTest.php
  *    runs the confirmed start and `dm:send-due` through the fan-out and every
- *    SendDirectMessage, with only the relay faked, and holds the deliveries,
- *    each delivery's outcome, the text the member opens from the wrap and the
- *    text stored for the inbox (byte for byte, with only the sentence that
- *    differs between two sendings masked), and the delay each send job is
- *    dispatched with, to be the same before and after a member votes. Text
- *    and delay were unseen until 2026-11-16 (jury gate j2f, round 3: O6, O9,
- *    O12). It sees a vote read however it is written, but only on these two
- *    paths and for the four audiences it runs, none of which spreads its jobs
- *    over time: a read that changes only the random spread of a targeted
- *    audience (fee outstanding) passes it. So does a read whose effect needs
- *    another fixture (a second round, a vote in a parent election, a member
- *    without a profile name, a relay that fails and so a retry's backoff or
- *    release), and one that changes only the parts of a wrap that are random
- *    by design (its ephemeral key, its created_at, the rumor's created_at).
+ *    SendDirectMessage, with only the relay faked, and holds everything an
+ *    observer sees of each member's delivery to be the same before and after
+ *    that member votes: the board (recipients, skips, status, error,
+ *    attempts, relay answers), the relay operator (every publish in order,
+ *    and the wrap's kind, tags and ciphertext length), the member's client
+ *    (the seal's pubkey, kind and tags, the rumor's pubkey, kind, tags and
+ *    text), the inbox page (the stored text and rumor) and the send time
+ *    (the delay of each send job). Every field of wrap, seal and rumor is
+ *    compared except a named list of random ones (ids, signatures, the wrap
+ *    key, created_at, ciphertext bytes), which are replaced by checks: id and
+ *    signature verify, the wrap key was never used before, created_at lies
+ *    in its window. Text and delay were unseen until 2026-11-16 (jury gate
+ *    j2f, round 3: O6, O9, O12), the seal, the wrap's kind and tags and the
+ *    number of publishes until gate j2h, round 1 (O3, O4, O5, O5b, O8).
+ *
+ *    What it does not see:
+ *     - A choice inside a random field that a single sample cannot tell
+ *       from chance: a voter's seal or wrap created_at drawn from a
+ *       different spread (always the oldest allowed second, say) as long
+ *       as it stays inside the two days NIP-17 allows; a wrap key that is
+ *       fresh but derived from something a third party knows; ciphertext
+ *       bytes chosen rather than random at the same length. Each member is
+ *       sent one message per run, so a bias shows only over many messages.
+ *     - Anything below the RelayTransport seam: NIP-42 AUTH, connections,
+ *       timing and frames on the wire of the real NostrRelayTransport.
+ *     - Other paths and audiences: a read that changes only the random
+ *       spread of a targeted audience (fee outstanding, the only one that
+ *       spreads its jobs over time).
+ *     - A read whose effect needs another fixture: a second round, a vote
+ *       in a parent election, a member without a profile name, a relay that
+ *       fails (and so a retry's backoff, release or republish), a member
+ *       erased during the run, or a single recipient where the order of
+ *       publishes has nothing to change (the board audience here).
  */
 
 /** Directories whose PHP is the direct message code, relative to the project root. */

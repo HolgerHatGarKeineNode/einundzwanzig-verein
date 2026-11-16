@@ -15,9 +15,13 @@ use App\Services\Dm\DirectMessageDryRun;
 use App\Services\Dm\DirectMessageText;
 use App\Services\Dm\StartDirectMessageRun;
 use App\Services\Election\OpenRound;
+use App\Services\Nostr\DirectMessageSigner;
+use App\Services\Nostr\EventHash;
+use App\Services\Nostr\EventVerification;
 use Illuminate\Contracts\Queue\Queue;
 use Illuminate\Queue\Connectors\ConnectorInterface;
 use Illuminate\Queue\SyncQueue;
+use swentel\nostr\Encryption\Nip44;
 use swentel\nostr\Key\Key;
 use Tests\Support\FakeRelayTransport;
 
@@ -25,9 +29,9 @@ require_once __DIR__.'/../../Jobs/DirectMessageHelpers.php';
 require_once __DIR__.'/../Election/helpers.php';
 
 /*
- * DoD 464 / E20 on the whole send path: who gets a direct message, what each
- * member reads, when it is sent, and what becomes of each delivery, do not
- * depend on who voted.
+ * DoD 464 / E20 on the whole send path: everything anybody can observe of a
+ * member's direct message is the same whether or not that member voted,
+ * except the fields that are random by design.
  *
  * Jury gate j2f, round 2 (D2, mutant R7): DispatchBulkDirectMessages dropped
  * every member for whom `$round->voteEventIdOf($pleb)` was set, between the
@@ -40,23 +44,61 @@ require_once __DIR__.'/../Election/helpers.php';
  * queue is a sync queue that also writes down the delay each job was
  * dispatched with (the plain sync connection drops it). The start the board
  * confirms and a scheduled reminder started by `dm:send-due` each run through
- * the fan-out and every SendDirectMessage. The frozen list, the skipped list,
- * and per member the delivery's status, error, attempts, relay answers,
- * whether its wrap reached the relay, the text the member's client opens from
- * that wrap, the text stored with the delivery, and the delays of the send
- * jobs queued for it must be the same before and after a member votes.
+ * the fan-out and every SendDirectMessage, once before and once after a member
+ * votes. Compared, per run:
+ *
+ *  - the board: the frozen and the skipped list, and per member the
+ *    delivery's status, error, attempts and relay answers;
+ *  - the relay operator: every publish in call order (relay URL, answer,
+ *    which member's delivery it carries) with the wrap as the relay sees it;
+ *  - the member's client: the wrap, the seal opened with the member's key and
+ *    the rumor inside it;
+ *  - the inbox page: the stored text, and whether the stored rumor id and
+ *    time are those of the rumor sent;
+ *  - the send time: the delay of every send job queued for the delivery.
+ *
+ * Each layer of the message is compared field by field, except the fields in
+ * DM_SEND_PATH_RANDOM_FIELDS, which are replaced by what can be compared about
+ * them (dmLayerAsSeen). A field nobody named there is compared as it is.
+ *
  * A status is where a skip would show: `not_sent`, `no_inbox`, `failed`, a
  * delivery left `pending`, or no delivery at all.
  *
  * Jury gate j2f, round 3 (O6, O9, O12): until 2026-11-16 the text and the
- * delay were not compared, so a vote read that changed only the wording or
- * the send time for voters passed.
+ * delay were not compared. Gate j2h, round 1 (O3, O4, O5, O5b, O8): then the
+ * seal, the wrap's kind and tags, and the number of publishes were not.
  */
 
 beforeEach(fn () => armDirectMessages());
 
 /** Stands in for the message-specific sentence when two sendings' texts are compared. */
 const DM_SEND_PATH_MESSAGE = '<message>';
+
+/**
+ * The fields of each layer that differ between two sendings by design, and
+ * why. Each is left out of the comparison and replaced by a check that does
+ * not differ (dmLayerAsSeen). Every other field of a layer, including one
+ * that is not there today, is compared as it is, in its order.
+ */
+const DM_SEND_PATH_RANDOM_FIELDS = [
+    'wrap' => [
+        'id' => 'a hash over the random pubkey, created_at and ciphertext; replaced by "authentic"',
+        'pubkey' => 'a one-time key per wrap (NIP-59); replaced by "authentic" and, per delivery, "wrap_key_is_new"',
+        'created_at' => 'random, up to two days in the past (NIP-17); replaced by "created_at_in_window"',
+        'content' => 'NIP-44 ciphertext under a random nonce; replaced by "content_length"',
+        'sig' => 'a Schnorr signature over the random id; replaced by "authentic"',
+    ],
+    'seal' => [
+        'id' => 'a hash over the random created_at and ciphertext; replaced by "authentic"',
+        'created_at' => 'random, up to two days in the past (NIP-17); replaced by "created_at_in_window"',
+        'content' => 'NIP-44 ciphertext under a random nonce; replaced by "content_length"',
+        'sig' => 'a Schnorr signature over the random id; replaced by "authentic"',
+    ],
+    'rumor' => [
+        'id' => 'a hash over created_at and content; replaced by "id_matches"',
+        'created_at' => 'the time the message was built; replaced by "created_at_in_window"',
+    ],
+];
 
 /**
  * Makes the default queue a sync queue that runs every job at once, like the
@@ -131,42 +173,121 @@ function dmTextRelativeTo(?string $text, string $sentence): ?string
 }
 
 /**
- * What a run did for each member, keyed by member id. Ids of runs and
- * deliveries and timestamps are left out, and so are the parts of a wrap and
- * its rumor that are random or time-bound: they differ between two sendings
- * by design. Texts are compared relative to their message (dmTextRelativeTo).
+ * The event inside `$outer`, opened the way the member's client opens it, or
+ * null when it does not open: a client shows nothing then, which is itself
+ * what it observes.
  *
+ * @param  array<string, mixed>|null  $outer
+ * @return array<string, mixed>|null
+ */
+function dmOpenLayer(?array $outer, string $secret): ?array
+{
+    if (! is_string($outer['content'] ?? null) || ! is_string($outer['pubkey'] ?? null)) {
+        return null;
+    }
+
+    try {
+        $inner = json_decode(Nip44::decrypt($outer['content'], Nip44::getConversationKey($secret, $outer['pubkey'])), true, flags: JSON_THROW_ON_ERROR);
+    } catch (Throwable) {
+        return null;
+    }
+
+    return is_array($inner) ? $inner : null;
+}
+
+/**
+ * One layer (wrap, seal or rumor) as an observer sees it, minus its random
+ * fields (DM_SEND_PATH_RANDOM_FIELDS), which are replaced by checks that hold
+ * for every sending:
+ *
+ *  - wrap, seal: `authentic` (id and signature verify, as a relay and a
+ *    client check them), `content_length` (the ciphertext's length is fixed
+ *    by the length of what it carries: NIP-44 pads deterministically and
+ *    every other field inside has a fixed width), `created_at_in_window`;
+ *  - rumor: `id_matches` (the id a client deduplicates on is the hash of the
+ *    rumor), `created_at_in_window`, and the content relative to the message.
+ *
+ * @param  array<string, mixed>  $event
+ * @param  array{0: int, 1: int}  $window  inclusive bounds for created_at
+ * @return array<string, mixed>
+ */
+function dmLayerAsSeen(array $event, string $layer, array $window, string $sentence): array
+{
+    $seen = array_diff_key($event, DM_SEND_PATH_RANDOM_FIELDS[$layer]);
+    $seen['random_fields'] = array_keys(array_intersect_key($event, DM_SEND_PATH_RANDOM_FIELDS[$layer]));
+    $createdAt = $event['created_at'] ?? null;
+    $seen['created_at_in_window'] = is_int($createdAt) && $createdAt >= $window[0] && $createdAt <= $window[1];
+
+    if ($layer === 'rumor') {
+        $seen['content'] = dmTextRelativeTo(is_string($event['content'] ?? null) ? $event['content'] : null, $sentence);
+        $seen['id_matches'] = is_string($event['pubkey'] ?? null) && is_int($createdAt) && is_int($event['kind'] ?? null)
+            && is_array($event['tags'] ?? null) && is_string($event['content'] ?? null) && is_string($event['id'] ?? null)
+            && hash_equals(EventHash::of($event['pubkey'], $createdAt, $event['kind'], $event['tags'], $event['content']), $event['id']);
+
+        return $seen;
+    }
+
+    $seen['content_length'] = is_string($event['content'] ?? null) ? strlen($event['content']) : null;
+    // A published wrap is the stored one; verify each event once per process.
+    static $authentic = [];
+    $seen['authentic'] = $authentic[hash('sha256', serialize($event))] ??= EventVerification::isAuthentic($event);
+
+    return $seen;
+}
+
+/**
+ * What a run showed every observer, keyed by member id where it concerns one
+ * member. Ids of runs and deliveries are left out (they differ by design), and
+ * so are the random fields of each layer (dmLayerAsSeen).
+ *
+ * @param  list<array{relay: string, event: array<string, mixed>, accepted: bool}>  $publishes  this run's publishes, in call order
+ * @param  array{0: int, 1: int}  $sendWindow  first and last second of the sending
  * @param  array<int, string>  $secrets  member id => secret key
  * @param  ArrayObject<int, list<int>>  $delays  from dmRecordSendDelays()
- * @return array{recipient_ids: list<int>, skipped_ids: list<int>|null, deliveries: array<int, array{status: string, error: string|null, attempts: int, relays: array<string, string>, wrap_published: bool, received: array<string, mixed>|null, stored_text: string|null, send_delays: list<int>}>}
+ * @param  ArrayObject<string, true>  $usedKeys  every key a wrap must not be signed with: the notification key, the members' keys, and each wrap key seen so far (added here)
+ * @return array<string, mixed>
  */
-function dmSendOutcome(DmRun $run, FakeRelayTransport $relay, string $sentence, array $secrets, ArrayObject $delays): array
+function dmSendOutcome(DmRun $run, array $publishes, array $sendWindow, string $sentence, array $secrets, ArrayObject $delays, ArrayObject $usedKeys): array
 {
     $run->refresh();
-    $publishedIds = array_map(fn (array $publish): string => (string) $publish['event']['id'], $relay->published());
+    // NIP-17: seal and wrap are dated "up to two days in the past"; the signer
+    // draws 1 s to MAX_BACKDATE_SECONDS before the moment it builds them.
+    $backdated = [$sendWindow[0] - DirectMessageSigner::MAX_BACKDATE_SECONDS, $sendWindow[1] - 1];
+
+    $deliveries = DmDelivery::query()
+        ->with('relays')
+        ->where('dm_run_id', $run->id)
+        ->orderBy('einundzwanzig_pleb_id')
+        ->get();
+
+    $wrapOwners = $deliveries
+        ->filter(fn (DmDelivery $delivery): bool => is_string($delivery->wrap['id'] ?? null))
+        ->mapWithKeys(fn (DmDelivery $delivery): array => [$delivery->wrap['id'] => (int) $delivery->einundzwanzig_pleb_id])
+        ->all();
 
     return [
         'recipient_ids' => $run->recipient_ids,
         'skipped_ids' => $run->skipped_ids,
-        'deliveries' => DmDelivery::query()
-            ->with('relays')
-            ->where('dm_run_id', $run->id)
-            ->orderBy('einundzwanzig_pleb_id')
-            ->get()
-            ->mapWithKeys(function (DmDelivery $delivery) use ($publishedIds, $sentence, $secrets, $delays): array {
+        'publishes' => array_map(fn (array $publish): array => [
+            'relay' => $publish['relay'],
+            'accepted' => $publish['accepted'],
+            'delivery_of' => $wrapOwners[$publish['event']['id'] ?? ''] ?? null,
+            'wrap' => dmLayerAsSeen($publish['event'], 'wrap', $backdated, $sentence),
+        ], $publishes),
+        'deliveries' => $deliveries
+            ->mapWithKeys(function (DmDelivery $delivery) use ($backdated, $sendWindow, $sentence, $secrets, $delays, $usedKeys): array {
                 $memberId = (int) $delivery->einundzwanzig_pleb_id;
-                $received = null;
+                $secret = $secrets[$memberId] ?? throw new LogicException("No secret key for member {$memberId}.");
+                $wrap = is_array($delivery->wrap) ? $delivery->wrap : null;
+                $seal = dmOpenLayer($wrap, $secret);
+                $rumor = dmOpenLayer($seal, $secret);
+                // One-time means a key no other wrap of this test was signed
+                // with: a key reused for voters would let a relay link them.
+                $wrapKey = is_string($wrap['pubkey'] ?? null) ? $wrap['pubkey'] : null;
+                $wrapKeyIsNew = $wrapKey === null ? null : ! isset($usedKeys[$wrapKey]);
 
-                if (is_array($delivery->wrap)) {
-                    // What the member's client shows: the rumor inside the wrap,
-                    // opened with the member's own key.
-                    $rumor = openWrapWith($delivery->wrap, $secrets[$memberId] ?? throw new LogicException("No secret key for member {$memberId}."));
-                    $received = [
-                        'pubkey' => $rumor['pubkey'],
-                        'kind' => $rumor['kind'],
-                        'tags' => $rumor['tags'],
-                        'content' => dmTextRelativeTo($rumor['content'], $sentence),
-                    ];
+                if ($wrapKey !== null) {
+                    $usedKeys[$wrapKey] = true;
                 }
 
                 return [$memberId => [
@@ -177,9 +298,14 @@ function dmSendOutcome(DmRun $run, FakeRelayTransport $relay, string $sentence, 
                         ->sortBy('relay_url')
                         ->mapWithKeys(fn (DmDeliveryRelay $row): array => [$row->relay_url => $row->status->value])
                         ->all(),
-                    'wrap_published' => is_array($delivery->wrap) && in_array($delivery->wrap['id'], $publishedIds, true),
-                    'received' => $received,
+                    'wrap' => $wrap === null ? null : dmLayerAsSeen($wrap, 'wrap', $backdated, $sentence),
+                    'wrap_key_is_new' => $wrapKeyIsNew,
+                    'seal' => $seal === null ? null : dmLayerAsSeen($seal, 'seal', $backdated, $sentence),
+                    'rumor' => $rumor === null ? null : dmLayerAsSeen($rumor, 'rumor', $sendWindow, $sentence),
                     'stored_text' => dmTextRelativeTo($delivery->plaintext, $sentence),
+                    'stored_rumor_is_sent_rumor' => $rumor === null
+                        ? null
+                        : $delivery->rumor_id === ($rumor['id'] ?? null) && (int) $delivery->rumor_created_at === ($rumor['created_at'] ?? null),
                     'send_delays' => $delays[$delivery->id] ?? [],
                 ]];
             })
@@ -187,7 +313,7 @@ function dmSendOutcome(DmRun $run, FakeRelayTransport $relay, string $sentence, 
     ];
 }
 
-it('delivers to the same members the same text at the same time with the same outcome whether or not one of them already voted', function (DmAudience $audience) {
+it('shows every observer the same delivery of the same text at the same time whether or not a member already voted', function (DmAudience $audience) {
     $relay = FakeRelayTransport::bind();
     $delays = dmRecordSendDelays();
     // Entitled (active, paid), on the board, a candidate, and the one who votes.
@@ -214,59 +340,108 @@ it('delivers to the same members the same text at the same time with the same ou
     $round = app(OpenRound::class)->handle($round);
     $election = $round->election;
 
-    $send = function (string $sentence) use ($audience, $election, $relay, $secrets, $delays): array {
+    $usedKeys = new ArrayObject(array_fill_keys([
+        (new Key)->getPublicKey(config('services.nostr_notification_key')),
+        ...EinundzwanzigPleb::query()->pluck('pubkey')->all(),
+    ], true));
+
+    $send = function (string $sentence) use ($audience, $election, $relay, $secrets, $delays, $usedKeys): array {
         $text = "Hallo {name},\n\n{$sentence}";
         $message = fn (): DmMessage => DmMessage::factory()->create(['type' => DmMessageType::Individual, 'plaintext' => $text, 'variables' => []]);
+        $from = now()->getTimestamp();
+        $published = count($relay->published());
+
         $dryRun = app(DirectMessageDryRun::class)->handle(DmMessageType::Individual, $audience, $election, plaintext: $text);
         $started = app(StartDirectMessageRun::class)->handle($message(), $audience, $election, $dryRun->recipientIds);
+        $startedPublishes = array_slice($relay->published(), $published);
+        $published = count($relay->published());
+
         $schedule = DmSchedule::factory()->create([
             'election_event_id' => $election->id,
             'dm_message_id' => $message()->id,
             'audience' => $audience,
             'send_at' => now()->subMinute(),
         ]);
-
         test()->artisan('dm:send-due')->assertSuccessful();
+        $scheduledPublishes = array_slice($relay->published(), $published);
+        $window = [$from, now()->getTimestamp()];
 
         return [
-            'started' => dmSendOutcome($started, $relay, $sentence, $secrets, $delays),
-            'scheduled' => dmSendOutcome(DmRun::query()->findOrFail($schedule->fresh()->dm_run_id), $relay, $sentence, $secrets, $delays),
+            'started' => dmSendOutcome($started, $startedPublishes, $window, $sentence, $secrets, $delays, $usedKeys),
+            'scheduled' => dmSendOutcome(DmRun::query()->findOrFail($schedule->fresh()->dm_run_id), $scheduledPublishes, $window, $sentence, $secrets, $delays, $usedKeys),
         ];
     };
 
-    $before = $send('Erinnerung, bevor jemand abgestimmt hat.');
-    castElectionBallot($round, $voted);
-    $after = $send('Erinnerung, nachdem jemand abgestimmt hat.');
+    // Of equal length, so the ciphertext lengths are comparable byte for byte.
+    $sentenceBefore = 'Erinnerung, bevor jemand abgestimmt hat.';
+    $sentenceAfter = 'Erinnerung, nachdem eine abgestimmt hat.';
+    expect(strlen($sentenceAfter))->toBe(strlen($sentenceBefore));
 
+    $before = $send($sentenceBefore);
+    castElectionBallot($round, $voted);
+    $after = $send($sentenceAfter);
+
+    $notificationPubkey = (new Key)->getPublicKey(config('services.nostr_notification_key'));
     $votersText = "Hallo Mitglied Nummer {$voted->id},\n\n".DM_SEND_PATH_MESSAGE."\n\n".app(DirectMessageText::class)->footer();
-    $votersDelivery = [
-        'status' => 'sent',
-        'error' => null,
-        'attempts' => 1,
-        'relays' => ["wss://inbox-{$voted->id}.example/" => 'accepted'],
-        'wrap_published' => true,
-        'received' => [
-            'pubkey' => (new Key)->getPublicKey(config('services.nostr_notification_key')),
-            'kind' => 14,
-            'tags' => [['p', $voted->pubkey]],
-            'content' => $votersText,
-        ],
-        'stored_text' => $votersText,
-        'send_delays' => [0],
+    $votersInbox = "wss://inbox-{$voted->id}.example/";
+    $wrapAsSeen = [
+        'kind' => DirectMessageSigner::KIND_GIFT_WRAP,
+        'tags' => [['p', $voted->pubkey]],
+        'random_fields' => ['id', 'pubkey', 'created_at', 'content', 'sig'],
+        'created_at_in_window' => true,
+        'authentic' => true,
     ];
 
-    // Not a no-op: before the vote the voter is frozen, has a delivery on
-    // both paths, their wrap reached their inbox relay, opens with their key
-    // to a text that names them and carries this sending's sentence, and one
-    // send job was queued for it, with no delay (the four audiences here are
-    // not spread over time; the delay compared is the one the dispatcher hands
-    // to the queue, see dmRecordSendDelays and the self-check below).
+    // Not a no-op, on both paths: before the vote the voter is frozen, gets
+    // exactly one publish, to their inbox, of their own stored wrap; wrap and
+    // seal are authentic, dated inside their window and carry ciphertext; the
+    // seal is signed by the notification key; the rumor opens with the
+    // voter's key to a text that names them; the inbox stores that text and
+    // that rumor; one send job, no delay (these four audiences are not spread
+    // over time; see dmRecordSendDelays and the self-check below).
+    foreach (['started', 'scheduled'] as $path) {
+        $votersDelivery = $before[$path]['deliveries'][$voted->id] ?? null;
+        $votersPublishes = array_values(array_filter($before[$path]['publishes'], fn (array $publish): bool => $publish['relay'] === $votersInbox));
+
+        expect($before[$path]['recipient_ids'])->toContain($voted->id)
+            ->and(array_keys($before[$path]['deliveries']))->toBe($before[$path]['recipient_ids'])
+            ->and($votersDelivery)->toBeArray()
+            ->and($votersDelivery)->toMatchArray([
+                'status' => 'sent',
+                'error' => null,
+                'attempts' => 1,
+                'relays' => [$votersInbox => 'accepted'],
+                'stored_text' => $votersText,
+                'wrap_key_is_new' => true,
+                'stored_rumor_is_sent_rumor' => true,
+                'send_delays' => [0],
+            ])
+            ->and($votersDelivery['wrap'])->toMatchArray($wrapAsSeen)
+            ->and($votersDelivery['wrap']['content_length'])->toBeGreaterThan(0)
+            ->and($votersDelivery['seal'])->toMatchArray([
+                'pubkey' => $notificationPubkey,
+                'kind' => DirectMessageSigner::KIND_SEAL,
+                'tags' => [],
+                'random_fields' => ['id', 'created_at', 'content', 'sig'],
+                'created_at_in_window' => true,
+                'authentic' => true,
+            ])
+            ->and($votersDelivery['seal']['content_length'])->toBeGreaterThan(0)
+            ->and($votersDelivery['rumor'])->toBe([
+                'pubkey' => $notificationPubkey,
+                'kind' => DirectMessageSigner::KIND_CHAT_MESSAGE,
+                'tags' => [['p', $voted->pubkey]],
+                'content' => $votersText,
+                'random_fields' => ['id', 'created_at'],
+                'created_at_in_window' => true,
+                'id_matches' => true,
+            ])
+            ->and($votersPublishes)->toHaveCount(1)
+            ->and($votersPublishes[0])->toMatchArray(['accepted' => true, 'delivery_of' => $voted->id])
+            ->and($votersPublishes[0]['wrap'])->toBe($votersDelivery['wrap']);
+    }
+
     expect(electionVoteCount($round))->toBe(1)
-        ->and($before['started']['recipient_ids'])->toContain($voted->id)
-        ->and($before['started']['deliveries'][$voted->id] ?? null)->toBe($votersDelivery)
-        ->and($before['scheduled']['deliveries'][$voted->id] ?? null)->toBe($votersDelivery)
-        ->and(array_keys($before['started']['deliveries']))->toBe($before['started']['recipient_ids'])
-        ->and(array_keys($before['scheduled']['deliveries']))->toBe($before['scheduled']['recipient_ids'])
         ->and($after)->toBe($before);
 
     if (in_array($audience, [DmAudience::EntitledVoters, DmAudience::Members], true)) {
@@ -278,13 +453,15 @@ it('delivers to the same members the same text at the same time with the same ou
         // comparison above is per member and not over one shared string.
         expect($silents)->toBeArray()
             ->and($silents['status'])->toBe('sent')
-            ->and($silents['received']['content'] ?? null)->toBe($silentsText)
+            ->and($silents['rumor']['content'] ?? null)->toBe($silentsText)
             ->and($silents['stored_text'])->toBe($silentsText)
             ->and($silents['send_delays'])->toBe([0])
             ->and($silentsText)->not->toBe($votersText)
             ->and($unreachables)->toBeArray()
             ->and($unreachables['status'])->toBe('no_inbox')
-            ->and($unreachables['received'])->toBeNull()
+            ->and($unreachables['wrap'])->toBeNull()
+            ->and($unreachables['seal'])->toBeNull()
+            ->and($unreachables['rumor'])->toBeNull()
             ->and($unreachables['stored_text'])->toBeNull()
             ->and($unreachables['send_delays'])->toBe([0]);
     }
