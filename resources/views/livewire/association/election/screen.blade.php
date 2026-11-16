@@ -3,10 +3,12 @@
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionOutcome;
 use App\Enums\ElectionRoundState;
+use App\Enums\ElectionTieKind;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionRound;
 use App\Services\Election\RoundReport;
+use App\Support\ElectionTieText;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Livewire\Attributes\Computed;
@@ -233,12 +235,16 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
                                 {{ $sentence(trans_choice('{1} Gewählt ist :names.|[2,*] Gewählt sind :names.', $elected->count(), ['names' => $elected->join(', ', ' und ')])) }}
                                 @break
                             @case(ElectionOutcome::Tie)
-                                <span class="inline-flex items-center gap-[0.4em] text-warning"><flux:icon.scale class="size-[1.1em]" aria-hidden="true" />{{ __('Gleichstand. Darüber entscheidet eine Stichwahl.') }}</span>
+                                <span class="inline-flex items-center gap-[0.4em] text-warning"><flux:icon.scale class="size-[1.1em]" aria-hidden="true" />{{ $result['tie_kind'] === ElectionTieKind::YesEqualsNo ? $sentence(ElectionTieText::yesEqualsNo(collect($result['rows'])->where('tied', true)->pluck('name')->all())) : __('Gleichstand.') }}</span>
+                                <span class="block" data-test="share-tie-next">{{ $report['run_off_resolved'] ? ElectionTieText::runOffResolved() : ElectionTieText::pending() }}</span>
                                 @break
                             @default
                                 <span class="inline-flex items-center gap-[0.4em] text-warning"><flux:icon.exclamation-triangle class="size-[1.1em]" aria-hidden="true" />{{ $elected->isEmpty() ? __('Niemand hat die nötige Mehrheit.') : $sentence(trans_choice('{1} Gewählt ist :names. Nicht alle Sitze sind besetzt.|[2,*] Gewählt sind :names. Nicht alle Sitze sind besetzt.', $elected->count(), ['names' => $elected->join(', ', ' und ')])) }}</span>
                         @endswitch
                     </p>
+                    @if ($result['casting_vote'] !== null)
+                        <p class="mt-[1.5vh] text-[length:var(--s-meta)] break-words" data-test="share-casting-vote">{{ $sentence(ElectionTieText::decided($result['tie_kind'], $result['casting_vote']['chair'], $result['casting_vote']['elected'], $result['casting_vote']['tied'])) }}</p>
+                    @endif
 
                     {{-- More than three rows are dense: below 800px height the bars give way to the numbers they repeat. On a landscape screen they go into two columns, unless a name is too long for half the width — a column holds about 38 characters per line at 1280×720, and a long name with long words then needs three lines. Such a list stays in one column, where the name gets the full width. Names are never cut. --}}
                     @php

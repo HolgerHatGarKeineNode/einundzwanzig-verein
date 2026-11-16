@@ -2,7 +2,9 @@
 
 namespace App\Services\Election;
 
+use App\Enums\ElectionOutcome;
 use App\Exceptions\ElectionRoundStateException;
+use App\Models\ElectionCastingVote;
 use App\Models\ElectionRound;
 use UnexpectedValueException;
 
@@ -30,6 +32,37 @@ class TallyRound
         }
 
         return $this->count($round, $round->votes()->pluck('choices')->all());
+    }
+
+    /**
+     * The effective result of a sealed round: the count, with the chair's
+     * casting vote applied if one is recorded for its tie. Everything that
+     * says who is elected or whether a round is decided reads this, not
+     * `handle()`; the manifest and `election:verify` keep the raw count.
+     *
+     * A recorded decision that does not fit the count (a broken or
+     * hand-edited row) is not applied: the round stays tied, nobody is
+     * elected by it.
+     *
+     * @throws ElectionRoundStateException when the round is not sealed
+     */
+    public function effective(ElectionRound $round): TallyResult
+    {
+        $result = $this->handle($round);
+
+        if ($result->outcome !== ElectionOutcome::Tie) {
+            return $result;
+        }
+
+        $castingVote = ElectionCastingVote::query()->where('election_round_id', $round->getKey())->first();
+
+        if ($castingVote === null) {
+            return $result;
+        }
+
+        $decision = $castingVote->decision($result->tied, $result->tiedSeats);
+
+        return $decision->fits($result) ? $result->decided($decision) : $result;
     }
 
     /**

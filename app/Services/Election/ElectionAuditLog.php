@@ -38,6 +38,9 @@ class ElectionAuditLog
         'to' => 'string',
         'source' => 'string',
         'candidate_id' => 'int',
+        'chair' => 'string',
+        'decided_for' => 'string',
+        'resolution' => 'string',
     ];
 
     public const MAX_REASON_LENGTH = 1000;

@@ -456,7 +456,8 @@ new class extends Component
     }
 
     /**
-     * The count of every sealed round whose result may be shown, by round id.
+     * The effective result of every sealed round whose result may be shown,
+     * by round id: the count with the chair's casting vote applied.
      *
      * @return array<int, TallyResult>
      */
@@ -471,7 +472,7 @@ new class extends Component
             }
 
             try {
-                $results[$round->getKey()] = app(TallyRound::class)->handle($round);
+                $results[$round->getKey()] = app(TallyRound::class)->effective($round);
             } catch (ElectionRoundStateException|\UnexpectedValueException) {
                 // Not countable: the round shows as closed without numbers.
             }

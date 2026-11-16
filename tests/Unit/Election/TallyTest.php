@@ -81,6 +81,7 @@ it('counts per candidate and choice, and blank ballots apart', function () {
         'elected' => [11],
         'tied' => [],
         'tied_seats' => 0,
+        'tie_kind' => null,
     ]);
 });
 
@@ -89,7 +90,8 @@ it('elects with more than half of the votes for candidates, never with exactly h
 })->with([
     '6 of 10' => [[11 => ['for' => 6], 12 => ['for' => 4]], 0, ['outcome' => 'complete', 'elected' => [11], 'tied' => [], 'tied_seats' => 0]],
     '5 of 10' => [[11 => ['for' => 5], 12 => ['for' => 3], 13 => ['for' => 2]], 0, ['outcome' => 'understaffed', 'elected' => [], 'tied' => [], 'tied_seats' => 0]],
-    '5 of 10, level' => [[11 => ['for' => 5], 12 => ['for' => 5]], 0, ['outcome' => 'understaffed', 'elected' => [], 'tied' => [], 'tied_seats' => 0]],
+    // An even split of every vote is a Stimmengleichheit (statutes Art. 6): a tie, not a missed majority.
+    '5 of 10, level' => [[11 => ['for' => 5], 12 => ['for' => 5]], 0, ['outcome' => 'tie', 'elected' => [], 'tied' => [11, 12], 'tied_seats' => 1]],
     // Blank ballots are abstentions: 4 of 7 votes for candidates is a majority although 4 of 11 ballots is not.
     '4 of 7 with 4 blank' => [[11 => ['for' => 4], 12 => ['for' => 3]], 4, ['outcome' => 'complete', 'elected' => [11], 'tied' => [], 'tied_seats' => 0]],
     'only blank ballots' => [[], 3, ['outcome' => 'understaffed', 'elected' => [], 'tied' => [], 'tied_seats' => 0]],
@@ -103,8 +105,9 @@ it('elects every candidate with more yes than no', function () {
         13 => ['yes' => 2, 'no' => 5],
     ], blank: 1);
 
+    // 12 has as many yes as no: tied on the confirmation for the two seats 11 leaves over.
     expect(tallyDecision(ElectionCountingRule::YesNoPerCandidate, 3, [11, 12, 13], $rows))
-        ->toBe(['outcome' => 'understaffed', 'elected' => [11], 'tied' => [], 'tied_seats' => 0]);
+        ->toBe(['outcome' => 'tie', 'elected' => [11], 'tied' => [12], 'tied_seats' => 2]);
 
     expect(tallyDecision(ElectionCountingRule::YesNoPerCandidate, 1, [11, 12], tallyRows([11 => ['yes' => 1], 12 => ['no' => 1]])))
         ->toBe(['outcome' => 'complete', 'elected' => [11], 'tied' => [], 'tied_seats' => 0]);
@@ -169,4 +172,47 @@ it('gives the same result for the same rows in any order', function () {
 
     expect((new Tally)->count(ElectionCountingRule::MostVotes, 3, [14, 13, 12, 11], array_reverse($rows))->toArray())->toBe($first)
         ->and($first['outcome'])->toBe(ElectionOutcome::Tie->value);
+});
+
+/*
+ * Stimmengleichheit (statutes Art. 6: „Bei Stimmengleichheit fällt die/der
+ * Vorsitzende den Stichentscheid.“, jury run 1, B1). A tie is a result state,
+ * and the kind of tie decides how the chair's casting vote may look.
+ *
+ * Mutations that must turn this red: drop the "together hold every vote"
+ * condition (4:4:2 becomes a tie); drop the yes = no recognition; mark every
+ * tie as a tie between candidates.
+ */
+it('recognises a Stimmengleichheit in a single-majority round only when the level best placed hold every vote', function (array $spec, int $blank, array $expected) {
+    $result = (new Tally)->count(ElectionCountingRule::SingleMajority, 1, [11, 12, 13], tallyRows($spec, $blank))->toArray();
+
+    expect([$result['outcome'], $result['elected'], $result['tied'], $result['tied_seats'], $result['tie_kind']])->toBe($expected);
+})->with([
+    '5:5' => [[11 => ['for' => 5], 12 => ['for' => 5]], 0, ['tie', [], [11, 12], 1, 'candidates']],
+    '5:5 with blank ballots and a candidate without votes' => [[11 => ['for' => 5], 12 => ['for' => 5]], 3, ['tie', [], [11, 12], 1, 'candidates']],
+    '3:3:3' => [[11 => ['for' => 3], 12 => ['for' => 3], 13 => ['for' => 3]], 0, ['tie', [], [11, 12, 13], 1, 'candidates']],
+    // No Stimmengleichheit: the absolute-majority run-off of the best placed stays as it is.
+    '5:3:2' => [[11 => ['for' => 5], 12 => ['for' => 3], 13 => ['for' => 2]], 0, ['understaffed', [], [], 0, null]],
+    '4:4:2' => [[11 => ['for' => 4], 12 => ['for' => 4], 13 => ['for' => 2]], 0, ['understaffed', [], [], 0, null]],
+    'only blank ballots' => [[], 4, ['understaffed', [], [], 0, null]],
+]);
+
+it('recognises yes = no on a confirmation as a tie for the seats the qualified leave over', function (int $seats, array $spec, array $expected) {
+    $result = (new Tally)->count(ElectionCountingRule::YesNoPerCandidate, $seats, [11, 12, 13], tallyRows($spec))->toArray();
+
+    expect([$result['outcome'], $result['elected'], $result['tied'], $result['tied_seats'], $result['tie_kind']])->toBe($expected);
+})->with([
+    'one seat, 10 yes : 10 no' => [1, [11 => ['yes' => 10, 'no' => 10]], ['tie', [], [11], 1, 'yes_equals_no']],
+    'two qualified and one yes = no for three seats' => [3, [11 => ['yes' => 6, 'no' => 2], 12 => ['yes' => 5, 'no' => 1], 13 => ['yes' => 4, 'no' => 4]], ['tie', [11, 12], [13], 1, 'yes_equals_no']],
+    'qualified fill every seat: yes = no does not matter' => [2, [11 => ['yes' => 6, 'no' => 2], 12 => ['yes' => 5, 'no' => 1], 13 => ['yes' => 4, 'no' => 4]], ['complete', [11, 12], [], 0, null]],
+    '0 : 0 is no tie' => [1, [11 => ['no' => 0]], ['understaffed', [], [], 0, null]],
+    'more no than yes' => [1, [11 => ['yes' => 3, 'no' => 4]], ['understaffed', [], [], 0, null]],
+    'level yes among the qualified is a tie between candidates' => [1, [11 => ['yes' => 5, 'no' => 1], 12 => ['yes' => 5, 'no' => 2]], ['tie', [], [11, 12], 1, 'candidates']],
+]);
+
+it('keeps level scores on the last seats of a multi-seat round a tie between candidates', function () {
+    $result = (new Tally)->count(ElectionCountingRule::MostVotes, 3, [11, 12, 13, 14], tallyRows([11 => ['for' => 5], 12 => ['for' => 4], 13 => ['for' => 3], 14 => ['for' => 3]]))->toArray();
+
+    expect([$result['outcome'], $result['elected'], $result['tied'], $result['tied_seats'], $result['tie_kind']])
+        ->toBe(['tie', [11, 12], [13, 14], 1, 'candidates']);
 });

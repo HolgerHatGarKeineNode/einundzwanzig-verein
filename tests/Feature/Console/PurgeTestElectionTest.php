@@ -2,6 +2,7 @@
 
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
+use App\Models\ElectionCastingVote;
 use App\Models\ElectionRound;
 use App\Services\Election\CloseRound;
 use App\Services\Election\ElectionStewardship;
@@ -55,6 +56,7 @@ function usedTestElection(): array
     $round = app(CloseRound::class)->handle($round);
 
     $runOff = ElectionRound::factory()->withCandidates()->create(['election_event_id' => $election->id, 'parent_round_id' => $round->id, 'position' => 2]);
+    ElectionCastingVote::query()->create(['election_round_id' => $round->id, 'candidate_ids' => [], 'chair_name' => 'Probe', 'recorded_by_pleb_id' => $board[0]->id]);
 
     return [$election, [$round->id, $runOff->id]];
 }

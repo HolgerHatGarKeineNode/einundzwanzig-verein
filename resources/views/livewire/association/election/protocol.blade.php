@@ -5,12 +5,15 @@ use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionFeeRule;
 use App\Enums\ElectionOutcome;
 use App\Enums\ElectionRoundState;
+use App\Enums\ElectionTieKind;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionAuditEntry;
+use App\Models\ElectionRound;
 use App\Models\MemberProposal;
 use App\Services\Election\ElectionAuditLog;
 use App\Services\Election\RoundReport;
+use App\Support\ElectionTieText;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
@@ -77,7 +80,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
     }
 
     /**
-     * @return Collection<int, array{sequence: int, time: string, action: string, round: string|null, actor: string|null, subject: string|null, reason: string|null}>
+     * @return Collection<int, array{sequence: int, time: string, action: string, round: string|null, actor: string|null, subject: string|null, reason: string|null, chair: string|null}>
      */
     #[Computed]
     public function auditLines(): Collection
@@ -100,6 +103,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
             'actor' => $entry->actor_pleb_id ? MemberProposal::authorNameOf($people->get($entry->actor_pleb_id)) : null,
             'subject' => $entry->subject_pleb_id ? MemberProposal::authorNameOf($people->get($entry->subject_pleb_id)) : null,
             'reason' => is_array($entry->details) ? ($entry->details['reason'] ?? null) : null,
+            'chair' => is_array($entry->details) ? ($entry->details['chair'] ?? null) : null,
         ]);
     }
 
@@ -133,20 +137,26 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
             }
 
             if ($report['result'] !== null) {
-                foreach ($report['result']['rows'] as $row) {
-                    $lines[] = '   - '.$row['name'].': '.$this->countText($round->counting_rule, $row).($row['elected'] ? ', '.__('gewählt') : ($row['tied'] ? ', '.__('Gleichstand') : ''));
-                }
-
-                $lines[] = '   '.__('Enthaltungen (leer): :blank', ['blank' => $report['result']['blank']]);
-                $lines[] = '   '.__('Ergebnis: :outcome', ['outcome' => $this->outcomeText($report['result'])]);
+                array_push($lines, ...$this->resultLines($round->counting_rule, $report['result'], $report));
             }
 
-            if ($report['reason']) {
+            if ($report['void_result'] !== null) {
+                array_push($lines, ...$this->resultLines($round->counting_rule, $report['void_result']['result'], $report, void: true));
+            }
+
+            $manifest = $report['manifest'] ?? $report['void_result']['manifest'] ?? null;
+
+            // Annulled after its count: result and checksum first, then the annulment with its reason.
+            if ($report['reason'] && $report['void_result'] === null) {
                 $lines[] = '   '.__('Grund: :reason', ['reason' => $report['reason']]);
             }
 
-            if ($report['manifest']) {
-                $lines[] = '   '.__('Prüfsumme (SHA-256): :hash', ['hash' => $report['manifest']['hash']]).($report['manifest']['intact'] ? '' : ' '.__('(stimmt nicht mehr mit den Stimmen überein)'));
+            if ($manifest) {
+                $lines[] = '   '.__('Prüfsumme (SHA-256): :hash', ['hash' => $manifest['hash']]).($manifest['intact'] ? '' : ' '.__('(stimmt nicht mehr mit den Stimmen überein)'));
+            }
+
+            if ($report['void_result'] !== null) {
+                $lines[] = '   '.$this->voidText($round).($report['reason'] ? ' '.__('Grund: :reason', ['reason' => $report['reason']]) : '');
             }
         }
 
@@ -202,6 +212,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
 
         return match (true) {
             $report['state'] === ElectionRoundState::Annulled && $round->opened_at === null => __('Nicht geöffnet, annulliert :annulled.', ['annulled' => $this->clock($round->annulled_at)]),
+            $report['state'] === ElectionRoundState::Annulled && $round->closed_at !== null => __('Geöffnet :opened, geschlossen und ausgezählt :closed, annulliert :annulled.', ['opened' => $this->clock($round->opened_at), 'closed' => $this->clock($round->closed_at), 'annulled' => $this->clock($round->annulled_at)]),
             $report['state'] === ElectionRoundState::Annulled => __('Geöffnet :opened, annulliert :annulled.', ['opened' => $this->clock($round->opened_at), 'annulled' => $this->clock($round->annulled_at)]),
             $report['sealed'] => __('Geöffnet :opened, geschlossen und ausgezählt :closed.', ['opened' => $this->clock($round->opened_at), 'closed' => $this->clock($round->closed_at)]),
             $report['state'] === ElectionRoundState::Open => __('Geöffnet :opened, läuft noch.', ['opened' => $this->clock($round->opened_at)]),
@@ -221,15 +232,89 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
     }
 
     /**
+     * The rows, abstentions and outcome of a count, as plain-text lines.
+     *
+     * @param  array<string, mixed>  $result
+     * @param  array<string, mixed>  $report
+     * @return list<string>
+     */
+    protected function resultLines(ElectionCountingRule $rule, array $result, array $report, bool $void = false): array
+    {
+        $lines = [];
+
+        foreach ($result['rows'] as $row) {
+            $lines[] = '   - '.$row['name'].': '.$this->countText($rule, $row).(($verdict = $this->verdictOf($row)) === '' ? '' : ', '.$verdict);
+        }
+
+        $lines[] = '   '.__('Enthaltungen (leer): :blank', ['blank' => $result['blank']]);
+        $lines[] = '   '.($void ? __('Ausgezähltes Ergebnis (ungültig): :outcome', ['outcome' => $this->outcomeText($result)]) : __('Ergebnis: :outcome', ['outcome' => $this->outcomeText($result)]));
+
+        if (! $void && ($tieLine = $this->tieLine($result, $report)) !== null) {
+            $lines[] = '   '.$tieLine;
+        }
+
+        return $lines;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    protected function verdictOf(array $row): string
+    {
+        return match (true) {
+            $row['elected'] && $row['by_casting_vote'] => __('gewählt durch Stichentscheid'),
+            $row['elected'] => __('gewählt'),
+            $row['tied'] => __('Gleichstand'),
+            default => '',
+        };
+    }
+
+    /**
+     * What became of a tie: the chair's casting vote, a run-off the assembly
+     * resolved, or the casting vote still to come. Null without a tie.
+     *
+     * @param  array<string, mixed>  $result
+     * @param  array<string, mixed>  $report
+     */
+    protected function tieLine(array $result, array $report): ?string
+    {
+        $castingVote = $result['casting_vote'];
+
+        if ($castingVote !== null) {
+            return ElectionTieText::decided($result['tie_kind'], $castingVote['chair'], $castingVote['elected'], $castingVote['tied'])
+                .($castingVote['note'] ? ' '.__('Anmerkung: :note', ['note' => $castingVote['note']]) : '')
+                .' '.__('Eingetragen :time.', ['time' => $this->stamp($castingVote['recorded_at'])]);
+        }
+
+        if ($result['outcome'] !== ElectionOutcome::Tie) {
+            return null;
+        }
+
+        return $report['run_off_resolved'] ? ElectionTieText::runOffResolved() : ElectionTieText::pending();
+    }
+
+    /**
+     * The mark of a round annulled after its count: the result above stands
+     * in the record, and it is not valid.
+     */
+    protected function voidText(ElectionRound $round): string
+    {
+        return __('ANNULLIERT :time. Das ausgezählte Ergebnis ist nicht gültig.', ['time' => $this->stamp($round->annulled_at)]);
+    }
+
+    /**
      * @param  array<string, mixed>  $result
      */
     protected function outcomeText(array $result): string
     {
         $elected = collect($result['rows'])->where('elected', true)->pluck('name');
+        $tied = collect($result['rows'])->where('tied', true)->pluck('name');
 
         return match ($result['outcome']) {
             ElectionOutcome::Complete => trans_choice('{1} gewählt ist :names|[2,*] gewählt sind :names', $elected->count(), ['names' => $elected->join(', ', ' und ')]),
-            ElectionOutcome::Tie => trans_choice('{1} Gleichstand um einen Sitz|[2,*] Gleichstand um :count Sitze', $result['tied_seats'], ['count' => $result['tied_seats']])
+            ElectionOutcome::Tie => ($result['tie_kind'] === ElectionTieKind::YesEqualsNo
+                ? trans_choice('{1} Gleichstand von Ja und Nein bei :names|[2,*] Gleichstand von Ja und Nein bei :names', $tied->count(), ['names' => $tied->join(', ', ' und ')])
+                : trans_choice('{1} Gleichstand um einen Sitz|[2,*] Gleichstand um :count Sitze', $result['tied_seats'], ['count' => $result['tied_seats']]))
                 .($elected->isNotEmpty() ? '; '.__('gewählt: :names', ['names' => $elected->join(', ', ' und ')]) : ''),
             ElectionOutcome::Understaffed => $elected->isEmpty()
                 ? __('niemand hat die nötige Mehrheit')
@@ -254,6 +339,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
             ElectionAuditAction::VoterEnrolledByHand => __('Von Hand ins Verzeichnis nachgetragen'),
             ElectionAuditAction::ElectionMeetingUpdated => __('Termin oder Call-Link geändert'),
             ElectionAuditAction::RunOffCreated => __('Stichwahl angelegt'),
+            ElectionAuditAction::CastingVoteRecorded => __('Stichentscheid eingetragen'),
             ElectionAuditAction::RoundRepeated => __('Wahlgang zur Wiederholung angelegt'),
         };
     }
@@ -326,8 +412,8 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
                         <p class="mt-3 text-base">{{ __('Wahlberechtigt: :roll, abgestimmt: :cast', ['roll' => $report['roll'], 'cast' => $report['cast']]) }}</p>
                     @endif
 
-                    @if ($result !== null)
-                        <table class="mt-4 w-full text-left text-base">
+                    @foreach (array_filter(['result' => $result, 'void' => $report['void_result']['result'] ?? null]) as $kind => $shown)
+                        <table @class(['mt-4 w-full text-left text-base', 'opacity-75 print:opacity-100' => $kind === 'void']) @if ($kind === 'void') data-test="protocol-void-result-{{ $round->id }}" @endif>
                             <thead>
                                 <tr class="border-b border-border-default text-sm text-text-secondary print:border-black print:text-black">
                                     <th scope="col" class="py-2 pr-4 font-normal">{{ __('Kandidatur') }}</th>
@@ -336,9 +422,9 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
                                 </tr>
                             </thead>
                             <tbody>
-                                @foreach ($result['rows'] as $row)
+                                @foreach ($shown['rows'] as $row)
                                     <tr class="border-b border-border-subtle print:border-neutral-400">
-                                        @php $verdict = $row['elected'] ? __('gewählt') : ($row['tied'] ? __('Gleichstand') : ''); @endphp
+                                        @php $verdict = $this->verdictOf($row); @endphp
                                         <td class="py-2 pr-4 align-top font-bold [overflow-wrap:anywhere]">
                                             {{ $row['name'] }}
                                             @if ($verdict !== '')
@@ -351,18 +437,37 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
                                 @endforeach
                             </tbody>
                         </table>
-                        <p class="mt-3 text-base">{{ __('Enthaltungen (leer): :blank', ['blank' => $result['blank']]) }}</p>
-                        <p class="mt-1 text-base font-bold break-words" data-test="protocol-outcome-{{ $round->id }}">{{ __('Ergebnis: :outcome', ['outcome' => $this->outcomeText($result)]) }}</p>
-                    @endif
+                        <p class="mt-3 text-base">{{ __('Enthaltungen (leer): :blank', ['blank' => $shown['blank']]) }}</p>
+                        @if ($kind === 'void')
+                            <p class="mt-1 text-base font-bold break-words" data-test="protocol-outcome-{{ $round->id }}">{{ __('Ausgezähltes Ergebnis (ungültig): :outcome', ['outcome' => $this->outcomeText($shown)]) }}</p>
+                        @else
+                            <p class="mt-1 text-base font-bold break-words" data-test="protocol-outcome-{{ $round->id }}">{{ __('Ergebnis: :outcome', ['outcome' => $this->outcomeText($shown)]) }}</p>
+                            @if (($tieLine = $this->tieLine($shown, $report)) !== null)
+                                <p class="mt-1 text-base break-words" data-test="protocol-tie-{{ $round->id }}">{{ $tieLine }}</p>
+                            @endif
+                        @endif
+                    @endforeach
 
-                    @if ($report['reason'])
+                    @if ($report['reason'] && $report['void_result'] === null)
                         <p class="mt-2 text-base break-words">{{ __('Grund: :reason', ['reason' => $report['reason']]) }}</p>
                     @endif
 
-                    @if ($report['manifest'])
+                    @php $manifest = $report['manifest'] ?? $report['void_result']['manifest'] ?? null; @endphp
+                    @if ($manifest)
                         <p class="mt-2 text-sm text-text-secondary break-all print:text-black" data-test="protocol-manifest-{{ $round->id }}">
-                            {{ __('Prüfsumme (SHA-256): :hash', ['hash' => $report['manifest']['hash']]) }}
-                            {{ $report['manifest']['intact'] ? __('stimmt mit den gespeicherten Stimmen überein.') : __('stimmt NICHT mehr mit den gespeicherten Stimmen überein.') }}
+                            {{ __('Prüfsumme (SHA-256): :hash', ['hash' => $manifest['hash']]) }}
+                            @if ($report['void_result'] !== null)
+                                {{ $manifest['intact'] ? __('Der gespeicherte Text hat diese Prüfsumme noch.') : __('Der gespeicherte Text hat diese Prüfsumme NICHT mehr.') }}
+                            @else
+                                {{ $manifest['intact'] ? __('stimmt mit den gespeicherten Stimmen überein.') : __('stimmt NICHT mehr mit den gespeicherten Stimmen überein.') }}
+                            @endif
+                        </p>
+                    @endif
+
+                    @if ($report['void_result'] !== null)
+                        <p class="mt-2 inline-flex items-start gap-2 text-base font-bold text-danger break-words print:text-black" data-test="protocol-void-{{ $round->id }}">
+                            <flux:icon.no-symbol variant="mini" class="mt-0.5 size-5 shrink-0" aria-hidden="true" />
+                            <span>{{ $this->voidText($round) }}@if ($report['reason']) {{ __('Grund: :reason', ['reason' => $report['reason']]) }}@endif</span>
                         </p>
                     @endif
                 </li>
@@ -392,6 +497,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
                     <span class="min-w-0 break-words">
                         <span class="font-bold">{{ $line['action'] }}</span>@if ($line['round']), {{ $line['round'] }}@endif @if ($line['subject'])({{ $line['subject'] }})@endif
                         @if ($line['actor'])<span class="text-text-secondary print:text-black">{{ __('durch :name', ['name' => $line['actor']]) }}</span>@endif
+                        @if ($line['chair'])<span class="block text-sm text-text-secondary print:text-black">{{ __('Vorsitz: :chair', ['chair' => $line['chair']]) }}</span>@endif
                         @if ($line['reason'])<span class="block text-sm text-text-secondary print:text-black">{{ __('Grund: :reason', ['reason' => $line['reason']]) }}</span>@endif
                     </span>
                 </li>
