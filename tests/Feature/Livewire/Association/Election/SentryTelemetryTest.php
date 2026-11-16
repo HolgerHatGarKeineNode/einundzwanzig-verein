@@ -21,6 +21,7 @@ use Sentry\DataCollection\DataCollectionPolicy;
 use Sentry\DataCollection\HttpMessageType;
 use Sentry\DataCollection\HttpSpanDataCollector;
 use Sentry\Event;
+use Sentry\Frame;
 use Sentry\Laravel\Features\LivewirePackageIntegration;
 use Sentry\Laravel\Http\LaravelRequestFetcher;
 use Sentry\Laravel\Integration;
@@ -297,6 +298,73 @@ it('sends an error event inside the cast request without request body, stack arg
         }
     }
 })->with($sentryConfigs);
+
+it('sends a message event with an attached stack trace inside the cast request without its frame arguments', function () {
+    [$round, $voter] = sentryBallotRound();
+    $event = signedElectionVote($round, $voter, [SENTRY_CANDIDATE_ID => 'for']);
+    $events = bootSentryLikeProduction(['sentry.attach_stacktrace' => true]);
+
+    // A message, not an exception: its frames sit on the event's own stack
+    // trace, and with arguments kept they carry the signed vote.
+    app()->bind(CastBallot::class, fn () => new class(app(ElectoralRoll::class)) extends CastBallot
+    {
+        public function handle(ElectionRound $round, EinundzwanzigPleb $voter, array $event): void
+        {
+            parent::handle($round, $voter, $event);
+
+            Sentry\captureMessage('message inside the cast request');
+        }
+    });
+
+    $ignoreArgs = ini_set('zend.exception_ignore_args', '0');
+
+    try {
+        $page = Livewire::test('association.election.index');
+        $answer = $page->call('castBallot', $round->id, $event)->effects['returns'][0] ?? null;
+    } finally {
+        ini_set('zend.exception_ignore_args', (string) $ignoreArgs);
+    }
+
+    $message = collect($events)->first(fn (Event $captured): bool => $captured->getMessage() === 'message inside the cast request');
+
+    expect($answer)->toBe(['status' => 'counted'])
+        ->and($message)->not->toBeNull()
+        // Positive control: the event has its own stack trace, through the cast.
+        ->and($message->getExceptions())->toBe([])
+        ->and(collect($message->getStacktrace()?->getFrames() ?? [])->contains(fn (Frame $frame): bool => str_ends_with((string) $frame->getFunctionName(), '::handle')))->toBeTrue();
+
+    foreach (sentryPayloads($events) as $payload) {
+        foreach (ballotNeedles($voter, $event) as $what => $needle) {
+            expect(str_contains($payload, $needle))->toBeFalse("Sentry payload holds the {$what}");
+        }
+    }
+});
+
+it('sends an event it cannot classify scrubbed, neither unfiltered nor dropped', function () {
+    $events = bootSentryLikeProduction(['sentry.attach_stacktrace' => true]);
+
+    $request = Request::create('/');
+    $request->setRouteResolver(fn () => throw new RuntimeException('route cannot be resolved'));
+    app()->instance('request', $request);
+
+    // Built at runtime: the frames carry the source lines around them.
+    $choices = 'choices-'.SENTRY_CANDIDATE_ID;
+    $ignoreArgs = ini_set('zend.exception_ignore_args', '0');
+
+    try {
+        (function (string $choices): void {
+            Sentry\captureMessage('unclassifiable');
+        })($choices);
+    } finally {
+        ini_set('zend.exception_ignore_args', (string) $ignoreArgs);
+    }
+
+    $payloads = sentryPayloads($events);
+
+    expect($events)->toHaveCount(1)
+        ->and($payloads[0])->toContain('unclassifiable')
+        ->and($payloads[0])->not->toContain($choices);
+});
 
 it('keeps the Livewire breadcrumbs of the board election components out of Sentry', function (string $component, Closure $parameters, ?array $call) {
     [$board] = electionBoard(1);

@@ -22,7 +22,7 @@ class SecurityMonitor
      * A Livewire component of an election: a name with the segment
      * `election` (`association.election.ballot`, `association.board.election`).
      */
-    private const ELECTION_COMPONENT_PATTERN = '/(^|\.)election(\.|$)/';
+    private const ELECTION_COMPONENT_PATTERN = '/(^|\.)election(\.|$)/u';
 
     /**
      * What stands in `exception_message` for an election component. The
@@ -138,11 +138,14 @@ class SecurityMonitor
     }
 
     /**
-     * Whether `$name` is the name of an election component.
+     * Whether `$name` is the name of an election component. A Livewire 4
+     * namespace separator (`pages::election.ballot`) counts as a segment
+     * boundary. A regex engine error (`preg_match()` returns false, it never
+     * throws) counts as election: the payload is withheld, not kept.
      */
     public static function isElectionComponent(string $name): bool
     {
-        return preg_match(self::ELECTION_COMPONENT_PATTERN, $name) === 1;
+        return preg_match(self::ELECTION_COMPONENT_PATTERN, str_replace('::', '.', $name)) !== 0;
     }
 
     /**
