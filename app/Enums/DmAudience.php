@@ -29,7 +29,7 @@ enum DmAudience: string
     public function label(): string
     {
         return match ($this) {
-            self::Members => __('Alle Aktiv- und Ehrenmitglieder'),
+            self::Members => __('Aktiv- und Ehrenmitglieder'),
             self::EntitledVoters => __('Stimmberechtigte der Wahl'),
             self::FeeOutstanding => __('Mitglieder mit offenem Beitrag'),
             self::Candidates => __('Kandidierende der Wahl'),

@@ -49,7 +49,7 @@ it('resolves "all members" to active and honorary members, never passive, non-me
 it('names "all members" for what it is, without promising a vote', function () {
     audienceMember(AssociationStatus::ACTIVE);
 
-    expect(DmAudience::Members->label())->toBe('Alle Aktiv- und Ehrenmitglieder')
+    expect(DmAudience::Members->label())->toBe('Aktiv- und Ehrenmitglieder')
         ->and(app(DirectMessageAudience::class)->describe(DmAudience::Members))->toBe('1 Aktiv- oder Ehrenmitglied, Beitrag bezahlt oder nicht')
         ->and(DmAudience::Members->label().app(DirectMessageAudience::class)->describe(DmAudience::Members))->not->toContain('Stimmrecht');
 });
