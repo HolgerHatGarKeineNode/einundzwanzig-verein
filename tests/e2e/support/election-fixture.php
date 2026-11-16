@@ -24,14 +24,19 @@ declare(strict_types=1);
  * never wipe the developer's database.
  */
 
+use App\Enums\DmDeliveryStatus;
+use App\Enums\DmMessageType;
 use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
+use App\Jobs\Dm\DispatchBulkDirectMessages;
+use App\Models\DmDelivery;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
 use App\Models\PlebDmRelay;
 use App\Models\Profile;
+use App\Services\Dm\ComposeDirectMessage;
 use App\Services\Election\CastBallot;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\VoteEvent;
@@ -39,6 +44,7 @@ use App\Services\Nostr\EventSigning;
 use App\Support\Board;
 use Illuminate\Contracts\Console\Kernel;
 use swentel\nostr\Key\Key;
+use Tests\Support\FakeRelayTransport;
 
 $state = getenv('E2E_STATE_DIR');
 $database = getenv('DB_DATABASE');
@@ -268,6 +274,37 @@ function e2eScenario(string $name, string $state): array
             e2eRound($election, 'Vorsitz', 1, [$anna, $bernd]);
 
             return [...$result, 'election' => $election->id];
+
+        case 'inbox':
+            // Two messages to Ida through the application's own send path
+            // (ComposeDirectMessage, a frozen run, DispatchBulkDirectMessages on
+            // the sync queue, the in-memory relay): the first while she has an
+            // inbox relay (sent), the second after she removed it (no_inbox,
+            // "only here"). Each carries a marker sentence the spec looks for.
+            $viewer = e2eMember('Ida Imhof');
+            $viewerPleb = EinundzwanzigPleb::query()->findOrFail($viewer['id']);
+            FakeRelayTransport::bind();
+            $messages = [];
+
+            foreach (['sent' => ['Die Mitgliederversammlung beginnt um 19 Uhr.', DmDeliveryStatus::Sent], 'noInbox' => ['Der Beitrag für dieses Jahr ist fällig.', DmDeliveryStatus::NoInbox]] as $key => [$marker, $expected]) {
+                if ($expected === DmDeliveryStatus::NoInbox) {
+                    PlebDmRelay::query()->where('einundzwanzig_pleb_id', $viewer['id'])->delete();
+                }
+
+                $message = app(ComposeDirectMessage::class)->handle(DmMessageType::Individual, $boardPleb, [], "Hallo {name},\n{$marker} Mehr dazu: https://verein.example/beitrag");
+                $run = $message->freezeRun([$viewerPleb]);
+                DispatchBulkDirectMessages::dispatchSync($run->id);
+                $status = DmDelivery::query()->where('dm_run_id', $run->id)->sole()->status;
+
+                if ($status !== $expected) {
+                    fwrite(STDERR, "election-fixture.php: the {$key} message ended as {$status->value}, not {$expected->value}.\n");
+                    exit(2);
+                }
+
+                $messages[$key] = ['marker' => $marker, 'status' => $status->value];
+            }
+
+            return [...$result, 'viewer' => $viewer, 'messages' => $messages];
 
         case 'measure':
             // Every page with content: a counted round with a result, an open

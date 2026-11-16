@@ -32,6 +32,14 @@ async function choose(page, hook, value) {
     await Promise.all([page.waitForResponse(isLivewireUpdate), select.selectOption(value)])
 }
 
+/**
+ * Every whole number in the text of `locator`, in order. Compared exactly:
+ * a substring check of "7" also passes on 17, 70 or 2027.
+ */
+async function numbersIn(locator) {
+    return ((await locator.innerText()).match(/\d+/g) ?? []).map(Number)
+}
+
 function textArea(page) {
     return page.locator('textarea[data-test="compose-text"], [data-test="compose-text"] textarea')
 }
@@ -72,7 +80,8 @@ test('the board dry-runs, sends, sees the run in the history, and a repeat is sk
     // Everyone of the scenario is an active, paid member with an inbox:
     // the board member, three candidates, three voters.
     const count = 1 + Object.keys(data.candidates).length + Object.keys(data.voters).length
-    await expect(result).toContainText(String(count))
+    // The count line is the result's first paragraph: the count and no other number.
+    await expect.poll(() => numbersIn(result.locator('p').first())).toEqual([count])
 
     await page.locator('[data-test="open-confirm"]').click()
     await page.locator('[data-test="confirm-send"]').click()
@@ -93,7 +102,8 @@ test('the board dry-runs, sends, sees the run in the history, and a repeat is sk
     await expect(textArea(page)).toHaveValue(TEXT)
     const repeat = await dryRun(page)
     await expect(repeat.locator('[data-test="skipped"]')).toBeVisible()
-    await expect(repeat.locator('[data-test="skipped"]')).toContainText(String(count))
+    // Skipped: all of them, within the lock of DM_REPEAT_LOCK_HOURS=24 (scripts/e2e-election.sh).
+    await expect.poll(() => numbersIn(repeat.locator('[data-test="skipped"]'))).toEqual([count, 24])
     await expect(page.locator('[data-test="open-confirm"]')).toHaveCount(0)
     await expect(page.locator('[data-test="open-confirm-disabled"]')).toBeDisabled()
 

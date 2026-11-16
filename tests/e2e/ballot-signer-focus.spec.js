@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs'
-import { test, expect } from './support/channels.js'
+import { test, expect, scenario, login } from './support/election.js'
 
 /**
  * Where the focus goes on the ballot when signing cannot go ahead
@@ -12,16 +11,17 @@ import { test, expect } from './support/channels.js'
  *       „Signieren und abgeben“ again, not on BODY (the button was disabled
  *       while the signer was asked).
  *
- * Needs a server on a scratch database (tests/e2e/support/seed-ballot-member.php) with one member on the roll of an
- * open live round, and that member's session cookie as JSON in
- * E2E_BALLOT_SEED: {"cookie": "<name>", "value": "<encrypted id>"}.
- * Every non-local request and every WebSocket is cut off.
+ * Run by scripts/e2e-election.sh like the other election specs: scenario
+ * "member" of tests/e2e/support/election-fixture.php seeds one open round
+ * with the voters on its roll. A voter logs in through the page's own login
+ * on a second page of the same context, which then closes: the session
+ * cookie belongs to the context, the test signer stayed on that page, so the
+ * test's page has no signer and keeps the vendor window.nostr.js fallback.
+ * Both pages are watched (support/channels.js) and behind the network guard
+ * of support/election.js.
  */
 
-const BASE = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8182'
-const seed = JSON.parse(readFileSync(process.env.E2E_BALLOT_SEED, 'utf8'))
-
-test.use({ baseURL: BASE, viewport: { width: 390, height: 844 } })
+test.use({ viewport: { width: 390, height: 844 } })
 
 /** What has the focus: tag, id, data-signer-help, and its first line of text. */
 async function focused(page) {
@@ -37,18 +37,15 @@ async function focused(page) {
     })
 }
 
-test.beforeEach(async ({ context, channels }) => {
-    const host = new URL(BASE).host
+test.beforeEach(async ({ context }) => {
+    const data = scenario('member')
+    const loginPage = await context.newPage()
 
-    // The layout loads a font kit, avatars and a font from APP_URL; they are cut off on purpose.
-    const blocked = /(https:\/\/(kit\.fontawesome\.com|image\.nostr\.build)\/|http:\/\/localhost:8000\/storage\/fonts\/)/
-    channels.allow('foreign-host', blocked, 'non-local requests are blocked by this spec')
-    channels.allow('requestfailed', blocked, 'non-local requests are blocked by this spec')
-    channels.allow('console', /^error: Failed to load resource: net::ERR_BLOCKED_BY_CLIENT/, 'the browser reports each request this spec blocks')
-
-    await context.route('**/*', (route) => (new URL(route.request().url()).host === host ? route.fallback() : route.abort('blockedbyclient')))
-    await context.routeWebSocket(/.*/, (socket) => socket.close())
-    await context.addCookies([{ name: seed.cookie, value: seed.value, url: BASE }])
+    // Logged in at desktop width: at 390 px the first visible login button is
+    // the one in the off-canvas sidebar, and a click on it never lands.
+    await loginPage.setViewportSize({ width: 1280, height: 900 })
+    await login(loginPage, data.voters.voter1.secret, '/association/election')
+    await loginPage.close()
 })
 
 /** The election page, ballot filled in blank and on the review step. */

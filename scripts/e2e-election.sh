@@ -137,6 +137,8 @@ specs=(
     tests/e2e/election-channels-positive-control.spec.js
     tests/e2e/election-layout.spec.js
     tests/e2e/election-tie.spec.js
+    tests/e2e/dm-inbox.spec.js
+    tests/e2e/ballot-signer-focus.spec.js
 )
 if [ -n "${E2E_SPECS:-}" ]; then
     read -r -a specs <<<"$E2E_SPECS"
