@@ -99,6 +99,25 @@ it('creates project proposal successfully', function () {
         ->and($project->description)->toBe('This is a test project for unit testing purposes.');
 });
 
+it('rejects a name another proposal already carries with a form error instead of a server error', function () {
+    // Nightwatch #17: a resubmitted proposal reused the title of the rejected
+    // one, the unique index refused the insert and the member got a 500.
+    ProjectProposal::factory()->create(['name' => 'Bitcoin Vortrag in Freiburg']);
+
+    NostrAuth::login($this->pleb->pubkey);
+
+    Livewire::test('association.project-support.form.create')
+        ->set('form.name', 'Bitcoin Vortrag in Freiburg')
+        ->set('form.description', 'Second attempt with the same title.')
+        ->set('form.support_in_sats', 21000)
+        ->set('form.website', 'https://example.com')
+        ->call('save')
+        ->assertHasErrors(['form.name' => 'unique'])
+        ->assertSee('Ein Antrag mit diesem Namen existiert bereits.');
+
+    expect(ProjectProposal::count())->toBe(1);
+});
+
 it('defaults to nostr dm contact and stores it that way when unchanged', function () {
     NostrAuth::login($this->pleb->pubkey);
 

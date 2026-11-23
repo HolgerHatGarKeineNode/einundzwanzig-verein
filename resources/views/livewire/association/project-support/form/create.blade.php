@@ -5,6 +5,7 @@ use App\Support\NostrAuth;
 use App\Support\MarkdownRenderer;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Locked;
@@ -83,13 +84,15 @@ class extends Component
         }
 
         $this->validate([
-            'form.name' => 'required|string|max:255',
+            'form.name' => ['required', 'string', 'max:255', Rule::unique('project_proposals', 'name')],
             'form.description' => 'required|string',
             'form.support_in_sats' => 'required|integer|min:0',
             'form.website' => 'required|url|max:255',
             'form.contact_via_nostr_dm' => 'boolean',
             'form.contact_alternative' => 'nullable|string|max:255',
             'file' => 'nullable|file|mimes:jpeg,png,jpg,gif,webp|mimetypes:image/jpeg,image/png,image/gif,image/webp|max:10240',
+        ], [
+            'form.name.unique' => 'Ein Antrag mit diesem Namen existiert bereits. Bitte wähle einen anderen Namen.',
         ]);
 
         $projectProposal = new ProjectProposal;

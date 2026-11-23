@@ -117,6 +117,30 @@ it('updates project proposal successfully', function () {
         ->and($this->project->description)->toBe('Updated Description');
 });
 
+it('rejects renaming a proposal to the name of another proposal', function () {
+    ProjectProposal::factory()->create(['name' => 'Taken Name']);
+
+    NostrAuth::login($this->pleb->pubkey);
+
+    Livewire::test('association.project-support.form.edit', ['projectProposal' => $this->project])
+        ->set('form.name', 'Taken Name')
+        ->call('update')
+        ->assertHasErrors(['form.name' => 'unique']);
+
+    expect($this->project->refresh()->name)->toBe('Original Project');
+});
+
+it('saves a proposal that keeps its own name', function () {
+    NostrAuth::login($this->pleb->pubkey);
+
+    Livewire::test('association.project-support.form.edit', ['projectProposal' => $this->project])
+        ->set('form.description', 'Only the description changed')
+        ->call('update')
+        ->assertHasNoErrors();
+
+    expect($this->project->refresh()->description)->toBe('Only the description changed');
+});
+
 it('ignores accepted and sats_paid form keys even for board members — those fields no longer exist on the edit form', function () {
     // accepted/sats_paid and the $isAdmin gate were removed from this
     // component; a payout is now only ever recorded through recordPayout()
