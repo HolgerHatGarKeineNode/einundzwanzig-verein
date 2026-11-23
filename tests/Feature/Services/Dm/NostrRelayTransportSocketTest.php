@@ -140,7 +140,10 @@ it('verifies the relay certificate and raises no deprecation while connecting', 
     // A TLS server on a loopback port, in a child process, with a self-signed
     // certificate for relay.example.com: valid in form, trusted by nobody.
     $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
-    $certificate = openssl_csr_sign(openssl_csr_new(['commonName' => 'relay.example.com'], $key), null, $key, 1);
+    // The digest is named explicitly: left to the system openssl.cnf, OpenSSL 3.5
+    // on Fedora answers "openssl_csr_new(): Error signing request".
+    $signing = ['digest_alg' => 'sha256'];
+    $certificate = openssl_csr_sign(openssl_csr_new(['commonName' => 'relay.example.com'], $key, $signing), null, $key, 1, $signing);
     $certificateFile = tempnam(sys_get_temp_dir(), 'relay-cert-');
     $keyFile = tempnam(sys_get_temp_dir(), 'relay-key-');
     openssl_x509_export_to_file($certificate, $certificateFile);
