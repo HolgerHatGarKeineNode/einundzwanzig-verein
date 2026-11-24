@@ -25,6 +25,7 @@ use App\Services\Election\ElectoralRoll;
 use App\Services\Election\TallyResult;
 use App\Services\Election\TallyRound;
 use App\Services\Election\VoteEvent;
+use App\Support\DisplayTime;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Flux\Flux;
@@ -40,9 +41,6 @@ use Livewire\Component;
 new class extends Component
 {
     private const STATEMENT_MAX = 2000;
-
-    /** Times are stored in UTC (app.timezone) and shown as members in Germany read them. */
-    public const DISPLAY_TIMEZONE = 'Europe/Berlin';
 
     /**
      * What the rounds looked like at the last render, so a poll that finds
@@ -653,7 +651,7 @@ new class extends Component
 
     public function displayTime(CarbonInterface $moment, string $format): string
     {
-        return $moment->copy()->timezone(self::DISPLAY_TIMEZONE)->format($format);
+        return DisplayTime::of($moment)->format($format);
     }
 
     /**

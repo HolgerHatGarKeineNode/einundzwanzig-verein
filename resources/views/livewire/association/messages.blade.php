@@ -3,6 +3,7 @@
 use App\Enums\DmDeliveryStatus;
 use App\Models\EinundzwanzigPleb;
 use App\Services\Dm\DirectMessageInbox;
+use App\Support\DisplayTime;
 use App\Support\NostrAuth;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -91,7 +92,7 @@ class extends Component
 
     public function receivedAt(string $iso): string
     {
-        return Carbon::parse($iso)->timezone('Europe/Berlin')->locale('de')->isoFormat('D. MMMM YYYY, HH:mm');
+        return DisplayTime::of(Carbon::parse($iso))->locale('de')->isoFormat('D. MMMM YYYY, HH:mm');
     }
 
     /**

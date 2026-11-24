@@ -22,6 +22,7 @@ use App\Services\Dm\ScheduleDirectMessage;
 use App\Services\Dm\StartDirectMessageRun;
 use App\Services\Nostr\NotificationKey;
 use App\Services\Nostr\RelayPublishStatus;
+use App\Support\DisplayTime;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Flux\Flux;
@@ -53,8 +54,6 @@ new
 class extends Component
 {
     private const TABS = ['history', 'compose', 'schedule'];
-
-    private const TIMEZONE = 'Europe/Berlin';
 
     private const HISTORY_LIMIT = 30;
 
@@ -459,7 +458,7 @@ class extends Component
             return;
         }
 
-        $sendAt = Carbon::createFromFormat('Y-m-d H:i', $this->newDate.' '.$this->newTime, self::TIMEZONE)->utc();
+        $sendAt = Carbon::createFromFormat('Y-m-d H:i', $this->newDate.' '.$this->newTime, DisplayTime::zone())->utc();
 
         if ($sendAt->isPast()) {
             $this->addError('newDate', __('Dieser Zeitpunkt ist schon vorbei. Wähle einen späteren.'));
@@ -864,14 +863,14 @@ class extends Component
 
     public function longDate(CarbonInterface $moment): string
     {
-        $local = $moment->copy()->timezone(self::TIMEZONE)->locale('de');
+        $local = DisplayTime::of($moment)->locale('de');
 
         return $local->isoFormat('dd, D. MMMM YYYY').', '.$local->format('H:i').' '.__('Uhr');
     }
 
     public function shortDate(CarbonInterface $moment): string
     {
-        $local = $moment->copy()->timezone(self::TIMEZONE)->locale('de');
+        $local = DisplayTime::of($moment)->locale('de');
 
         return $local->isoFormat('D. MMM YYYY').', '.$local->format('H:i');
     }
@@ -1030,7 +1029,7 @@ class extends Component
             $values[$variable] = match ($variable) {
                 'link' => $type === DmMessageType::FeeReminder ? route('association.profile') : route('association.election'),
                 'assembly_date' => $election?->meeting_at === null ? '' : $this->longDate($election->meeting_at),
-                'year' => (string) ($election?->fee_year ?? now(self::TIMEZONE)->year),
+                'year' => (string) ($election?->fee_year ?? now(DisplayTime::zone())->year),
                 'round' => (string) ($election?->rounds->first()?->title ?? ''),
                 default => '',
             };

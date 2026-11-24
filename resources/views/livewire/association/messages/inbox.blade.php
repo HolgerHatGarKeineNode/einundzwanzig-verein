@@ -351,7 +351,7 @@ class extends Component
                                         data-test="open-{{ $conversation['contact'] }}"></button>
                                 <span class="pointer-events-none relative flex w-full items-baseline justify-between gap-3">
                                     <span class="min-w-0 break-words text-base font-bold text-text-primary"><span class="pointer-events-auto relative"><x-nostr-profile :pubkey="$conversation['contact']" :name="$conversation['name']" /></span>@unless ($conversation['is_member'])<span class="ms-2 whitespace-nowrap text-sm font-normal text-text-tertiary" data-test="not-member">{{ __('kein Mitglied') }}</span>@endunless</span>
-                                    <span class="shrink-0 text-sm tabular-nums text-text-tertiary">{{ $conversation['last_at']->timezone('Europe/Berlin')->format('d.m. H:i') }}</span>
+                                    <span class="shrink-0 text-sm tabular-nums text-text-tertiary">{{ \App\Support\DisplayTime::of($conversation['last_at'])->format('d.m. H:i') }}</span>
                                 </span>
                                 <span class="pointer-events-none relative flex w-full items-start justify-between gap-3">
                                     <span class="min-w-0 break-words text-sm text-text-secondary">{{ $conversation['preview'] }}</span>
@@ -383,7 +383,7 @@ class extends Component
                                     @if ($message->direction === \App\Models\DmInboxMessage::OUT)
                                         {{ __('Vorstand, :name', ['name' => \App\Models\MemberProposal::authorNameOf($message->author)]) }} ·
                                     @endif
-                                    <span class="tabular-nums">{{ $message->sent_at->timezone('Europe/Berlin')->format('d.m.Y H:i') }}</span>
+                                    <span class="tabular-nums">{{ \App\Support\DisplayTime::of($message->sent_at)->format('d.m.Y H:i') }}</span>
                                     @if ($message->direction === \App\Models\DmInboxMessage::OUT)
                                         · <span @class(['text-danger' => in_array($message->status, [\App\Models\DmInboxMessage::STATUS_NO_INBOX, \App\Models\DmInboxMessage::STATUS_FAILED], true)])>{{ $this->statusLabel($message->status) }}</span>
                                     @endif

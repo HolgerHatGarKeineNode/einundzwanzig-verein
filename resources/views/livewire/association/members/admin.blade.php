@@ -641,7 +641,7 @@ new class extends Component
                             <li wire:key="member-delivery-{{ $delivery->id }}" class="py-3" data-test="member-delivery-{{ $delivery->id }}">
                                 <p class="flex flex-wrap items-baseline justify-between gap-x-4">
                                     <span class="text-base font-bold text-text-primary">{{ $delivery->run?->message?->type->label() }}</span>
-                                    <time datetime="{{ $delivery->created_at->toIso8601String() }}" class="text-sm text-text-tertiary">{{ $delivery->created_at->copy()->timezone('Europe/Berlin')->locale('de')->isoFormat('D. MMM YYYY, HH:mm') }}</time>
+                                    <time datetime="{{ $delivery->created_at->toIso8601String() }}" class="text-sm text-text-tertiary">{{ \App\Support\DisplayTime::of($delivery->created_at)->locale('de')->isoFormat('D. MMM YYYY, HH:mm') }}</time>
                                 </p>
                                 <p @class(['text-sm', 'text-danger' => $delivery->status->isFailure(), 'text-text-secondary' => ! $delivery->status->isFailure()])>
                                     {{ $delivery->status->label() }}@if ($delivery->seen_at){{ __(', im Portal geöffnet') }}@endif

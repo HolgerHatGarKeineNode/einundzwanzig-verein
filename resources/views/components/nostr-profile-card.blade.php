@@ -4,7 +4,7 @@
 --}}
 @php
     $checks = [
-        ['label' => __('Profil (kind 0) gefunden'), 'ok' => $hasMetadata, 'detail' => $hasMetadata ? ($updatedAt ? __('zuletzt geändert :date', ['date' => $updatedAt->timezone('Europe/Berlin')->format('d.m.Y')]) : null) : __('Weder Relays noch Portal kennen ein Profil.'), 'test' => 'metadata'],
+        ['label' => __('Profil (kind 0) gefunden'), 'ok' => $hasMetadata, 'detail' => $hasMetadata ? ($updatedAt ? __('zuletzt geändert :date', ['date' => \App\Support\DisplayTime::of($updatedAt)->format('d.m.Y')]) : null) : __('Weder Relays noch Portal kennen ein Profil.'), 'test' => 'metadata'],
         ['label' => __('Name gesetzt'), 'ok' => $name !== null, 'detail' => null, 'test' => 'name'],
         ['label' => __('Profilbild gesetzt'), 'ok' => $picture !== null, 'detail' => null, 'test' => 'picture'],
         ['label' => __('Lightning-Adresse'), 'ok' => $lightning !== null, 'detail' => $lightning, 'test' => 'lightning'],
