@@ -141,6 +141,11 @@
     }
 </script>
 @include('partials.wnj-nsec-guard')
-<script src="{{ asset('dist/window.nostr.min.js.js') }}"></script>
+{{-- defer: the 187 KB vendor file no longer holds up parsing. It still runs
+     after the inline guard above and before DOMContentLoaded, which is all
+     the guard relies on. It now runs AFTER app.js (a module script, deferred
+     as well and earlier in the document), so nothing in app.js may read
+     window.nostr while it loads; today only click handlers do. --}}
+<script src="{{ asset('dist/window.nostr.min.js.js') }}" defer></script>
 </body>
 </html>
