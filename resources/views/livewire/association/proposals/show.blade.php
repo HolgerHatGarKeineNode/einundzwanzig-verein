@@ -208,14 +208,14 @@ new class extends Component
 };
 ?>
 
-<div>
+<div class="mx-auto w-full max-w-5xl pb-32">
     @if (! $this->canView)
         <x-proposal-members-only />
     @else
         @php
             $proposal = $this->proposal;
         @endphp
-        <div class="w-full max-w-6xl mx-auto pb-20">
+        <div>
             <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <flux:button
                     :href="$proposal->isArchived() ? route('association.proposals.archive') : route('association.proposals.index')"
@@ -253,8 +253,8 @@ new class extends Component
                                 <flux:badge size="sm" color="red" icon="eye-slash">{{ __('Ausgeblendet') }}</flux:badge>
                             @endif
                         </div>
-                        <h1 class="text-2xl sm:text-3xl font-bold leading-tight text-text-primary break-words">{{ $proposal->title }}</h1>
-                        <p class="mt-3 text-base text-text-secondary break-words">
+                        <h1 class="hyphens-auto break-words text-3xl font-bold leading-tight text-text-primary sm:text-4xl">{{ $proposal->title }}</h1>
+                        <p class="mt-2 text-base text-text-secondary break-words">
                             {{ __('Eingereicht von :name am :date', ['name' => $proposal->authorName(), 'date' => $proposal->created_at->format('d.m.Y')]) }}
                         </p>
                     </header>
@@ -274,13 +274,13 @@ new class extends Component
                         </aside>
                     @endif
 
-                    <div class="prose max-w-[70ch] break-words [&_code]:break-all [&_a]:break-all" data-test="description">
+                    <div class="prose max-w-prose break-words [&_code]:break-all [&_a]:break-all" data-test="description">
                         {!! $proposal->safeDescription() !!}
                     </div>
                 </article>
 
                 <div class="min-w-0 space-y-6 lg:col-start-2 lg:row-span-2 lg:row-start-1">
-                    <section aria-labelledby="mood-heading" class="rounded-xl border border-border-subtle bg-bg-surface p-5 lg:sticky lg:top-6">
+                    <section aria-labelledby="mood-heading" class="rounded-xl border border-border-default bg-bg-surface p-5 lg:sticky lg:top-6">
                         <h2 id="mood-heading" class="text-lg font-semibold text-text-primary">{{ __('Stimmungsbild') }}</h2>
 
                         <x-proposal-mood :up="$proposal->up_votes_count" :down="$proposal->down_votes_count" size="lg" class="mt-4" />
@@ -320,7 +320,7 @@ new class extends Component
                             <p class="mt-3 text-sm text-text-primary">{{ __('Abstimmen und kommentieren können Ehrenmitglieder sowie Mitglieder, die den Beitrag für dieses oder das vergangene Jahr bezahlt haben.') }}</p>
                         @endif
 
-                        <p class="mt-4 border-t border-border-subtle pt-4 text-sm text-text-tertiary">
+                        <p class="mt-4 border-t border-border-default pt-4 text-sm text-text-tertiary">
                             {{ __('Angezeigt werden nur die beiden Zahlen, nie Namen. Wer wie gestimmt hat, ist in der Datenbank des Vereins gespeichert, weil du deine Stimme sonst nicht ändern oder zurücknehmen könntest. Das ist anders als bei einer Wahl.') }}
                         </p>
                     </section>
@@ -369,7 +369,7 @@ new class extends Component
                         <span class="font-normal text-text-tertiary">{{ $this->comments->count() }}</span>
                     </h2>
 
-                    <div class="mt-4 divide-y divide-border-subtle border-y border-border-subtle">
+                    <div class="mt-4 divide-y divide-border-default border-y border-border-default">
                         @forelse ($this->comments as $comment)
                             <article wire:key="comment-{{ $comment->id }}" class="py-4">
                                 <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -386,7 +386,7 @@ new class extends Component
                                     <p class="mt-2 text-sm italic text-text-secondary">{{ __('Dieser Kommentar wurde vom Vorstand ausgeblendet.') }}</p>
                                 @else
                                     <div @class([
-                                        'prose mt-2 max-w-[70ch] break-words [&_code]:break-all [&_a]:break-all',
+                                        'prose mt-2 max-w-prose break-words [&_code]:break-all [&_a]:break-all',
                                         'opacity-60' => $comment->is_hidden,
                                     ])>
                                         {!! $comment->safeBody() !!}

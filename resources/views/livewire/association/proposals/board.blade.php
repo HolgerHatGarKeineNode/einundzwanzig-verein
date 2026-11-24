@@ -83,9 +83,9 @@ new class extends Component
 };
 ?>
 
-<div>
+<div class="mx-auto w-full max-w-5xl pb-32">
     @if (! $isAllowed)
-        <div class="w-full max-w-2xl mx-auto">
+        <div class="max-w-2xl">
             <flux:callout variant="warning" icon="exclamation-circle">
                 <flux:callout.heading>{{ __('Diese Ansicht ist dem Vorstand vorbehalten') }}</flux:callout.heading>
                 <flux:callout.text>{{ __('Die Vorschläge selbst findest du in der Liste.') }}</flux:callout.text>
@@ -95,17 +95,17 @@ new class extends Component
             </flux:callout>
         </div>
     @else
-        <div class="w-full max-w-5xl mx-auto pb-20">
+        <div>
             <flux:button :href="route('association.proposals.index')" variant="ghost" icon="arrow-left" inset="left" class="mb-4 min-h-11" wire:navigate>
                 {{ __('Vorschläge') }}
             </flux:button>
 
-            <div class="mb-8 max-w-2xl">
-                <h1 class="text-2xl sm:text-3xl font-bold leading-tight text-text-primary">{{ __('Vorschläge für die Sitzung') }}</h1>
-                <p class="mt-2 text-base text-text-secondary">
+            <x-page-header>
+                <x-slot:title>{{ __('Vorschläge für die Sitzung') }}</x-slot:title>
+                <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                     {{ __('Oben steht, was vorgemerkt ist, in der Reihenfolge der Vormerkung. Darunter die offenen Vorschläge mit der meisten Zustimmung. Eine Notiz wird mit dem nächsten Zustand gespeichert oder einzeln mit „Notiz speichern“.') }}
                 </p>
-            </div>
+            </x-page-header>
 
             <div class="space-y-10">
                 @foreach ([
@@ -122,7 +122,7 @@ new class extends Component
                             <p class="rounded-xl border border-dashed border-border-default px-5 py-6 text-base text-text-secondary">{{ $empty }}</p>
                         @else
                             {{-- Ordered on purpose: agenda order above, rank by support below. --}}
-                            <ol class="divide-y divide-border-subtle rounded-xl border border-border-subtle bg-bg-surface">
+                            <ol class="divide-y divide-border-default rounded-xl border border-border-default bg-bg-surface">
                                 @foreach ($proposals as $proposal)
                                     <li wire:key="{{ $section }}-{{ $proposal->id }}"
                                         class="relative grid gap-4 p-4 sm:grid-cols-[2rem_minmax(0,1fr)] sm:p-5 lg:grid-cols-[2rem_minmax(0,1fr)_20rem] lg:gap-6">
