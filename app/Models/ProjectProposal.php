@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\ProjectProposalStatus;
+use App\Support\Board;
 use App\Support\MarkdownRenderer;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -117,10 +118,11 @@ class ProjectProposal extends Model implements HasMedia
         // bei langlebigen Workern (Octane, Queue) den Request: wird sie einmal
         // gefüllt, bevor ein Vorstandsmitglied als Pleb-Zeile existiert, zählen
         // dessen Stimmen bis zum Worker-Neustart als null — ausgerechnet bei der
-        // Abstimmung über Fördergelder. Die Abfrage ist eine indizierte
-        // whereIn-Suche über wenige npubs; der Preis ist die Korrektheit wert.
+        // Abstimmung über Fördergelder. The lookup matches the board's hex
+        // pubkeys (Board::pubkeys(), decoded from the configured npubs) against
+        // the uniquely indexed pubkey column; npub has no index.
         return EinundzwanzigPleb::query()
-            ->whereIn('npub', config('einundzwanzig.config.current_board', []))
+            ->whereIn('pubkey', Board::pubkeys())
             ->pluck('id')
             ->all();
     }

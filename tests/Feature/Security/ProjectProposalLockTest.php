@@ -5,6 +5,7 @@ use App\Models\ProjectProposal;
 use App\Models\Vote;
 use App\Support\NostrAuth;
 use Livewire\Livewire;
+use swentel\nostr\Key\Key;
 
 /**
  * S1 of the page optimisation plan: once the board has started deciding on a
@@ -18,7 +19,7 @@ use Livewire\Livewire;
  */
 beforeEach(function () {
     collect(config('einundzwanzig.config.current_board'))->each(
-        fn (string $npub) => EinundzwanzigPleb::factory()->create(['npub' => $npub])
+        fn (string $npub) => EinundzwanzigPleb::factory()->create(['npub' => $npub, 'pubkey' => (new Key)->convertToHex($npub)])
     );
 });
 
