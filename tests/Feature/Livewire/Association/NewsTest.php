@@ -6,6 +6,8 @@ use App\Models\EinundzwanzigPleb;
 use App\Models\Notification;
 use App\Support\NostrAuth;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 
@@ -161,7 +163,7 @@ it('does not load news for unauthorized visitors', function () {
 
     Livewire::test('association.news')
         ->assertSet('isAllowed', false)
-        ->assertSet('news', []);
+        ->assertSet('news', fn (Collection $news): bool => $news->isEmpty());
 });
 
 it('displays news list', function () {
@@ -275,4 +277,31 @@ it('displays create form for board members', function () {
     Livewire::test('association.news')
         ->assertSee('News anlegen')
         ->assertSee('Hinzufügen');
+});
+
+it('renders the news list with its PDFs in a fixed number of queries, however many posts there are', function () {
+    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
+    NostrAuth::login($pleb->pubkey);
+    $addPosts = function (int $count): void {
+        Notification::factory()->count($count)->create()->each(function (Notification $post): void {
+            $file = UploadedFile::fake()->create('rundbrief.pdf', 10, 'application/pdf');
+            file_put_contents($file->getPathname(), '%PDF-1.4 fake pdf content for testing');
+            $post->addMedia($file)->toMediaCollection('pdf');
+        });
+    };
+    $queriesToRender = function (): int {
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        Livewire::test('association.news')->assertSee('PDF öffnen');
+        $count = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        return $count;
+    };
+
+    $addPosts(2);
+    $fewer = $queriesToRender();
+    $addPosts(5);
+
+    expect($queriesToRender())->toBe($fewer);
 });

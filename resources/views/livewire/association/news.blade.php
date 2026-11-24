@@ -21,9 +21,6 @@ class extends Component
     use GuardsActingPleb;
     use WithFileUploads;
 
-    #[Locked]
-    public Collection|array $news = [];
-
     #[Url(as: 'kategorie')]
     public ?int $selectedCategory = null;
 
@@ -61,10 +58,26 @@ class extends Component
         } elseif ($this->currentPleb->hasPaidMembership()) {
             $this->isAllowed = true;
         }
+    }
 
-        if ($this->isAllowed) {
-            $this->loadNews();
+    /**
+     * Every post, newest first, with its author and its PDF loaded up front:
+     * computed, so the posts stay out of the snapshot, and no card fetches
+     * its media on its own.
+     *
+     * @return Collection<int, Notification>
+     */
+    #[Computed]
+    public function news(): Collection
+    {
+        if (! $this->isAllowed) {
+            return collect();
         }
+
+        return Notification::query()
+            ->with(['einundzwanzigPleb.profile', 'media'])
+            ->latest()
+            ->get();
     }
 
     #[Computed]
@@ -87,14 +100,6 @@ class extends Component
     public function clearFilter(): void
     {
         $this->selectedCategory = null;
-    }
-
-    private function loadNews(): void
-    {
-        $this->news = Notification::query()
-            ->with(['einundzwanzigPleb.profile'])
-            ->latest()
-            ->get();
     }
 
     public function save(): void
@@ -123,7 +128,7 @@ class extends Component
         }
 
         $this->reset(['form', 'file']);
-        $this->loadNews();
+        unset($this->news);
     }
 
     public function confirmDelete(int $id): void
@@ -139,7 +144,7 @@ class extends Component
 
         $news = Notification::query()->findOrFail($this->confirmDeleteId);
         $news->delete();
-        $this->loadNews();
+        unset($this->news);
     }
 
     public function removeFile(): void
