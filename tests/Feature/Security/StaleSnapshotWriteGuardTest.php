@@ -44,7 +44,7 @@ it('refuses a vote written for the rendered board member after the session switc
     $page = Livewire::test('association.project-support.show', ['projectProposal' => $project]);
 
     NostrAuth::login($outsider->pubkey);
-    $page->call('handleNotApprove')->assertForbidden();
+    $page->call('castVote', false)->assertForbidden();
 
     expect(Vote::query()->where('einundzwanzig_pleb_id', $boardMember->id)->value('value'))->toBeTrue()
         ->and(Vote::query()->where('einundzwanzig_pleb_id', $outsider->id)->exists())->toBeFalse();
@@ -59,7 +59,7 @@ it('refuses an approval written for the rendered member after the session switch
     $page = Livewire::test('association.project-support.show', ['projectProposal' => $project]);
 
     NostrAuth::login($outsider->pubkey);
-    $page->call('handleApprove')->assertForbidden();
+    $page->call('castVote', true)->assertForbidden();
 
     expect(Vote::query()->where('project_proposal_id', $project->id)->exists())->toBeFalse();
 });

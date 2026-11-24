@@ -63,19 +63,7 @@ test('voting actions are rate limited after 10 attempts', function () {
     }
 
     Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('handleApprove')
-        ->assertStatus(429);
-});
-
-test('nostr login is rate limited after 10 attempts', function () {
-    for ($i = 0; $i < 10; $i++) {
-        RateLimiter::attempt('nostr-login:127.0.0.1', 10, function () {});
-    }
-
-    // Rate limit is checked before signature verification, so an empty
-    // payload is enough to trigger the 429.
-    Livewire::test('association.project-support.index')
-        ->call('handleNostrLogin', [])
+        ->call('castVote', true)
         ->assertStatus(429);
 });
 
@@ -122,7 +110,7 @@ test('voting works within rate limit', function () {
     NostrAuth::login($pleb->pubkey);
 
     Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('handleApprove')
+        ->call('castVote', true)
         ->assertHasNoErrors();
 
     $vote = Vote::query()

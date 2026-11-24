@@ -1,7 +1,6 @@
 <?php
 
 use App\Enums\ProjectProposalStatus;
-use App\Livewire\Traits\WithNostrAuth;
 use App\Livewire\Traits\WithViewer;
 use App\Models\EinundzwanzigPleb;
 use App\Models\ProjectProposal;
@@ -20,11 +19,20 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
 new class extends Component
 {
-    use WithNostrAuth;
     use WithViewer;
 
     #[Locked]
     public ProjectProposal $projectProposal;
+
+    /**
+     * The member the page was rendered for. Only what the page shows reads
+     * it; a write asks the session again (`actingPleb()`).
+     */
+    #[Locked]
+    public ?EinundzwanzigPleb $currentPleb = null;
+
+    #[Locked]
+    public ?string $currentPubkey = null;
 
     #[Locked]
     public bool $ownVoteExists = false;
@@ -44,8 +52,7 @@ new class extends Component
         $this->payoutSats = $projectProposal->sats_paid ?: $projectProposal->approvedSats();
         if (NostrAuth::check()) {
             $this->currentPubkey = NostrAuth::pubkey();
-            $this->isAllowed = true;
-            $this->mountWithNostrAuth();
+            $this->currentPleb = $this->viewer();
             // `currentPleb` ist nullable — eine angemeldete Sitzung ohne
             // Mitgliedseintrag ist ein gültiger Zustand (der Eintrag kann nach
             // dem Login entfernt worden sein). `ownVote` unten prüft das bereits;
@@ -122,7 +129,7 @@ new class extends Component
     #[Computed]
     public function isVoter(): bool
     {
-        return NostrAuth::user()?->getPleb() !== null;
+        return $this->viewer() !== null;
     }
 
     /**
@@ -132,24 +139,18 @@ new class extends Component
     #[Computed]
     public function voteCountsTowardsMajority(): bool
     {
-        return (bool) NostrAuth::user()?->getPleb()?->isBoardMember();
+        return $this->viewerIsBoard();
     }
 
     /**
      * Darf jetzt eine Stimme abgegeben werden? Dieselbe Prüfung, die
-     * handleApprove() serverseitig macht — damit niemand einen Knopf sieht,
+     * castVote() serverseitig macht — damit niemand einen Knopf sieht,
      * der für ihn in einer 403 endet.
      */
     #[Computed]
     public function canVote(): bool
     {
-        $nostrUser = NostrAuth::user();
-
-        if (! $nostrUser || ! $nostrUser->getPleb()) {
-            return false;
-        }
-
-        return Gate::forUser($nostrUser)->allows('create', [Vote::class, $this->projectProposal]);
+        return $this->viewer() !== null && $this->viewerCan('create', [Vote::class, $this->projectProposal]);
     }
 
     /**
@@ -363,15 +364,19 @@ new class extends Component
         unset($this->votes, $this->boardVotes, $this->otherVotes, $this->status, $this->ownVote);
     }
 
-    public function handleApprove(): void
+    /**
+     * The viewer's vote on the proposal, for or against. A guest's call does
+     * nothing; anyone else needs the vote policy and must still be the member
+     * the page was rendered for. An approval freezes the approved amount once
+     * the board majority is reached.
+     */
+    public function castVote(bool $approve): void
     {
-        $nostrUser = NostrAuth::user();
-
-        if (! $nostrUser || ! $nostrUser->getPleb()) {
+        if ($this->viewer() === null) {
             return;
         }
 
-        Gate::forUser($nostrUser)->authorize('create', [Vote::class, $this->projectProposal]);
+        $this->authorizeViewer('create', [Vote::class, $this->projectProposal]);
 
         $voter = $this->actingPleb();
 
@@ -389,43 +394,13 @@ new class extends Component
             'project_proposal_id' => $this->projectProposal->id,
             'einundzwanzig_pleb_id' => $voter->id,
         ], [
-            'value' => true,
+            'value' => $approve,
         ]);
-        $this->projectProposal->freezeApprovedSatsOnAcceptance();
-        $this->ownVoteExists = true;
-        $this->forgetVoteCache();
-        Flux::modals()->close();
-        Flux::toast('Deine Stimme wurde gezählt.');
-    }
 
-    public function handleNotApprove(): void
-    {
-        $nostrUser = NostrAuth::user();
-
-        if (! $nostrUser || ! $nostrUser->getPleb()) {
-            return;
+        if ($approve) {
+            $this->projectProposal->freezeApprovedSatsOnAcceptance();
         }
 
-        Gate::forUser($nostrUser)->authorize('create', [Vote::class, $this->projectProposal]);
-
-        $voter = $this->actingPleb();
-
-        $executed = RateLimiter::attempt(
-            'voting:'.request()->ip(),
-            10,
-            function () {},
-        );
-
-        if (! $executed) {
-            abort(429, 'Too many voting attempts.');
-        }
-
-        Vote::query()->updateOrCreate([
-            'project_proposal_id' => $this->projectProposal->id,
-            'einundzwanzig_pleb_id' => $voter->id,
-        ], [
-            'value' => false,
-        ]);
         $this->ownVoteExists = true;
         $this->forgetVoteCache();
         Flux::modals()->close();
@@ -1170,11 +1145,9 @@ new class extends Component
                                  `location`-Parameter, deshalb hier ein eigener Wert.
                                  `nostrLoginInProgress` ist Zustand der EINEN
                                  Alpine-Insel, also zeigt nur die geklickte Instanz ihr
-                                 Overlay. Und dass das `nostrLoggedIn`-Ereignis
-                                 mehrere Livewire-Hoerer erreicht, ist bereits heute so
-                                 (diese Seite hoert ueber WithNostrAuth mit);
-                                 NostrAuth::loginWithSignedEvent ist dafuer
-                                 ausdruecklich idempotent.
+                                 Overlay. The `nostrLoggedIn` event reaches both
+                                 auth-button instances; only the one with the
+                                 matching `location` answers, and it reloads the page.
 
                                  `[&_button]`: Die Breite laesst sich nicht als Klasse
                                  durchreichen, die Komponente nimmt nur `location`.
@@ -1399,7 +1372,7 @@ new class extends Component
                         <flux:modal.close>
                             <flux:button variant="ghost">Abbrechen</flux:button>
                         </flux:modal.close>
-                        <flux:button wire:click="handleApprove" variant="primary" icon="hand-thumb-up">
+                        <flux:button wire:click="castVote(true)" variant="primary" icon="hand-thumb-up">
                             Zustimmen
                         </flux:button>
                     </div>
@@ -1420,7 +1393,7 @@ new class extends Component
                         <flux:modal.close>
                             <flux:button variant="ghost">Abbrechen</flux:button>
                         </flux:modal.close>
-                        <flux:button wire:click="handleNotApprove" variant="danger" icon="hand-thumb-down">
+                        <flux:button wire:click="castVote(false)" variant="danger" icon="hand-thumb-down">
                             Ablehnen
                         </flux:button>
                     </div>

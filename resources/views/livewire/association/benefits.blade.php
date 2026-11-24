@@ -37,7 +37,6 @@ new class extends Component
     public array $nip05VerifiedHandles = [];
 
     protected $listeners = [
-        'nostrLoggedIn' => 'handleNostrLoggedIn',
         'nostrLoggedOut' => 'handleNostrLoggedOut',
     ];
 
@@ -109,12 +108,6 @@ new class extends Component
 
 
 
-
-    public function handleNostrLoggedIn($signedEvent = null): void
-    {
-        NostrAuth::loginWithSignedEvent($signedEvent);
-        $this->mount();
-    }
 
     public function handleNostrLoggedOut(): void
     {

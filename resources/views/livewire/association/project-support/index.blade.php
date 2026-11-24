@@ -1,7 +1,8 @@
 <?php
 
 use App\Enums\ProjectProposalStatus;
-use App\Livewire\Traits\WithNostrAuth;
+use App\Livewire\Traits\WithViewer;
+use App\Models\EinundzwanzigPleb;
 use App\Models\ProjectProposal;
 use App\Support\NostrAuth;
 use Flux\Flux;
@@ -16,8 +17,8 @@ use Livewire\WithPagination;
 
 new class extends Component
 {
-    use WithNostrAuth;
     use WithPagination;
+    use WithViewer;
 
     /**
      * Erlaubte Sortierungen, abgebildet auf Spalte und Richtung. Die Whitelist
@@ -61,8 +62,6 @@ new class extends Component
 
     public function mount(): void
     {
-        $this->mountWithNostrAuth();
-
         // Der Filter kommt auch aus der URL. Wer nicht im Vorstand ist, wird
         // hier zurückgesetzt — sonst genügte ein Link, um die Query zu fahren.
         if ($this->activeFilter === self::FILTER_AWAITING_OWN_VOTE && ! $this->isBoardMember) {
@@ -76,7 +75,16 @@ new class extends Component
     #[Computed]
     public function isBoardMember(): bool
     {
-        return (bool) $this->currentPleb?->isBoardMember();
+        return $this->viewerIsBoard();
+    }
+
+    /**
+     * The member looking at the list, asked of the session on every request.
+     */
+    #[Computed]
+    public function currentPleb(): ?EinundzwanzigPleb
+    {
+        return $this->viewer();
     }
 
     public function updatedSearch(): void
@@ -171,7 +179,7 @@ new class extends Component
         // Auch der reine Dialog-Öffner wird geprüft: die Methode ist als
         // Livewire-Endpunkt direkt aufrufbar und würde sonst für beliebige IDs
         // verraten, ob ein Antrag existiert.
-        Gate::forUser(NostrAuth::user())->authorize('delete', $project);
+        $this->authorizeViewer('delete', $project);
 
         $this->projectToDelete = $project;
         Flux::modal('delete-project')->show();
@@ -214,7 +222,7 @@ new class extends Component
     public function delete(): void
     {
         if ($this->projectToDelete) {
-            Gate::forUser(NostrAuth::user())->authorize('delete', $this->projectToDelete);
+            $this->authorizeViewer('delete', $this->projectToDelete);
 
             $this->projectToDelete->delete();
             Flux::toast('Projektunterstützung gelöscht.');
@@ -383,7 +391,7 @@ new class extends Component
                 @foreach($this->projects as $project)
                     <x-project-card
                         :project="$project"
-                        :currentPleb="$currentPleb"
+                        :currentPleb="$this->currentPleb"
                         :eager="$loop->index < 3"
                         wire:key="project-{{ $project->id }}"
                     />

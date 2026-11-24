@@ -73,7 +73,6 @@ new class extends Component
 
     protected $listeners = [
         'nostrLoggedOut' => 'handleNostrLoggedOut',
-        'nostrLoggedIn' => 'handleNostrLoggedIn',
     ];
 
     public function mount(): void
@@ -82,14 +81,6 @@ new class extends Component
             $this->currentPubkey = NostrAuth::pubkey();
             $this->currentPleb = NostrAuth::user()?->getPleb();
         }
-
-        $this->refreshAccess();
-    }
-
-    public function handleNostrLoggedIn($signedEvent = null): void
-    {
-        $this->currentPubkey = NostrAuth::loginWithSignedEvent($signedEvent);
-        $this->currentPleb = NostrAuth::user()?->getPleb();
 
         $this->refreshAccess();
     }

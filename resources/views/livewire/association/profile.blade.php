@@ -99,7 +99,6 @@ new class extends Component
     public ?string $from = null;
 
     protected $listeners = [
-        'nostrLoggedIn' => 'handleNostrLoggedIn',
         'nostrLoggedOut' => 'handleNostrLoggedOut',
     ];
 
@@ -171,46 +170,6 @@ new class extends Component
     public function updatedProfileFormNip05Handle(): void
     {
         $this->profileForm->nip05Handle = strtolower($this->profileForm->nip05Handle);
-    }
-
-    public function handleNostrLoggedIn($signedEvent = null): void
-    {
-        $pubkey = NostrAuth::loginWithSignedEvent($signedEvent);
-
-        $this->currentPubkey = $pubkey;
-        $this->currentPleb = EinundzwanzigPleb::query()
-            ->with([
-                'paymentEvents' => fn ($query) => $query->where('year', date('Y')),
-                'profile',
-            ])
-            ->where('pubkey', $pubkey)->first();
-
-        if (! $this->currentPleb) {
-            return;
-        }
-
-        $this->profileForm->setPleb($this->currentPleb);
-        $this->form->setPleb($this->currentPleb);
-        $this->no = $this->currentPleb->no_email;
-        $this->showEmail = ! $this->no;
-
-        if ($this->currentPleb->nip05_handle) {
-            $this->nip05VerifiedHandles = $this->getNip05HandlesForPubkey($this->currentPubkey);
-
-            if (count($this->nip05VerifiedHandles) > 0) {
-                $this->nip05Verified = true;
-                $this->nip05VerifiedHandle = $this->nip05VerifiedHandles[0];
-
-                if (! in_array($this->profileForm->nip05Handle, $this->nip05VerifiedHandles, true)) {
-                    $this->nip05HandleMismatch = true;
-                }
-            }
-        }
-
-        $this->amountToPay = $this->membership()->fee();
-        $this->resolveCurrentPaymentEvent();
-        $this->loadFeeEventContent();
-        $this->loadPaymentStatus();
     }
 
     /**

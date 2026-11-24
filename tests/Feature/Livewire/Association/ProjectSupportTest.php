@@ -229,21 +229,19 @@ it('reflects an authenticated nostr session on mount', function () {
 
     NostrAuth::login($pleb->pubkey);
 
-    Livewire::test('association.project-support.index')
-        ->assertSet('currentPubkey', $pleb->pubkey)
-        ->assertSet('isAllowed', true);
+    expect(Livewire::test('association.project-support.index')->instance()->currentPleb?->is($pleb))->toBeTrue();
 });
 
-it('clears state on nostr logout', function () {
+it('asks the session again after a logout instead of remembering the member', function () {
     $pleb = EinundzwanzigPleb::factory()->create();
 
     NostrAuth::login($pleb->pubkey);
+    $page = Livewire::test('association.project-support.index');
 
-    Livewire::test('association.project-support.index')
-        ->assertSet('currentPubkey', $pleb->pubkey)
-        ->call('handleNostrLogout')
-        ->assertSet('currentPubkey', null)
-        ->assertSet('isAllowed', false);
+    NostrAuth::logout();
+    $page->call('$refresh');
+
+    expect($page->instance()->currentPleb)->toBeNull();
 });
 
 it('denies access to create when not authenticated', function () {
@@ -375,7 +373,8 @@ it('denies access to show when not authenticated', function () {
     $project = ProjectProposal::factory()->create();
 
     Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('isAllowed', false);
+        ->assertSet('currentPubkey', null)
+        ->assertSet('currentPleb', null);
 });
 
 it('grants access to show when authenticated', function () {
@@ -385,7 +384,7 @@ it('grants access to show when authenticated', function () {
     NostrAuth::login($pleb->pubkey);
 
     Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('isAllowed', true);
+        ->assertSet('currentPubkey', $pleb->pubkey);
 });
 
 it('displays project details', function () {
@@ -488,7 +487,7 @@ it('can handle approve vote', function () {
     NostrAuth::login($pleb->pubkey);
 
     Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('handleApprove')
+        ->call('castVote', true)
         ->assertHasNoErrors();
 
     $vote = Vote::query()
@@ -507,7 +506,7 @@ it('can handle not approve vote', function () {
     NostrAuth::login($pleb->pubkey);
 
     Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('handleNotApprove')
+        ->call('castVote', false)
         ->assertHasNoErrors();
 
     $vote = Vote::query()
@@ -519,21 +518,21 @@ it('can handle not approve vote', function () {
         ->and($vote->value)->toBeFalse();
 });
 
-it('does not throw error when unauthenticated user calls handleApprove', function () {
+it('ignores an approval from a guest', function () {
     $project = ProjectProposal::factory()->create();
 
     Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('handleApprove')
+        ->call('castVote', true)
         ->assertHasNoErrors();
 
     expect(Vote::where('project_proposal_id', $project->id)->exists())->toBeFalse();
 });
 
-it('does not throw error when unauthenticated user calls handleNotApprove', function () {
+it('ignores a rejection from a guest', function () {
     $project = ProjectProposal::factory()->create();
 
     Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('handleNotApprove')
+        ->call('castVote', false)
         ->assertHasNoErrors();
 
     expect(Vote::where('project_proposal_id', $project->id)->exists())->toBeFalse();
@@ -637,7 +636,7 @@ it('lets a non-board member vote without affecting the majority', function () {
     $component = Livewire::test('association.project-support.show', ['projectProposal' => $project])
         ->assertSet('voteCountsTowardsMajority', false)
         ->assertSee('Zählt zum Stimmungsbild der Mitglieder, nicht zur Mehrheit.')
-        ->call('handleApprove')
+        ->call('castVote', true)
         ->assertHasNoErrors();
 
     expect(Vote::where('project_proposal_id', $project->id)->count())->toBe(1);

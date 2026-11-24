@@ -37,7 +37,7 @@ function acceptThroughBoard(ProjectProposal $project): void
             NostrAuth::login($board->pubkey);
 
             Livewire::test('association.project-support.show', ['projectProposal' => $project])
-                ->call('handleApprove')
+                ->call('castVote', true)
                 ->assertHasNoErrors();
         });
 }
