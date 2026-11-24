@@ -41,34 +41,24 @@ class ProjectProposalPolicy
 
     /**
      * Determine whether the user can update the project proposal.
-     * Allowed for: the creator OR board members.
+     * Allowed for: board members, or the creator as long as the board has not
+     * voted and nothing was paid out — otherwise the creator could change the
+     * amount the board already decided on.
      */
     public function update(NostrUser $user, ProjectProposal $projectProposal): bool
     {
-        $pleb = $user->getPleb();
-
-        if (! $pleb) {
-            return false;
-        }
-
-        return $pleb->id === $projectProposal->einundzwanzig_pleb_id
-            || $pleb->isBoardMember();
+        return $this->isBoardOrUntouchedByBoardOwner($user, $projectProposal);
     }
 
     /**
      * Determine whether the user can delete the project proposal.
-     * Allowed for: the creator OR board members.
+     * Allowed for: board members, or the creator as long as the board has not
+     * voted and nothing was paid out — deleting cascades to the votes and
+     * would wipe the board's decision.
      */
     public function delete(NostrUser $user, ProjectProposal $projectProposal): bool
     {
-        $pleb = $user->getPleb();
-
-        if (! $pleb) {
-            return false;
-        }
-
-        return $pleb->id === $projectProposal->einundzwanzig_pleb_id
-            || $pleb->isBoardMember();
+        return $this->isBoardOrUntouchedByBoardOwner($user, $projectProposal);
     }
 
     /**
@@ -205,5 +195,21 @@ class ProjectProposalPolicy
         }
 
         return $pleb->isBoardMember();
+    }
+
+    private function isBoardOrUntouchedByBoardOwner(NostrUser $user, ProjectProposal $projectProposal): bool
+    {
+        $pleb = $user->getPleb();
+
+        if (! $pleb) {
+            return false;
+        }
+
+        if ($pleb->isBoardMember()) {
+            return true;
+        }
+
+        return $pleb->id === $projectProposal->einundzwanzig_pleb_id
+            && $projectProposal->isUntouchedByBoard();
     }
 }

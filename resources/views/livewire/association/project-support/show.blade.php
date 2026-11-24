@@ -12,12 +12,13 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
-use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
-new class extends Component {
+new class extends Component
+{
     use WithNostrAuth;
 
     #[Locked]
@@ -38,7 +39,7 @@ new class extends Component {
     public function mount(ProjectProposal $projectProposal): void
     {
         $this->projectProposal = $projectProposal;
-        $this->payoutSats = $projectProposal->sats_paid ?: $projectProposal->support_in_sats;
+        $this->payoutSats = $projectProposal->sats_paid ?: $projectProposal->approvedSats();
         if (NostrAuth::check()) {
             $this->currentPubkey = NostrAuth::pubkey();
             $this->isAllowed = true;
@@ -319,10 +320,15 @@ new class extends Component {
         // abgelehnten Antrag auszahlen.
         Gate::forUser(NostrAuth::user())->authorize('payout', $this->projectProposal);
 
+        // Capped at the amount the board approved: a later edit of the
+        // requested amount must not raise what is paid out.
+        $approvedSats = $this->projectProposal->approvedSats();
+
         $this->validate([
-            'payoutSats' => 'required|integer|min:1',
+            'payoutSats' => 'required|integer|min:1|max:'.$approvedSats,
         ], [
             'payoutSats.min' => 'Der ausgezahlte Betrag muss größer als 0 sein.',
+            'payoutSats.max' => 'Der ausgezahlte Betrag darf den beschlossenen Betrag von '.number_format($approvedSats, 0, ',', '.').' Sats nicht übersteigen.',
         ]);
 
         // Direkte Zuweisung statt update(): sats_paid ist bewusst NICHT in $fillable,
@@ -344,7 +350,7 @@ new class extends Component {
 
         $this->projectProposal->sats_paid = 0;
         $this->projectProposal->save();
-        $this->payoutSats = $this->projectProposal->support_in_sats;
+        $this->payoutSats = $this->projectProposal->approvedSats();
 
         $this->forgetVoteCache();
         Flux::toast('Auszahlung zurückgenommen.');
@@ -381,6 +387,7 @@ new class extends Component {
         ], [
             'value' => true,
         ]);
+        $this->projectProposal->freezeApprovedSatsOnAcceptance();
         $this->ownVoteExists = true;
         $this->forgetVoteCache();
         Flux::modals()->close();

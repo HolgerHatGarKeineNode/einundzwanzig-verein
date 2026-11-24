@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Cookie;
+use Illuminate\Support\Facades\DB;
 use Spatie\Image\Enums\Fit;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
@@ -94,6 +95,7 @@ class ProjectProposal extends Model implements HasMedia
         'einundzwanzig_pleb_id' => 'integer',
         'accepted' => 'boolean',
         'sats_paid' => 'integer',
+        'approved_sats' => 'integer',
         'contact_via_nostr_dm' => 'boolean',
         'nostr_group_created_at' => 'datetime',
     ];
@@ -266,6 +268,54 @@ class ProjectProposal extends Model implements HasMedia
         }
 
         return ProjectProposalStatus::InVoting;
+    }
+
+    /**
+     * Whether the board has not yet touched the proposal: no board vote cast
+     * and nothing paid out. Only then may the submitter still change or
+     * withdraw what the board is asked to decide on.
+     */
+    public function isUntouchedByBoard(): bool
+    {
+        return ! ($this->sats_paid > 0)
+            && $this->boardApprovals() === 0
+            && $this->boardRejections() === 0;
+    }
+
+    /**
+     * The amount the board approved, and therefore the most that may be paid
+     * out. Proposals decided before the amount was frozen carry null and fall
+     * back to the requested amount.
+     */
+    public function approvedSats(): int
+    {
+        return (int) ($this->approved_sats ?? $this->support_in_sats);
+    }
+
+    /**
+     * Freezes the requested amount as the approved one once the board's
+     * majority has accepted. Called after a board vote is stored.
+     *
+     * Reads the status from a fresh copy, not from this instance, whose loaded
+     * votes or aggregates may predate the vote that just decided. The write is
+     * a guarded update so that two concurrent deciding votes freeze once, and
+     * it takes `support_in_sats` from the row itself, not from memory.
+     */
+    public function freezeApprovedSatsOnAcceptance(): void
+    {
+        $fresh = static::query()->withVoteAggregates()->find($this->getKey());
+
+        if ($fresh === null || $fresh->approved_sats !== null || $fresh->status() !== ProjectProposalStatus::Accepted) {
+            return;
+        }
+
+        static::query()
+            ->whereKey($this->getKey())
+            ->whereNull('approved_sats')
+            ->update(['approved_sats' => DB::raw('support_in_sats')]);
+
+        $this->approved_sats = (int) static::query()->whereKey($this->getKey())->value('approved_sats');
+        $this->syncOriginalAttribute('approved_sats');
     }
 
     public function boardApprovals(): int
