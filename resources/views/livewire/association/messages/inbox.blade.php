@@ -234,9 +234,7 @@ class extends Component
             return null;
         }
 
-        if (! array_key_exists($contact, $this->members)) {
-            $this->members[$contact] = EinundzwanzigPleb::query()->notErased()->with(['profile', 'dmRelays'])->where('pubkey', $contact)->first();
-        }
+        $this->loadContacts([$contact]);
 
         return $this->members[$contact];
     }
@@ -254,11 +252,8 @@ class extends Component
             return MemberProposal::authorNameOf($member);
         }
 
-        if (! array_key_exists($contact, $this->profiles)) {
-            $this->profiles[$contact] = Profile::query()->where('pubkey', $contact)->first();
-        }
-
-        $profile = $this->profiles[$contact];
+        // Loaded with the member lookup above: a contact who is no member has an entry here.
+        $profile = $this->profiles[$contact] ?? null;
 
         if (filled($profile?->name) || filled($profile?->display_name)) {
             return (string) ($profile->name ?: $profile->display_name);
