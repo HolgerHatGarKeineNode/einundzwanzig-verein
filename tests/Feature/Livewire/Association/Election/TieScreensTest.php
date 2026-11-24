@@ -19,6 +19,7 @@ use App\Services\Election\ElectionAuditLog;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\OpenRound;
 use App\Services\Election\RecordCastingVote;
+use App\Services\Election\RefusalText;
 use App\Services\Election\RoundManifest;
 use App\Services\Election\RoundReport;
 use App\Services\Election\TallyResult;
@@ -509,14 +510,13 @@ it('names the unreadable count when the run-off of such a round is refused', fun
 it('names the earlier round with an unreadable count when opening is refused for its candidate', function () {
     fakeUnreadableCountServices();
     [, , $round, $ids] = tiedEvening();
-    $page = tieAdmin();
     corruptStoredVotes($round);
     $member = (int) ElectionCandidate::query()->findOrFail($ids['alice'])->einundzwanzig_pleb_id;
 
-    $text = (new ReflectionMethod($page->instance(), 'refusalText'))->invoke($page->instance(), 'open', new ElectionCandidateBlockedException(
+    $text = app(RefusalText::class)->of('open', new ElectionCandidateBlockedException(
         'A candidate of this round stands in an earlier round of the election whose stored votes cannot be counted; check it with election:verify.',
         $member,
-    ));
+    ), $round->election);
 
     expect($text)->toBe('Alice Ambrosius kandidiert auch in „Präsidium“, und dessen Ergebnis ist nicht lesbar. Prüft ihn mit „php artisan election:verify '.$round->id.'“ oder annulliert ihn.')
         ->not->toContain('Lade die Seite neu');

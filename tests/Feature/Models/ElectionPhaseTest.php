@@ -3,6 +3,7 @@
 use App\Enums\ElectionPhase;
 use App\Models\Election;
 use App\Models\ElectionRound;
+use App\Services\Election\RunSheet;
 use App\Support\NostrAuth;
 use Livewire\Livewire;
 
@@ -106,8 +107,7 @@ it('shows members the phase by rounds and the board its run sheet', function (Cl
     NostrAuth::login($board->pubkey);
 
     $member = Livewire::test('association.election.index', ['electionId' => $election->id]);
-    $stations = Livewire::test('association.election.admin')->instance();
-    $current = collect((new ReflectionMethod($stations, 'stationsOf'))->invoke($stations, $election->fresh()))
+    $current = collect(app(RunSheet::class)->stationsOf($election->fresh()))
         ->search(fn (array $station): bool => $station['state'] === 'current');
 
     expect($member->instance()->phase)->toBe($byRounds->value)

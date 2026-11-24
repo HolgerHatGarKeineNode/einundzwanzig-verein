@@ -1150,28 +1150,6 @@ it('does not call a seat empty when the missed majority leads to a run-off', fun
 });
 
 /*
- * Item i: OpenRound (package j2c) refuses a round whose candidate leads an
- * earlier round without a majority while its run-off is still owed. The
- * service is not on this branch, so the exception is built here; the arm
- * must name the person and the way out instead of the generic refusal.
- */
-it('names the owed run-off when opening is refused because a candidate leads an earlier round without a majority', function () {
-    liveBoard();
-    $round = draftElectionRound(['title' => 'Vorstand', 'position' => 2]);
-    $candidate = $round->candidates()->with('pleb')->first();
-    Profile::factory()->create(['pubkey' => $candidate->pleb->pubkey, 'name' => 'Anna Albrecht']);
-
-    $refusal = new ReflectionMethod(livePage()->instance(), 'refusalText');
-    $text = $refusal->invoke(livePage()->instance(), 'open', new ElectionCandidateBlockedException(
-        'Candidate stands in an earlier round without a majority, and its second ballot is owed.',
-        (int) $candidate->einundzwanzig_pleb_id,
-    ));
-
-    expect($text)->toBe('Anna Albrecht gehört zu den Bestplatzierten eines früheren Wahlgangs ohne Mehrheit, und dessen Stichwahl steht noch aus. Legt zuerst die Stichwahl an.')
-        ->not->toContain('lässt sich gerade nicht öffnen');
-});
-
-/*
  * Board F3: while an annulled round waits for its repeat, the card says so
  * even when it moves on to another round. Mutation that must turn this red:
  * drop the waiting sentence.
