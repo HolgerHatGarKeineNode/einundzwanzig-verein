@@ -1,11 +1,11 @@
 <?php
 
+use App\Livewire\Forms\ProjectProposalForm;
 use App\Models\ProjectProposal;
 use App\Support\NostrAuth;
 use App\Support\MarkdownRenderer;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
-use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Locked;
@@ -23,14 +23,7 @@ class extends Component
     #[Locked]
     public ProjectProposal $project;
 
-    public array $form = [
-        'name' => '',
-        'description' => '',
-        'support_in_sats' => '',
-        'website' => '',
-        'contact_via_nostr_dm' => true,
-        'contact_alternative' => '',
-    ];
+    public ProjectProposalForm $form;
 
     public $file = null;
 
@@ -45,14 +38,7 @@ class extends Component
 
         if ($nostrUser && Gate::forUser($nostrUser)->allows('update', $this->project)) {
             $this->isAllowed = true;
-            $this->form = [
-                'name' => $this->project->name,
-                'description' => $this->project->description,
-                'support_in_sats' => (string) $this->project->support_in_sats,
-                'website' => $this->project->website ?? '',
-                'contact_via_nostr_dm' => (bool) $this->project->contact_via_nostr_dm,
-                'contact_alternative' => $this->project->contact_alternative ?? '',
-            ];
+            $this->form->fillFrom($this->project);
         }
     }
 
@@ -63,6 +49,22 @@ class extends Component
         if ($this->project->getFirstMedia('main')) {
             $this->project->getFirstMedia('main')->delete();
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function rules(): array
+    {
+        return [...$this->form->rulesFor($this->project), 'file' => ProjectProposalForm::IMAGE_RULES];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    protected function messages(): array
+    {
+        return $this->form->validationMessages();
     }
 
     public function removeFile(): void
@@ -88,7 +90,7 @@ class extends Component
     #[Computed]
     public function descriptionPreview(): string
     {
-        return (new MarkdownRenderer)->toSafeHtml($this->form['description'] ?? null);
+        return (new MarkdownRenderer)->toSafeHtml($this->form->description);
     }
 
     public function update(): void
@@ -105,28 +107,9 @@ class extends Component
             abort(429, 'Too many requests.');
         }
 
-        $this->validate([
-            'form.name' => ['required', 'string', 'max:255', Rule::unique('project_proposals', 'name')->ignore($this->project->getKey())],
-            'form.description' => 'required|string',
-            'form.support_in_sats' => 'required|integer|min:0',
-            'form.website' => 'required|url|max:255',
-            'form.contact_via_nostr_dm' => 'boolean',
-            'form.contact_alternative' => 'nullable|string|max:255',
-            'file' => 'nullable|file|mimes:jpeg,png,jpg,gif,webp|mimetypes:image/jpeg,image/png,image/gif,image/webp|max:10240',
-        ], [
-            'form.name.unique' => 'Ein Antrag mit diesem Namen existiert bereits. Bitte wähle einen anderen Namen.',
-        ]);
+        $this->validate();
 
-        $this->project->update([
-            'name' => $this->form['name'],
-            'description' => $this->form['description'],
-            'support_in_sats' => (int) $this->form['support_in_sats'],
-            'website' => $this->form['website'],
-            'contact_via_nostr_dm' => (bool) ($this->form['contact_via_nostr_dm'] ?? true),
-            'contact_alternative' => filled($this->form['contact_alternative'] ?? null)
-                ? trim($this->form['contact_alternative'])
-                : null,
-        ]);
+        $this->project->update($this->form->toAttributes());
 
         if ($this->file) {
             $this->project->addMedia($this->file)->toMediaCollection('main');
@@ -225,7 +208,7 @@ class extends Component
                                 </div>
 
                                 <flux:separator />
-                                <x-project-contact-fields :form="$form" />
+                                <x-project-contact-fields :form="$form->all()" />
 
                                 <flux:button wire:click="update" wire:loading.attr="disabled" variant="primary" class="mt-4 min-h-11 w-full">
                                     Speichern

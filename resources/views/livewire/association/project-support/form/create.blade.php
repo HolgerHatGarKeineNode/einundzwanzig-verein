@@ -1,11 +1,12 @@
 <?php
 
+use App\Livewire\Forms\ProjectProposalForm;
+use App\Models\EinundzwanzigPleb;
 use App\Models\ProjectProposal;
 use App\Support\NostrAuth;
 use App\Support\MarkdownRenderer;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
-use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Locked;
@@ -20,14 +21,7 @@ class extends Component
 {
     use WithFileUploads;
 
-    public array $form = [
-        'name' => '',
-        'description' => '',
-        'support_in_sats' => '',
-        'website' => '',
-        'contact_via_nostr_dm' => true,
-        'contact_alternative' => '',
-    ];
+    public ProjectProposalForm $form;
 
     public $file = null;
 
@@ -41,6 +35,22 @@ class extends Component
         if ($nostrUser && Gate::forUser($nostrUser)->allows('create', ProjectProposal::class)) {
             $this->isAllowed = true;
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function rules(): array
+    {
+        return [...$this->form->rulesFor(), 'file' => ProjectProposalForm::IMAGE_RULES];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    protected function messages(): array
+    {
+        return $this->form->validationMessages();
     }
 
     public function removeFile(): void
@@ -66,7 +76,7 @@ class extends Component
     #[Computed]
     public function descriptionPreview(): string
     {
-        return (new MarkdownRenderer)->toSafeHtml($this->form['description'] ?? null);
+        return (new MarkdownRenderer)->toSafeHtml($this->form->description);
     }
 
     public function save(): void
@@ -83,32 +93,15 @@ class extends Component
             abort(429, 'Too many requests.');
         }
 
-        $this->validate([
-            'form.name' => ['required', 'string', 'max:255', Rule::unique('project_proposals', 'name')],
-            'form.description' => 'required|string',
-            'form.support_in_sats' => 'required|integer|min:0',
-            'form.website' => 'required|url|max:255',
-            'form.contact_via_nostr_dm' => 'boolean',
-            'form.contact_alternative' => 'nullable|string|max:255',
-            'file' => 'nullable|file|mimes:jpeg,png,jpg,gif,webp|mimetypes:image/jpeg,image/png,image/gif,image/webp|max:10240',
-        ], [
-            'form.name.unique' => 'Ein Antrag mit diesem Namen existiert bereits. Bitte wähle einen anderen Namen.',
-        ]);
+        $this->validate();
 
         $projectProposal = new ProjectProposal;
-        $projectProposal->name = $this->form['name'];
-        $projectProposal->description = $this->form['description'];
-        $projectProposal->support_in_sats = (int) $this->form['support_in_sats'];
-        $projectProposal->website = $this->form['website'];
-        $projectProposal->contact_via_nostr_dm = (bool) ($this->form['contact_via_nostr_dm'] ?? true);
-        $projectProposal->contact_alternative = filled($this->form['contact_alternative'] ?? null)
-            ? trim($this->form['contact_alternative'])
-            : null;
+        $projectProposal->forceFill($this->form->toAttributes());
         // Ein neuer Antrag ist nie vorab angenommen oder ausgezahlt. Beides wird
         // ausschliesslich im Vorstands-Panel der Detailseite gesetzt.
         $projectProposal->accepted = false;
         $projectProposal->sats_paid = 0;
-        $projectProposal->einundzwanzig_pleb_id = \App\Models\EinundzwanzigPleb::query()->where('pubkey', NostrAuth::pubkey())->first()->id;
+        $projectProposal->einundzwanzig_pleb_id = EinundzwanzigPleb::query()->where('pubkey', NostrAuth::pubkey())->first()->id;
         $projectProposal->save();
 
         if ($this->file) {
@@ -182,7 +175,7 @@ class extends Component
                                     />
 
                                     <flux:separator />
-                                    <x-project-contact-fields :form="$form" />
+                                    <x-project-contact-fields :form="$form->all()" />
 
                                     <flux:button wire:click="save" wire:loading.attr="disabled" variant="primary" class="mt-4 min-h-11 w-full">
                                         Speichern
