@@ -14,7 +14,8 @@ use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithPagination;
 
-new class extends Component {
+new class extends Component
+{
     use WithNostrAuth;
     use WithPagination;
 
@@ -114,23 +115,50 @@ new class extends Component {
      * Trefferzahl je Filter — damit ein leerer Filter als leer erkennbar ist,
      * statt wie eine kaputte Seite auszusehen.
      *
+     * One query over the searched proposals with their vote aggregates,
+     * counting each status by the same conditions as
+     * `ProjectProposal::scopeWithStatus()` and `scopeAwaitingVoteFrom()`.
+     *
      * @return array<string, int>
      */
     #[Computed]
     public function statusCounts(): array
     {
-        $counts = ['all' => $this->searchedQuery()->count()];
+        $threshold = ProjectProposal::boardVoteThreshold();
+        $ownPlebId = $this->isBoardMember ? $this->currentPleb->id : null;
+        $proposals = $this->searchedQuery()->withVoteAggregates()->withOwnVote($ownPlebId);
+        $unpaid = '(sats_paid is null or sats_paid <= 0)';
+        $inVoting = "{$unpaid} and board_approvals_count < ? and board_rejections_count < ?";
 
-        foreach (ProjectProposalStatus::cases() as $status) {
-            $counts[$status->value] = $this->searchedQuery()
-                ->withStatus($status->value)
-                ->count();
+        $columns = [
+            'count(*) as all_count',
+            'sum(case when '.$inVoting.' then 1 else 0 end) as in_voting_count',
+            'sum(case when '.$unpaid.' and board_approvals_count >= ? and board_rejections_count < ? then 1 else 0 end) as accepted_count',
+            'sum(case when '.$unpaid.' and board_rejections_count >= ? then 1 else 0 end) as rejected_count',
+            'sum(case when sats_paid > 0 then 1 else 0 end) as supported_count',
+        ];
+        $bindings = [$threshold, $threshold, $threshold, $threshold, $threshold];
+
+        if ($ownPlebId !== null) {
+            $columns[] = 'sum(case when '.$inVoting.' and not has_own_vote then 1 else 0 end) as awaiting_count';
+            array_push($bindings, $threshold, $threshold);
         }
 
-        if ($this->isBoardMember) {
-            $counts[self::FILTER_AWAITING_OWN_VOTE] = $this->searchedQuery()
-                ->awaitingVoteFrom($this->currentPleb->id)
-                ->count();
+        $row = $proposals->toBase()->newQuery()
+            ->fromSub($proposals, 'proposals')
+            ->selectRaw(implode(', ', $columns), $bindings)
+            ->first();
+
+        $counts = [
+            'all' => (int) $row->all_count,
+            ProjectProposalStatus::InVoting->value => (int) $row->in_voting_count,
+            ProjectProposalStatus::Accepted->value => (int) $row->accepted_count,
+            ProjectProposalStatus::Rejected->value => (int) $row->rejected_count,
+            ProjectProposalStatus::Supported->value => (int) $row->supported_count,
+        ];
+
+        if ($ownPlebId !== null) {
+            $counts[self::FILTER_AWAITING_OWN_VOTE] = (int) $row->awaiting_count;
         }
 
         return $counts;

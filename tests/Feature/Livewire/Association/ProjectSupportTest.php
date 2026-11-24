@@ -6,6 +6,7 @@ use App\Models\Profile;
 use App\Models\ProjectProposal;
 use App\Models\Vote;
 use App\Support\NostrAuth;
+use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
 use swentel\nostr\Key\Key;
 
@@ -115,6 +116,42 @@ it('counts every status regardless of which filter is active', function () {
         ProjectProposalStatus::Rejected->value => 0,
         ProjectProposalStatus::Supported->value => 1,
     ]);
+});
+
+it('counts every status and the board member\'s own work list in one query, as each filter alone would', function () {
+    $board = EinundzwanzigPleb::query()->whereIn('id', ProjectProposal::boardPlebIds())->orderBy('id')->get();
+    $threshold = ProjectProposal::boardVoteThreshold();
+    $vote = fn (ProjectProposal $project, EinundzwanzigPleb $pleb, bool $value) => Vote::create(['project_proposal_id' => $project->id, 'einundzwanzig_pleb_id' => $pleb->id, 'value' => $value]);
+
+    ProjectProposal::factory()->create(['name' => 'Grant ohne meine Stimme']);
+    $vote(ProjectProposal::factory()->create(['name' => 'Grant mit meiner Stimme']), $board[0], true);
+    $accepted = ProjectProposal::factory()->create(['name' => 'Grant angenommen']);
+    $board->take($threshold)->each(fn (EinundzwanzigPleb $pleb) => $vote($accepted, $pleb, true));
+    $rejected = ProjectProposal::factory()->create(['name' => 'Grant abgelehnt']);
+    $board->take($threshold)->each(fn (EinundzwanzigPleb $pleb) => $vote($rejected, $pleb, false));
+    ProjectProposal::factory()->create(['name' => 'Grant ausgezahlt', 'sats_paid' => 21000]);
+    ProjectProposal::factory()->create(['name' => 'Anderes Projekt']);
+    NostrAuth::login($board[0]->pubkey);
+    $component = Livewire::test('association.project-support.index')->set('search', 'Grant');
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+    $counts = $component->instance()->statusCounts();
+    $queries = count(DB::getQueryLog());
+    DB::disableQueryLog();
+
+    $expected = ['all' => ProjectProposal::query()->search('Grant')->count()];
+
+    foreach (ProjectProposalStatus::cases() as $status) {
+        $expected[$status->value] = ProjectProposal::query()->search('Grant')->withStatus($status->value)->count();
+    }
+
+    $expected['awaiting_my_vote'] = ProjectProposal::query()->search('Grant')->awaitingVoteFrom($board[0]->id)->count();
+
+    expect($counts)->toBe($expected)
+        ->and($expected)->toBe(['all' => 5, 'new' => 2, 'accepted' => 1, 'rejected' => 1, 'supported' => 1, 'awaiting_my_vote' => 1])
+        // The board's ids, then the counts.
+        ->and($queries)->toBeLessThanOrEqual(2);
 });
 
 it('combines search and status filter', function () {
