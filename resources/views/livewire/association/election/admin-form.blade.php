@@ -1,8 +1,288 @@
-{{-- Settings of an election and its rounds. Included by admin.blade.php; $isNew and $locked come from there. --}}
+<?php
+
+use App\Enums\ElectionCountingRule;
+use App\Enums\ElectionFeeRule;
+use App\Exceptions\ElectionActionRefusedException;
+use App\Exceptions\ElectionRoundStateException;
+use App\Livewire\Traits\WithViewer;
+use App\Models\Election;
+use App\Models\ElectionRound;
+use App\Services\Election\ElectionSetup;
+use App\Support\DisplayTime;
+use Carbon\CarbonInterface;
+use Flux\Flux;
+use Illuminate\Support\Carbon;
+use Illuminate\Validation\Rule;
+use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
+use Livewire\Component;
+
+/**
+ * The settings of an election and its rounds on the board's election page:
+ * a new draft when no election is given, else the selected election.
+ *
+ * A child of `association.election.admin`, and callable on its own like
+ * every Livewire component: each public method asks the board guard itself.
+ * It tells the page `election-created` after a new draft is stored and
+ * `election-changed` after an edit, so the run sheet follows.
+ */
+new class extends Component
+{
+    use WithViewer;
+
+    private const MAX_ROUNDS = 6;
+
+    /** The edited election; null for a new draft. */
+    #[Locked]
+    public ?int $electionId = null;
+
+    /**
+     * @var array{name: string, meeting_date: string, meeting_time: string, call_url: string, fee_rule: string, fee_year: int|string|null, honorary_without_fee: bool, is_test: bool, rounds: list<array{id: int|null, title: string, seats: int|string, counting_rule: string}>}|array{}
+     */
+    public array $form = [];
+
+    public function mount(?int $electionId = null): void
+    {
+        $this->boardActor();
+
+        $this->electionId = $electionId;
+        $this->form = $electionId === null ? $this->blankForm() : $this->formOf($this->requireElection());
+    }
+
+    public function addRound(): void
+    {
+        $this->boardActor();
+
+        if (count($this->form['rounds'] ?? []) >= self::MAX_ROUNDS) {
+            return;
+        }
+
+        $this->form['rounds'][] = ['id' => null, 'title' => '', 'seats' => 1, 'counting_rule' => ElectionCountingRule::SingleMajority->value];
+    }
+
+    public function removeRound(int $index): void
+    {
+        $this->boardActor();
+
+        $rounds = $this->form['rounds'] ?? [];
+        unset($rounds[$index]);
+        $this->form['rounds'] = array_values($rounds);
+    }
+
+    public function save(ElectionSetup $setup): void
+    {
+        $actor = $this->boardActor();
+
+        $data = $this->validate($this->formRules(), $this->formMessages())['form'];
+
+        foreach ($data['rounds'] as $index => $round) {
+            if ($round['counting_rule'] === ElectionCountingRule::SingleMajority->value && (int) $round['seats'] !== 1) {
+                $this->addError("form.rounds.{$index}.seats", __('Eine Einzelwahl vergibt genau einen Sitz. Für mehrere Sitze passt die Bestätigungs- oder Mehrfachwahl.'));
+
+                return;
+            }
+        }
+
+        $feeRule = ElectionFeeRule::from($data['fee_rule']);
+        $attributes = [
+            'name' => $data['name'],
+            'meeting_at' => $this->meetingAtOf($data),
+            'call_url' => $data['call_url'] ?? null,
+            'fee_rule' => $feeRule,
+            'fee_year' => $feeRule->needsFeeYear() ? (int) $data['fee_year'] : null,
+            'honorary_without_fee' => (bool) $data['honorary_without_fee'],
+            'is_test' => (bool) $data['is_test'],
+        ];
+        $rounds = array_map(fn (array $round): array => [
+            'id' => filled($round['id'] ?? null) ? (int) $round['id'] : null,
+            'title' => $round['title'],
+            'seats' => (int) $round['seats'],
+            'counting_rule' => $round['counting_rule'],
+        ], array_values($data['rounds']));
+
+        try {
+            if ($this->electionId === null) {
+                $election = $setup->create($actor, $attributes, $rounds);
+                $this->dispatch('election-created', electionId: (int) $election->id);
+                Flux::toast(__('Entwurf „:name“ gespeichert.', ['name' => $election->name]), variant: 'success');
+
+                return;
+            }
+
+            $election = $setup->update($this->requireElection(), $actor, $attributes, $rounds);
+        } catch (ElectionRoundStateException) {
+            $this->addError('form', __('Ein Wahlgang dieser Wahl ist schon geöffnet. Danach lässt sich die Wahl nicht mehr ändern.'));
+
+            return;
+        } catch (ElectionActionRefusedException) {
+            $this->addError('form.rounds', __('Ein Wahlgang mit Kandidaturen lässt sich nicht entfernen. Lehnt sie vorher ab oder zieht sie zurück.'));
+
+            return;
+        }
+
+        $this->saved($election);
+        Flux::toast(__('Änderungen an „:name“ gespeichert.', ['name' => $election->name]), variant: 'success');
+    }
+
+    /**
+     * Only the meeting time and the call link — the one change allowed after
+     * a round has been opened.
+     */
+    public function saveMeeting(ElectionSetup $setup): void
+    {
+        $actor = $this->boardActor();
+
+        $rules = array_intersect_key($this->formRules(), array_flip(['form.meeting_date', 'form.meeting_time', 'form.call_url']));
+        $data = $this->validate($rules, $this->formMessages())['form'];
+
+        $election = $setup->updateMeeting($this->requireElection(), $actor, $this->meetingAtOf($data), $data['call_url'] ?? null);
+
+        $this->saved($election);
+        Flux::toast(__('Termin und Link von „:name“ gespeichert.', ['name' => $election->name]), variant: 'success');
+    }
+
+    /**
+     * The edited election with its rounds and their candidacies; null for a
+     * new draft.
+     */
+    #[Computed]
+    public function election(): ?Election
+    {
+        $this->boardActor();
+
+        return $this->electionId === null ? null : Election::query()->with('rounds.candidates')->find($this->electionId);
+    }
+
+    protected function requireElection(): Election
+    {
+        return Election::query()->findOrFail($this->electionId ?? abort(404));
+    }
+
+    protected function saved(Election $election): void
+    {
+        unset($this->election);
+        $this->form = $this->formOf($election->fresh());
+        $this->dispatch('election-changed');
+    }
+
+    /**
+     * The meeting moment a form names, read in German time and stored in UTC.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    protected function meetingAtOf(array $data): ?CarbonInterface
+    {
+        if (blank($data['meeting_date'] ?? null)) {
+            return null;
+        }
+
+        return Carbon::createFromFormat('Y-m-d H:i', $data['meeting_date'].' '.(($data['meeting_time'] ?? '') ?: '19:00'), DisplayTime::zone())
+            ->setTimezone(config('app.timezone'));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function blankForm(): array
+    {
+        return [
+            'name' => '',
+            'meeting_date' => '',
+            'meeting_time' => '19:00',
+            'call_url' => '',
+            'fee_rule' => ElectionFeeRule::Year->value,
+            'fee_year' => (int) now()->year,
+            'honorary_without_fee' => false,
+            'is_test' => false,
+            'rounds' => [
+                ['id' => null, 'title' => __('Präsidium'), 'seats' => 1, 'counting_rule' => ElectionCountingRule::SingleMajority->value],
+                ['id' => null, 'title' => __('Vorstand'), 'seats' => 4, 'counting_rule' => ElectionCountingRule::YesNoPerCandidate->value],
+                ['id' => null, 'title' => __('Revisionsstelle'), 'seats' => 1, 'counting_rule' => ElectionCountingRule::YesNoPerCandidate->value],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function formOf(Election $election): array
+    {
+        $election->loadMissing('rounds');
+        $meeting = $election->meeting_at === null ? null : DisplayTime::of($election->meeting_at);
+
+        return [
+            'name' => $election->name,
+            'meeting_date' => $meeting?->format('Y-m-d') ?? '',
+            'meeting_time' => $meeting?->format('H:i') ?? '19:00',
+            'call_url' => (string) $election->call_url,
+            'fee_rule' => $election->fee_rule->value,
+            'fee_year' => $election->fee_year ?? (int) now()->year,
+            'honorary_without_fee' => (bool) $election->honorary_without_fee,
+            'is_test' => (bool) $election->is_test,
+            'rounds' => $election->rounds->whereNull('parent_round_id')->values()->map(fn (ElectionRound $round): array => [
+                'id' => (int) $round->id,
+                'title' => $round->title,
+                'seats' => (int) $round->seats,
+                'counting_rule' => $round->counting_rule->value,
+            ])->all(),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function formRules(): array
+    {
+        return [
+            'form.name' => ['required', 'string', 'max:120'],
+            'form.meeting_date' => ['nullable', 'date_format:Y-m-d'],
+            'form.meeting_time' => ['nullable', 'date_format:H:i'],
+            'form.call_url' => ['nullable', 'url:https,http', 'max:2048'],
+            'form.fee_rule' => ['required', Rule::enum(ElectionFeeRule::class)],
+            'form.fee_year' => [Rule::requiredIf(fn (): bool => ($this->form['fee_rule'] ?? '') !== ElectionFeeRule::LastTwelveMonths->value), 'nullable', 'integer', 'between:2020,2100'],
+            'form.honorary_without_fee' => ['boolean'],
+            'form.is_test' => ['boolean'],
+            'form.rounds' => ['required', 'array', 'min:1', 'max:'.self::MAX_ROUNDS],
+            'form.rounds.*.id' => ['nullable', 'integer'],
+            'form.rounds.*.title' => ['required', 'string', 'max:80'],
+            'form.rounds.*.seats' => ['required', 'integer', 'between:1,7'],
+            'form.rounds.*.counting_rule' => ['required', Rule::enum(ElectionCountingRule::class)],
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    protected function formMessages(): array
+    {
+        return [
+            'form.name.required' => __('Gib der Wahl einen Namen, etwa „Vorstandswahl 2027“.'),
+            'form.name.max' => __('Der Name darf höchstens 120 Zeichen lang sein.'),
+            'form.meeting_date.date_format' => __('Das Datum ist nicht lesbar. Wähle es im Kalender.'),
+            'form.meeting_time.date_format' => __('Die Uhrzeit ist nicht lesbar, etwa 19:00.'),
+            'form.call_url.*' => __('Der Link zum Video-Call muss eine vollständige Adresse sein, die mit https:// beginnt.'),
+            'form.fee_rule.*' => __('Wähle eine Beitragsregel.'),
+            'form.fee_year.required' => __('Diese Beitragsregel braucht ein Beitragsjahr.'),
+            'form.fee_year.*' => __('Das Beitragsjahr ist eine Jahreszahl zwischen 2020 und 2100.'),
+            'form.rounds.required' => __('Lege mindestens einen Wahlgang an.'),
+            'form.rounds.min' => __('Lege mindestens einen Wahlgang an.'),
+            'form.rounds.max' => __('Eine Wahl hat höchstens :max Wahlgänge.', ['max' => self::MAX_ROUNDS]),
+            'form.rounds.*.title.required' => __('Gib dem Wahlgang einen Titel, etwa „Präsidium“.'),
+            'form.rounds.*.title.max' => __('Der Titel darf höchstens 80 Zeichen lang sein.'),
+            'form.rounds.*.seats.*' => __('Ein Wahlgang vergibt 1 bis 7 Sitze.'),
+            'form.rounds.*.counting_rule.*' => __('Wähle eine Zählregel.'),
+        ];
+    }
+};
+?>
+
 @php
+    $isNew = $electionId === null;
+    $editedElection = $this->election;
+    // Once a round is opened only the meeting time and the call link may change.
+    $locked = $editedElection !== null && $editedElection->rounds->whereNotNull('opened_at')->isNotEmpty();
     $feeYear = is_numeric($form['fee_year'] ?? null) ? (int) $form['fee_year'] : null;
     $selectedRule = \App\Enums\ElectionFeeRule::tryFrom($form['fee_rule'] ?? '') ?? \App\Enums\ElectionFeeRule::Year;
-    $editedElection = $isNew ? null : $this->selectedElection;
     $candidatesPerRound = $editedElection?->rounds->mapWithKeys(fn ($round) => [$round->id => $round->candidates->count()])->all() ?? [];
 @endphp
 
@@ -136,7 +416,7 @@
                 {{ $isNew ? __('Entwurf speichern') : __('Änderungen speichern') }}
             </flux:button>
             @if ($isNew)
-                <flux:button wire:click="cancelCreate" variant="ghost" class="min-h-11 w-full sm:w-auto">{{ __('Abbrechen') }}</flux:button>
+                <flux:button wire:click="$parent.cancelCreate" variant="ghost" class="min-h-11 w-full sm:w-auto">{{ __('Abbrechen') }}</flux:button>
             @elseif (! $form['is_test'] && $editedElection?->announced_at === null)
                 <flux:modal.trigger name="delete-election">
                     <flux:button variant="ghost" icon="trash" class="min-h-11 w-full text-danger! sm:ml-auto sm:w-auto" data-test="delete-election">{{ __('Wahl löschen') }}</flux:button>

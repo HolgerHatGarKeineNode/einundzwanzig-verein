@@ -37,6 +37,7 @@ const SENTRY_ELECTION_ROUTES = [
 /** @var list<string> */
 const SENTRY_ELECTION_COMPONENTS = [
     'association.election.admin',
+    'association.election.admin-form',
     'association.election.index',
     'association.election.protocol',
     'association.election.screen',

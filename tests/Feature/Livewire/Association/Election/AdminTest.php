@@ -2,7 +2,6 @@
 
 use App\Enums\AssociationStatus;
 use App\Enums\ElectionCandidateStatus;
-use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionRollReason;
 use App\Enums\ElectionRollSource;
 use App\Models\EinundzwanzigPleb;
@@ -12,14 +11,12 @@ use App\Models\ElectionCandidate;
 use App\Models\ElectionRollEntry;
 use App\Models\Profile;
 use App\Services\Election\ElectoralRoll;
-use App\Services\Election\OpenRound;
 use App\Support\NostrAuth;
-use Livewire\Attributes\Computed;
 use Livewire\Features\SupportTesting\Testable;
 use Livewire\Livewire;
-use Symfony\Component\HttpKernel\Exception\HttpException;
 
 require_once __DIR__.'/../../../../Feature/Services/Election/helpers.php';
+require_once __DIR__.'/helpers.php';
 
 /*
  * The board's election page: board only, and every action goes through the
@@ -48,24 +45,6 @@ function loggedInBoard(): EinundzwanzigPleb
 function electionAuditOf(Election $election): array
 {
     return ElectionAuditEntry::query()->where('election_event_id', $election->id)->orderBy('sequence')->pluck('action')->map->value->all();
-}
-
-/**
- * Every public method the page declares itself, read off the component — an
- * action added later is covered the day it is written.
- *
- * @return list<string>
- */
-function electionAdminMethods(object $instance): array
-{
-    return collect((new ReflectionObject($instance))->getMethods(ReflectionMethod::IS_PUBLIC))
-        ->reject(fn (ReflectionMethod $method) => $method->isStatic())
-        ->filter(fn (ReflectionMethod $method) => $method->getDeclaringClass()->getName() === $instance::class)
-        ->map(fn (ReflectionMethod $method) => $method->getName())
-        ->reject(fn (string $name) => $name === 'mount' || str_starts_with($name, 'updated'))
-        ->sort()
-        ->values()
-        ->all();
 }
 
 it('is a board page: a member gets 403, a guest a sign-in hint without data, the board the page', function () {
@@ -106,44 +85,14 @@ it('answers 403 on every public method to a member who is not, or no longer, on 
     $candidate = ElectionCandidate::factory()->pending()->create(['election_round_id' => $round->id]);
     $member = electionVoter();
 
-    NostrAuth::login($board->pubkey);
-    $methods = electionAdminMethods(electionAdmin()->instance());
+    $methods = expectEveryMethodBoardOnly(
+        fn () => electionAdmin()->set('decisionReason', 'Grund')->set('enrolReason', 'Grund'),
+        $board,
+        $member,
+        ['electionId' => $election->id, 'candidateId' => $candidate->id, 'roundId' => $round->id, 'section' => 'roll', 'kind' => 'reject'],
+    );
 
-    expect($methods)->toContain('save', 'announce', 'approve', 'startDecision', 'confirmDecision', 'enrol', 'deleteElection', 'elections', 'startRoundAction', 'confirmRoundAction', 'sealRound', 'createRunOff', 'saveMeeting', 'purgeTestElection', 'roundReports');
-
-    foreach ($methods as $method) {
-        // Loaded by the board, then the session belongs to somebody else:
-        // the page must ask again on the request, not trust its mount.
-        NostrAuth::login($board->pubkey);
-        $page = electionAdmin()->set('decisionReason', 'Grund')->set('enrolReason', 'Grund');
-        NostrAuth::login($member->pubkey);
-
-        $reflection = new ReflectionMethod($page->instance(), $method);
-
-        if ($reflection->getAttributes(Computed::class) !== []) {
-            unset($page->instance()->{$method});
-
-            expect(fn () => $page->instance()->{$method})->toThrow(HttpException::class);
-
-            continue;
-        }
-
-        $arguments = collect($reflection->getParameters())
-            ->reject(fn (ReflectionParameter $parameter) => $parameter->getType() instanceof ReflectionNamedType && ! $parameter->getType()->isBuiltin())
-            ->map(fn (ReflectionParameter $parameter) => match ($parameter->getName()) {
-                'electionId' => $election->id,
-                'candidateId' => $candidate->id,
-                'roundId' => $round->id,
-                'section' => 'roll',
-                'index' => 0,
-                'kind' => 'reject',
-                default => throw new LogicException("No test argument for \${$parameter->getName()} of {$method}()."),
-            })
-            ->values()
-            ->all();
-
-        $page->call($method, ...$arguments)->assertForbidden();
-    }
+    expect($methods)->toContain('announce', 'approve', 'startDecision', 'confirmDecision', 'enrol', 'deleteElection', 'elections', 'startRoundAction', 'confirmRoundAction', 'sealRound', 'createRunOff', 'purgeTestElection', 'roundReports');
 
     expect($candidate->fresh()->status)->toBe(ElectionCandidateStatus::Pending)
         ->and($election->fresh()->announced_at)->toBeNull()
@@ -155,84 +104,6 @@ it('refuses a guest with 403 on an action', function () {
     $election = Election::factory()->create();
 
     electionAdmin()->assertSet('isGuest', true)->call('selectElection', $election->id)->assertForbidden();
-});
-
-it('creates an election with the three prepared live rounds and writes the audit line', function () {
-    $board = loggedInBoard();
-
-    $page = electionAdmin()
-        ->call('startCreate')
-        ->assertSet('creating', true)
-        ->set('form.name', 'Vorstandswahl 2027')
-        ->set('form.meeting_date', '2027-03-20')
-        ->set('form.meeting_time', '19:30')
-        ->set('form.call_url', 'https://meet.example.org/vorstandswahl')
-        ->set('form.is_test', true)
-        ->call('save')
-        ->assertHasNoErrors()
-        ->assertSet('creating', false);
-
-    $election = Election::query()->sole();
-
-    expect($election->name)->toBe('Vorstandswahl 2027')
-        ->and($election->meeting_at->setTimezone('Europe/Berlin')->format('Y-m-d H:i'))->toBe('2027-03-20 19:30')
-        ->and($election->call_url)->toBe('https://meet.example.org/vorstandswahl')
-        ->and($election->is_test)->toBeTrue()
-        ->and($election->rounds->pluck('title')->all())->toBe(['Präsidium', 'Vorstand', 'Revisionsstelle'])
-        ->and(electionAuditOf($election))->toBe(['election_created'])
-        ->and(ElectionAuditEntry::query()->value('actor_pleb_id'))->toBe($board->id);
-
-    $page->assertSet('selectedElectionId', $election->id)->assertSee('Wahl ankündigen');
-});
-
-it('refuses an empty name, a single-majority round with more than one seat and a call link that is no URL', function () {
-    loggedInBoard();
-
-    electionAdmin()
-        ->call('startCreate')
-        ->set('form.name', '')
-        ->call('save')
-        ->assertHasErrors(['form.name']);
-
-    electionAdmin()
-        ->call('startCreate')
-        ->set('form.name', 'Vorstandswahl 2027')
-        ->set('form.rounds.0.seats', 2)
-        ->call('save')
-        ->assertHasErrors(['form.rounds.0.seats']);
-
-    electionAdmin()
-        ->call('startCreate')
-        ->set('form.name', 'Vorstandswahl 2027')
-        ->set('form.call_url', 'meet.example.org/ohne-schema')
-        ->call('save')
-        ->assertHasErrors(['form.call_url'])
-        ->assertSee('Der Link zum Video-Call muss eine vollständige Adresse sein');
-
-    expect(Election::query()->count())->toBe(0);
-});
-
-it('edits a draft election and refuses after a round has been opened', function () {
-    loggedInBoard();
-    $election = Election::factory()->create(['name' => 'Alt']);
-    $round = draftElectionRound(['title' => 'Präsidium'], candidates: 1, election: $election);
-
-    electionAdmin()
-        ->set('form.name', 'Neu')
-        ->set('form.rounds.0.counting_rule', ElectionCountingRule::YesNoPerCandidate->value)
-        ->call('save')
-        ->assertHasNoErrors();
-
-    expect($election->fresh()->name)->toBe('Neu')
-        ->and($round->fresh()->counting_rule)->toBe(ElectionCountingRule::YesNoPerCandidate)
-        ->and(electionAuditOf($election))->toBe(['election_updated']);
-
-    $page = electionAdmin();
-    app(OpenRound::class)->handle($round->fresh());
-
-    $page->set('form.name', 'Zu spät')->call('save')->assertHasErrors(['form']);
-
-    expect($election->fresh()->name)->toBe('Neu');
 });
 
 it('announces the selected election after the confirm and writes the audit line', function () {

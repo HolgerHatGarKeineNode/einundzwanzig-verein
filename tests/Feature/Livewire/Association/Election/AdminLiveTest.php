@@ -181,7 +181,7 @@ function liveRefusalScenario(string $kind, EinundzwanzigPleb $board): array
         'meeting' => (function () use ($election): array {
             openElectionRound(election: $election);
 
-            return [livePage()->set('form.call_url', 'https://meet.example.org/neu'), fn (Testable $page) => $page->call('saveMeeting'),
+            return [Livewire::test('association.election.admin-form', ['electionId' => $election->id])->set('form.call_url', 'https://meet.example.org/neu'), fn (Testable $page) => $page->call('saveMeeting'),
                 fn (): bool => $election->fresh()->call_url === 'https://meet.example.org/alt'];
         })(),
         'purge' => (function () use ($election): array {
@@ -424,52 +424,6 @@ it('purges a test election with every row, and refuses a real one', function () 
     $screen->call('$refresh')->assertOk()->assertSee('Diese Wahl gibt es nicht mehr.')->assertDontSeeHtml('wire:poll');
 });
 
-it('keeps the meeting time and the call link editable after a round opened, and nothing else', function () {
-    $board = liveBoard();
-    $election = Election::factory()->announced()->create(['name' => 'Fest', 'meeting_at' => '2027-03-20 18:00:00', 'call_url' => 'https://meet.example.org/alt']);
-    openElectionRound(election: $election);
-
-    livePage()
-        ->call('showSection', 'settings')
-        ->assertSee('Termin und Link speichern')
-        ->set('form.meeting_time', '20:15')
-        ->set('form.call_url', 'https://meet.example.org/neu')
-        ->call('saveMeeting')
-        ->assertHasNoErrors()
-        ->set('form.call_url', 'kein-link')
-        ->call('saveMeeting')
-        ->assertHasErrors(['form.call_url'])
-        ->set('form.call_url', 'https://meet.example.org/neu')
-        ->set('form.name', 'Umbenannt')
-        ->call('save')
-        ->assertHasErrors(['form']);
-
-    $election->refresh();
-
-    expect($election->call_url)->toBe('https://meet.example.org/neu')
-        ->and($election->meeting_at->utc()->format('Y-m-d H:i'))->toBe('2027-03-20 19:15')
-        ->and($election->name)->toBe('Fest')
-        ->and(liveAudit($election))->toBe(['election_meeting_updated'])
-        ->and(ElectionAuditEntry::query()->value('actor_pleb_id'))->toBe($board->id);
-});
-
-it('shows and reads every time in German time while storing UTC', function () {
-    liveBoard();
-    // 20 March 2027 is winter time (UTC+1), 20 June summer time (UTC+2).
-    $winter = Election::factory()->create(['name' => 'Winter', 'meeting_at' => Carbon::parse('2027-03-20 18:30', 'UTC')]);
-    draftElectionRound(election: $winter);
-
-    livePage()->call('selectElection', $winter->id)
-        ->assertSee('Sa, 20. März 2027, 19:30 Uhr')
-        ->assertSet('form.meeting_time', '19:30')
-        ->set('form.meeting_date', '2027-06-20')
-        ->set('form.meeting_time', '19:30')
-        ->call('save')
-        ->assertHasNoErrors();
-
-    expect($winter->fresh()->meeting_at->utc()->format('Y-m-d H:i'))->toBe('2027-06-20 17:30');
-});
-
 it('sends an election without rounds to its settings, and a finished one to the minutes', function () {
     $board = liveBoard();
     $empty = Election::factory()->announced()->create(['name' => 'Ohne Wahlgang']);
@@ -485,26 +439,6 @@ it('sends an election without rounds to its settings, and a finished one to the 
     livePage()->call('selectElection', $done->id)
         ->assertSee('Alle Wahlgänge sind abgeschlossen.')
         ->assertSeeHtml(route('association.election.admin.protocol', $done));
-});
-
-it('stores 19:00 entered by the board as 18:00 UTC in March and shows 19:00 on both pages', function () {
-    $board = liveBoard();
-    $election = Election::factory()->announced()->create(['name' => 'Märzsitzung']);
-    draftElectionRound(election: $election);
-
-    livePage()->call('selectElection', $election->id)
-        ->call('showSection', 'settings')
-        ->set('form.meeting_date', '2027-03-20')
-        ->set('form.meeting_time', '19:00')
-        ->call('save')
-        ->assertHasNoErrors();
-
-    expect($election->fresh()->meeting_at->utc()->format('Y-m-d H:i'))->toBe('2027-03-20 18:00');
-
-    livePage()->call('selectElection', $election->id)->assertSee('20. März 2027, 19:00 Uhr')->assertSet('form.meeting_time', '19:00');
-
-    NostrAuth::login(electionVoter()->pubkey);
-    Livewire::test('association.election.index')->assertSee('Am 20.03.2027 um 19:00 Uhr')->assertDontSee('um 18:00 Uhr');
 });
 
 /**

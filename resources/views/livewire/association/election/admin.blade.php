@@ -2,8 +2,6 @@
 
 use App\Enums\AssociationStatus;
 use App\Enums\ElectionCandidateStatus;
-use App\Enums\ElectionCountingRule;
-use App\Enums\ElectionFeeRule;
 use App\Enums\ElectionOutcome;
 use App\Enums\ElectionPhase;
 use App\Enums\ElectionRollReason;
@@ -23,7 +21,6 @@ use App\Models\MemberProposal;
 use App\Services\Election\Candidacies;
 use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionAuditLog;
-use App\Services\Election\ElectionSetup;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\ElectoralRoll;
 use App\Services\Election\EnrolByHand;
@@ -38,7 +35,6 @@ use Carbon\CarbonInterface;
 use Flux\Flux;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
@@ -66,8 +62,6 @@ new class extends Component
 
     private const DEFAULT_CLOSE_REASON = 'Abstimmung in der Sitzung beendet.';
 
-    private const MAX_ROUNDS = 6;
-
     #[Locked]
     public bool $isGuest = false;
 
@@ -78,11 +72,6 @@ new class extends Component
     public bool $creating = false;
 
     public string $section = 'settings';
-
-    /**
-     * @var array{name: string, meeting_date: string, meeting_time: string, call_url: string, fee_rule: string, fee_year: int|string|null, honorary_without_fee: bool, is_test: bool, rounds: list<array{id: int|null, title: string, seats: int|string, counting_rule: string}>}|array{}
-     */
-    public array $form = [];
 
     #[Locked]
     public ?int $decisionCandidateId = null;
@@ -148,19 +137,27 @@ new class extends Component
     {
         $this->boardActor();
 
-        $this->resetErrorBag();
         $this->creating = true;
-        $this->form = $this->blankForm();
     }
 
     public function cancelCreate(): void
     {
         $this->boardActor();
 
-        $this->resetErrorBag();
         $this->creating = false;
-        $selected = $this->selectedElection;
-        $this->form = $selected === null ? [] : $this->formOf($selected);
+    }
+
+    /**
+     * The settings form stored a new draft: show it.
+     */
+    #[On('election-created')]
+    public function electionCreated(int $electionId): void
+    {
+        $this->boardActor();
+
+        $this->creating = false;
+        unset($this->elections);
+        $this->select(Election::query()->findOrFail($electionId));
     }
 
     public function selectElection(int $electionId): void
@@ -176,83 +173,6 @@ new class extends Component
         $this->boardActor();
 
         $this->section = in_array($section, self::SECTIONS, true) ? $section : 'settings';
-    }
-
-    public function addRound(): void
-    {
-        $this->boardActor();
-
-        if (count($this->form['rounds'] ?? []) >= self::MAX_ROUNDS) {
-            return;
-        }
-
-        $this->form['rounds'][] = ['id' => null, 'title' => '', 'seats' => 1, 'counting_rule' => ElectionCountingRule::SingleMajority->value];
-    }
-
-    public function removeRound(int $index): void
-    {
-        $this->boardActor();
-
-        $rounds = $this->form['rounds'] ?? [];
-        unset($rounds[$index]);
-        $this->form['rounds'] = array_values($rounds);
-    }
-
-    public function save(ElectionSetup $setup): void
-    {
-        $actor = $this->boardActor();
-
-        $data = $this->validate($this->formRules(), $this->formMessages())['form'];
-
-        foreach ($data['rounds'] as $index => $round) {
-            if ($round['counting_rule'] === ElectionCountingRule::SingleMajority->value && (int) $round['seats'] !== 1) {
-                $this->addError("form.rounds.{$index}.seats", __('Eine Einzelwahl vergibt genau einen Sitz. Für mehrere Sitze passt die Bestätigungs- oder Mehrfachwahl.'));
-
-                return;
-            }
-        }
-
-        $feeRule = ElectionFeeRule::from($data['fee_rule']);
-        $attributes = [
-            'name' => $data['name'],
-            'meeting_at' => $this->meetingAtOf($data),
-            'call_url' => $data['call_url'] ?? null,
-            'fee_rule' => $feeRule,
-            'fee_year' => $feeRule->needsFeeYear() ? (int) $data['fee_year'] : null,
-            'honorary_without_fee' => (bool) $data['honorary_without_fee'],
-            'is_test' => (bool) $data['is_test'],
-        ];
-        $rounds = array_map(fn (array $round): array => [
-            'id' => filled($round['id'] ?? null) ? (int) $round['id'] : null,
-            'title' => $round['title'],
-            'seats' => (int) $round['seats'],
-            'counting_rule' => $round['counting_rule'],
-        ], array_values($data['rounds']));
-
-        try {
-            if ($this->creating) {
-                $election = $setup->create($actor, $attributes, $rounds);
-                $this->creating = false;
-                unset($this->elections);
-                $this->select($election);
-                Flux::toast(__('Entwurf „:name“ gespeichert.', ['name' => $election->name]), variant: 'success');
-
-                return;
-            }
-
-            $election = $setup->update($this->requireSelected(), $actor, $attributes, $rounds);
-        } catch (ElectionRoundStateException) {
-            $this->addError('form', __('Ein Wahlgang dieser Wahl ist schon geöffnet. Danach lässt sich die Wahl nicht mehr ändern.'));
-
-            return;
-        } catch (ElectionActionRefusedException) {
-            $this->addError('form.rounds', __('Ein Wahlgang mit Kandidaturen lässt sich nicht entfernen. Lehnt sie vorher ab oder zieht sie zurück.'));
-
-            return;
-        }
-
-        $this->refreshElection($election);
-        Flux::toast(__('Änderungen an „:name“ gespeichert.', ['name' => $election->name]), variant: 'success');
     }
 
     public function announce(ElectionStewardship $stewardship): void
@@ -271,7 +191,6 @@ new class extends Component
 
         Flux::modal('delete-election')->close();
         $this->selectedElectionId = null;
-        $this->form = [];
         unset($this->elections, $this->selectedElection);
 
         $next = $this->elections->first();
@@ -442,23 +361,6 @@ new class extends Component
         $this->entitleReason = '';
         unset($this->rollPreview, $this->entitleCandidates, $this->candidaciesByRound, $this->elections, $this->selectedElection);
         Flux::toast(__(':name ist für „:election“ als wahlberechtigt eingetragen.', ['name' => $name, 'election' => $election->name]), variant: 'success');
-    }
-
-    /**
-     * Only the meeting time and the call link — the one change allowed after
-     * a round has been opened.
-     */
-    public function saveMeeting(ElectionSetup $setup): void
-    {
-        $actor = $this->boardActor();
-
-        $rules = array_intersect_key($this->formRules(), array_flip(['form.meeting_date', 'form.meeting_time', 'form.call_url']));
-        $data = $this->validate($rules, $this->formMessages())['form'];
-
-        $election = $setup->updateMeeting($this->requireSelected(), $actor, $this->meetingAtOf($data), $data['call_url'] ?? null);
-
-        $this->refreshElection($election);
-        Flux::toast(__('Termin und Link von „:name“ gespeichert.', ['name' => $election->name]), variant: 'success');
     }
 
     /**
@@ -743,7 +645,6 @@ new class extends Component
 
         Flux::modal('purge-election')->close();
         $this->selectedElectionId = null;
-        $this->form = [];
         unset($this->elections, $this->selectedElection);
 
         $next = $this->elections->first();
@@ -759,6 +660,7 @@ new class extends Component
      * Another board member, or the turnout poll, saw a round change.
      */
     #[On('election-round-changed')]
+    #[On('election-changed')]
     public function refreshRounds(): void
     {
         $this->boardActor();
@@ -1034,21 +936,6 @@ new class extends Component
     }
 
     /**
-     * The meeting moment a form names, read in German time and stored in UTC.
-     *
-     * @param  array<string, mixed>  $data
-     */
-    protected function meetingAtOf(array $data): ?CarbonInterface
-    {
-        if (blank($data['meeting_date'] ?? null)) {
-            return null;
-        }
-
-        return Carbon::createFromFormat('Y-m-d H:i', $data['meeting_date'].' '.(($data['meeting_time'] ?? '') ?: '19:00'), config('app.display_timezone'))
-            ->setTimezone(config('app.timezone'));
-    }
-
-    /**
      * The confirm text of the round modal: what happens, in numbers.
      */
     protected function pendingRoundText(ElectionRound $round): string
@@ -1191,7 +1078,6 @@ new class extends Component
         unset($this->selectedElection, $this->candidaciesByRound, $this->rollPreview, $this->openedRounds, $this->rollRound, $this->rollEntries, $this->enrolCandidates, $this->roundReports);
         $this->rollRoundId = null;
         $current = $this->selectedElection ?? $election;
-        $this->form = $this->formOf($current);
         $step = app(RunSheet::class)->nextStepOf($current);
         $this->section = match (true) {
             $step['action'] === 'candidacies' => 'candidacies',
@@ -1203,107 +1089,13 @@ new class extends Component
     protected function refreshElection(Election $election): void
     {
         unset($this->elections, $this->selectedElection, $this->candidaciesByRound, $this->rollPreview, $this->openedRounds, $this->rollRound, $this->rollEntries, $this->roundReports);
-        $this->form = $this->formOf($this->selectedElection ?? $election);
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    protected function blankForm(): array
-    {
-        return [
-            'name' => '',
-            'meeting_date' => '',
-            'meeting_time' => '19:00',
-            'call_url' => '',
-            'fee_rule' => ElectionFeeRule::Year->value,
-            'fee_year' => (int) now()->year,
-            'honorary_without_fee' => false,
-            'is_test' => false,
-            'rounds' => [
-                ['id' => null, 'title' => __('Präsidium'), 'seats' => 1, 'counting_rule' => ElectionCountingRule::SingleMajority->value],
-                ['id' => null, 'title' => __('Vorstand'), 'seats' => 4, 'counting_rule' => ElectionCountingRule::YesNoPerCandidate->value],
-                ['id' => null, 'title' => __('Revisionsstelle'), 'seats' => 1, 'counting_rule' => ElectionCountingRule::YesNoPerCandidate->value],
-            ],
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    protected function formOf(Election $election): array
-    {
-        $election->loadMissing('rounds');
-
-        return [
-            'name' => $election->name,
-            'meeting_date' => ($election->meeting_at === null ? '' : $this->local($election->meeting_at)->format('Y-m-d')),
-            'meeting_time' => ($election->meeting_at === null ? '19:00' : $this->clock($election->meeting_at)),
-            'call_url' => (string) $election->call_url,
-            'fee_rule' => $election->fee_rule->value,
-            'fee_year' => $election->fee_year ?? (int) now()->year,
-            'honorary_without_fee' => (bool) $election->honorary_without_fee,
-            'is_test' => (bool) $election->is_test,
-            'rounds' => $election->rounds->whereNull('parent_round_id')->values()->map(fn (ElectionRound $round): array => [
-                'id' => (int) $round->id,
-                'title' => $round->title,
-                'seats' => (int) $round->seats,
-                'counting_rule' => $round->counting_rule->value,
-            ])->all(),
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    protected function formRules(): array
-    {
-        return [
-            'form.name' => ['required', 'string', 'max:120'],
-            'form.meeting_date' => ['nullable', 'date_format:Y-m-d'],
-            'form.meeting_time' => ['nullable', 'date_format:H:i'],
-            'form.call_url' => ['nullable', 'url:https,http', 'max:2048'],
-            'form.fee_rule' => ['required', Rule::enum(ElectionFeeRule::class)],
-            'form.fee_year' => [Rule::requiredIf(fn (): bool => ($this->form['fee_rule'] ?? '') !== ElectionFeeRule::LastTwelveMonths->value), 'nullable', 'integer', 'between:2020,2100'],
-            'form.honorary_without_fee' => ['boolean'],
-            'form.is_test' => ['boolean'],
-            'form.rounds' => ['required', 'array', 'min:1', 'max:'.self::MAX_ROUNDS],
-            'form.rounds.*.id' => ['nullable', 'integer'],
-            'form.rounds.*.title' => ['required', 'string', 'max:80'],
-            'form.rounds.*.seats' => ['required', 'integer', 'between:1,7'],
-            'form.rounds.*.counting_rule' => ['required', Rule::enum(ElectionCountingRule::class)],
-        ];
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    protected function formMessages(): array
-    {
-        return [
-            'form.name.required' => __('Gib der Wahl einen Namen, etwa „Vorstandswahl 2027“.'),
-            'form.name.max' => __('Der Name darf höchstens 120 Zeichen lang sein.'),
-            'form.meeting_date.date_format' => __('Das Datum ist nicht lesbar. Wähle es im Kalender.'),
-            'form.meeting_time.date_format' => __('Die Uhrzeit ist nicht lesbar, etwa 19:00.'),
-            'form.call_url.*' => __('Der Link zum Video-Call muss eine vollständige Adresse sein, die mit https:// beginnt.'),
-            'form.fee_rule.*' => __('Wähle eine Beitragsregel.'),
-            'form.fee_year.required' => __('Diese Beitragsregel braucht ein Beitragsjahr.'),
-            'form.fee_year.*' => __('Das Beitragsjahr ist eine Jahreszahl zwischen 2020 und 2100.'),
-            'form.rounds.required' => __('Lege mindestens einen Wahlgang an.'),
-            'form.rounds.min' => __('Lege mindestens einen Wahlgang an.'),
-            'form.rounds.max' => __('Eine Wahl hat höchstens :max Wahlgänge.', ['max' => self::MAX_ROUNDS]),
-            'form.rounds.*.title.required' => __('Gib dem Wahlgang einen Titel, etwa „Präsidium“.'),
-            'form.rounds.*.title.max' => __('Der Titel darf höchstens 80 Zeichen lang sein.'),
-            'form.rounds.*.seats.*' => __('Ein Wahlgang vergibt 1 bis 7 Sitze.'),
-            'form.rounds.*.counting_rule.*' => __('Wähle eine Zählregel.'),
-        ];
-    }
 };
 ?>
 
 @php
     $election = $this->isGuest ? null : $this->selectedElection;
-    $locked = $election !== null && $election->rounds->whereNotNull('opened_at')->isNotEmpty();
 @endphp
 
 <div class="election-ui relative w-full max-w-5xl mx-auto pb-20">
@@ -1334,7 +1126,7 @@ new class extends Component
                 <h2 id="create-heading" class="text-2xl font-bold text-text-primary">{{ __('Neue Wahl') }}</h2>
                 <p class="mt-2 max-w-2xl text-base text-text-secondary">{{ __('Die Wahl bleibt ein Entwurf, bis ihr sie ankündigt. Mitglieder sehen sie erst danach.') }}</p>
                 <div class="mt-8">
-                    @include('livewire.association.election.admin-form', ['isNew' => true, 'locked' => false])
+                    <livewire:association.election.admin-form key="create-election" />
                 </div>
             </section>
         @endif
@@ -1407,7 +1199,7 @@ new class extends Component
                                 @if ($creating)
                                     <p class="text-base text-text-secondary">{{ __('Speichert zuerst die neue Wahl oder brecht sie ab.') }}</p>
                                 @else
-                                    @include('livewire.association.election.admin-form', ['isNew' => false, 'locked' => $locked])
+                                    <livewire:association.election.admin-form :election-id="$item->id" :key="'settings-'.$item->id.($item->announced_at === null ? '' : '-announced')" />
                                 @endif
                             @elseif ($section === 'candidacies')
                                 @include('livewire.association.election.admin-candidacies', ['election' => $item])
