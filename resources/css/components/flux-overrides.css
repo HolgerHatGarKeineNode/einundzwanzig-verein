@@ -181,6 +181,12 @@ ui-checkbox:not([data-checked], [data-indeterminate], [disabled]) [data-flux-che
     min-height: 2.75rem;
 }
 
+/* The accordion heading is a 20px line of text inside Flux' item padding;
+   the button itself becomes the 44px target. */
+[data-flux-accordion-heading] {
+    min-height: 2.75rem;
+}
+
 /* The close button sits 16px from the dialog's corner and is now 44px wide:
    the heading keeps clear of it (24px dialog padding + 40px = 64px ≥ 60px). */
 dialog[data-modal] [data-flux-heading] {

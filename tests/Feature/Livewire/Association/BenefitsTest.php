@@ -27,15 +27,6 @@ it('unlocks the blossom server for active paid members', function () {
         ->assertSee('https://blossom.einundzwanzig.space');
 });
 
-it('copies the blossom url for active members', function () {
-    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
-    NostrAuth::login($pleb->pubkey);
-
-    Livewire::test('association.benefits')
-        ->call('copyBlossomUrl')
-        ->assertHasNoErrors();
-});
-
 it('unlocks the nostr community group for active paid members', function () {
     $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
     NostrAuth::login($pleb->pubkey);
@@ -44,15 +35,6 @@ it('unlocks the nostr community group for active paid members', function () {
         ->assertSee('Nostr Community-Gruppe')
         ->assertSee('https://group.einundzwanzig.space')
         ->assertSee('wss://group.einundzwanzig.space');
-});
-
-it('copies the community relay url for active members', function () {
-    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
-    NostrAuth::login($pleb->pubkey);
-
-    Livewire::test('association.benefits')
-        ->call('copyGroupRelayUrl')
-        ->assertHasNoErrors();
 });
 
 it('unlocks the buzz relay for active paid members', function () {
@@ -84,29 +66,34 @@ it('points buzz users to the group web app and the automatic nightly enrolment',
         ->assertSee('in der Nacht darauf automatisch als Member des Buzz-Relays');
 });
 
-it('copies the buzz relay url for active members', function () {
+it('shows the current watchtower uri for active members', function () {
     $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
     NostrAuth::login($pleb->pubkey);
 
     Livewire::test('association.benefits')
-        ->call('copyBuzzRelayUrl')
-        ->assertHasNoErrors();
+        ->assertSee('02ce7b8a6bc3fb6245ecdcf67b25d80d03e1fea02459ae9af9e64ac1590139e467@62.171.139.240:9911')
+        ->assertDontSee('03a09f56bba3d2c200cc55eda2f1f069564a97c1fb74345e1560e2868a8ab3d7d0');
 });
 
-it('shows and copies the current watchtower uri for active members', function () {
+it('offers every service address in a read-only copy field for active members', function (string $address) {
+    /*
+     * One copy field for all services (P3/D13): a read-only flux:input with
+     * its copy button. The browser copies; nothing round-trips to the server.
+     */
     $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
     NostrAuth::login($pleb->pubkey);
 
-    $uri = '02ce7b8a6bc3fb6245ecdcf67b25d80d03e1fea02459ae9af9e64ac1590139e467@62.171.139.240:9911';
+    $html = Livewire::test('association.benefits')->html();
 
-    $component = Livewire::test('association.benefits')
-        ->assertSee($uri)
-        ->assertDontSee('03a09f56bba3d2c200cc55eda2f1f069564a97c1fb74345e1560e2868a8ab3d7d0')
-        ->call('copyWatchtowerUrl')
-        ->assertHasNoErrors();
-
-    expect(json_encode($component->effects))->toContain($uri);
-});
+    expect($html)->toMatch('/<input[^>]*value="'.preg_quote($address, '/').'"[^>]*readonly/s')
+        ->and($html)->toContain('fluxInputCopyable');
+})->with([
+    'relay' => 'wss://nostr.einundzwanzig.space',
+    'watchtower' => '02ce7b8a6bc3fb6245ecdcf67b25d80d03e1fea02459ae9af9e64ac1590139e467@62.171.139.240:9911',
+    'blossom' => 'https://blossom.einundzwanzig.space',
+    'community relay' => 'wss://group.einundzwanzig.space',
+    'buzz relay' => 'wss://buzz.einundzwanzig.space',
+]);
 
 it('refuses the reserved NIP-05 name on the benefits screen', function () {
     /*
