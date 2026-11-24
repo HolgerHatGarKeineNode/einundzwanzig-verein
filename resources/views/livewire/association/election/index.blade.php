@@ -628,7 +628,7 @@ new class extends Component
      * there is one without that; null when there is none. An annulled
      * run-off does not count.
      */
-    public function runOffOf(ElectionRound $round): ?string
+    protected function runOffOf(ElectionRound $round): ?string
     {
         $byId = $this->allRounds->keyBy('id');
         $isBelow = function (ElectionRound $each) use ($byId, $round): bool {
@@ -651,7 +651,7 @@ new class extends Component
         return $runOffs->contains(fn (ElectionRound $each): bool => ($this->results[$each->getKey()]->elected ?? []) !== []) ? 'decided' : 'pending';
     }
 
-    public function candidateName(ElectionRound $round, int $candidateId): string
+    protected function candidateName(ElectionRound $round, int $candidateId): string
     {
         return MemberProposal::authorNameOf($round->candidates->firstWhere('id', $candidateId)?->pleb);
     }

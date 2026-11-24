@@ -11,21 +11,21 @@ use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\MemberProposal;
 use App\Services\Dm\ComposeDirectMessage;
-use App\Services\Dm\DirectMessageAudienceChanged;
 use App\Services\Dm\DirectMessageAudience;
+use App\Services\Dm\DirectMessageAudienceChanged;
 use App\Services\Dm\DirectMessageDryRun;
-use App\Services\Dm\DirectMessageRepeatLock;
 use App\Services\Dm\DirectMessagePause;
+use App\Services\Dm\DirectMessageRepeatLock;
 use App\Services\Dm\DirectMessageText;
 use App\Services\Dm\DirectMessageTextInvalid;
 use App\Services\Dm\ScheduleDirectMessage;
 use App\Services\Dm\StartDirectMessageRun;
-use Illuminate\Contracts\Cache\LockTimeoutException;
 use App\Services\Nostr\NotificationKey;
 use App\Services\Nostr\RelayPublishStatus;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Flux\Flux;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -764,7 +764,7 @@ class extends Component
     /**
      * To whom a run went, as one sentence.
      */
-    public function recipientsOf(DmRun $run): string
+    protected function recipientsOf(DmRun $run): string
     {
         if ($run->audience !== null) {
             if ($run->audience->needsElection() && $run->election === null) {
@@ -794,7 +794,7 @@ class extends Component
      *
      * @return array{sent: int, no_inbox: int, failed: int, waiting: int, seen: int, retry: int, skipped: int}
      */
-    public function countsOf(DmRun $run): array
+    protected function countsOf(DmRun $run): array
     {
         $sent = (int) $run->sent_count;
         $noInbox = (int) $run->no_inbox_count;
@@ -830,7 +830,7 @@ class extends Component
     /**
      * The relays' answers for one delivery, as a short sentence.
      */
-    public function relaySummary(DmDelivery $delivery): string
+    protected function relaySummary(DmDelivery $delivery): string
     {
         $relays = $delivery->relays;
 
@@ -847,17 +847,17 @@ class extends Component
      * The state of one delivery as the board reads it: a stuck claim is
      * failed, not "being sent".
      */
-    public function deliveryFailed(DmDelivery $delivery): bool
+    protected function deliveryFailed(DmDelivery $delivery): bool
     {
         return $delivery->status->isFailure() || $delivery->isStuck(now());
     }
 
-    public function deliveryLabel(DmDelivery $delivery): string
+    protected function deliveryLabel(DmDelivery $delivery): string
     {
         return $delivery->isStuck(now()) ? __('Hängen geblieben, gilt als fehlgeschlagen') : $delivery->status->label();
     }
 
-    public function nameOf(?EinundzwanzigPleb $member): string
+    protected function nameOf(?EinundzwanzigPleb $member): string
     {
         return MemberProposal::authorNameOf($member);
     }

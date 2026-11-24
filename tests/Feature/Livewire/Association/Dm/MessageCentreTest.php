@@ -95,7 +95,7 @@ it('answers 403 on every public method once the session belongs to a member who 
         ->reject(fn (ReflectionMethod $method) => $method->isStatic())
         ->filter(fn (ReflectionMethod $method) => $method->getDeclaringClass()->getName() === $instance::class)
         ->map(fn (ReflectionMethod $method) => $method->getName())
-        ->reject(fn (string $name) => str_starts_with($name, 'updated') || in_array($name, ['mount', 'dryRunIsCurrent', 'scheduleTypes', 'variableLabel', 'variableHint', 'recipientsOf', 'countsOf', 'countsSentence', 'relaySummary', 'deliveryFailed', 'deliveryLabel', 'nameOf', 'longDate', 'shortDate'], true))
+        ->reject(fn (string $name) => str_starts_with($name, 'updated') || in_array($name, ['mount', 'dryRunIsCurrent', 'scheduleTypes', 'variableLabel', 'variableHint', 'countsSentence', 'longDate', 'shortDate'], true))
         ->values();
 
     expect($methods->all())->toContain('confirmSend', 'sendTestToSelf', 'runDryRun', 'resendFailed', 'addSchedule', 'removeSchedule', 'runs');
@@ -370,7 +370,7 @@ it('shows an expired claim as failed everywhere: label, summary and re-send coun
 
     expect($expiredRow)->toContain('Hängen geblieben, gilt als fehlgeschlagen')->toContain('text-danger')->not->toContain('Wird gerade gesendet')
         ->and($livingRow)->toContain('Wird gerade gesendet')->not->toContain('text-danger')
-        ->and($page->instance()->countsOf($page->instance()->runs->firstWhere('id', $run->id)))->toMatchArray(['failed' => 2, 'waiting' => 1, 'retry' => 2]);
+        ->and((fn () => $this->countsOf($this->runs->firstWhere('id', $run->id)))->call($page->instance()))->toMatchArray(['failed' => 2, 'waiting' => 1, 'retry' => 2]);
 
     $page->call('resendFailed', $run->id)
         ->assertDispatched('toast-show', fn (string $event, array $params): bool => $params['slots']['text'] === '2 fehlgeschlagene Zustellungen werden erneut gesendet.');
