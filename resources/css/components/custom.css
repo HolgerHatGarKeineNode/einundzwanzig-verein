@@ -83,68 +83,6 @@
     }
 
     /**
-     * News Category Badges
-     *
-     * Farbige Kategorie-Badges für News-Karten.
-     * Jede Farbe hat einen transparenten Hintergrund mit passender Textfarbe.
-     */
-    .news-category-badge {
-        @apply bg-bg-elevated text-text-secondary border border-border-default;
-    }
-
-    .news-category-badge--amber {
-        background-color: #FF5C0033;
-        color: #FF5C00;
-        border: none;
-    }
-
-    .news-category-badge--zinc {
-        @apply bg-bg-elevated text-text-secondary border border-border-default;
-    }
-
-    .news-category-badge--cyan {
-        background-color: #06b6d433;
-        color: #06b6d4;
-        border: none;
-    }
-
-    .news-category-badge--orange {
-        background-color: #FF5C0033;
-        color: #FF5C00;
-        border: none;
-    }
-
-    .news-category-badge--green {
-        background-color: #22c55e33;
-        color: #22c55e;
-        border: none;
-    }
-
-    .news-category-badge--blue {
-        background-color: #3b82f633;
-        color: #3b82f6;
-        border: none;
-    }
-
-    .news-category-badge--purple {
-        background-color: #7c3aed33;
-        color: #a78bfa; /* Purple-Text: #7c3aed = 3,47:1 (kein AA) -> helle Stufe. Doc 5. */
-        border: none;
-    }
-
-    .news-category-badge--emerald {
-        background-color: #10b98133;
-        color: #10b981;
-        border: none;
-    }
-
-    .news-category-badge--rose {
-        background-color: #f4365833;
-        color: #f43658;
-        border: none;
-    }
-
-    /**
      * Status-Chip einer Projektunterstützung
      *
      * Bewusst KEIN flux:badge: der Override in flux-overrides.css setzt eine
