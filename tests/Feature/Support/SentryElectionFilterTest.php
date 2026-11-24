@@ -51,6 +51,9 @@ const SENTRY_ELECTION_COMPONENTS = [
 const SENTRY_DM_COMPONENTS = [
     'association.messages',
     'association.messages.admin',
+    'association.messages.admin-compose',
+    'association.messages.admin-history',
+    'association.messages.admin-schedule',
 ];
 
 /** @var list<string> */

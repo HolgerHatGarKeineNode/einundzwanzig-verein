@@ -1,3 +1,242 @@
+<?php
+
+use App\Enums\DmAudience;
+use App\Enums\DmMessageType;
+use App\Livewire\Traits\WithMessageDrafts;
+use App\Livewire\Traits\WithViewer;
+use App\Models\DmSchedule;
+use App\Models\Election;
+use App\Services\Dm\DirectMessagePause;
+use App\Services\Dm\DirectMessageTextInvalid;
+use App\Services\Dm\ScheduleDirectMessage;
+use App\Support\DisplayTime;
+use Carbon\CarbonInterface;
+use Flux\Flux;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
+use Illuminate\Support\Carbon;
+use Livewire\Attributes\Computed;
+use Livewire\Component;
+
+/**
+ * "Zeitplan" of the board's message centre: the global pause, an
+ * election's planned messages, and a new planned row with the type's
+ * default text.
+ *
+ * A child of `association.messages.admin`, mounted while that tab is open.
+ * Board only and callable on its own like every Livewire component: every
+ * public method and every computed property resolves the acting board
+ * member from the session and answers 403 to anybody else. A changed
+ * schedule or pause is handed to the page as `messages-changed`, so its
+ * pause line and the tab count follow.
+ */
+new class extends Component
+{
+    use WithMessageDrafts;
+    use WithViewer;
+
+
+    /** The election timeline messages the schedule offers. */
+    private const SCHEDULE_TYPES = [
+        DmMessageType::ElectionAnnouncement,
+        DmMessageType::NominationDeadline,
+        DmMessageType::FeeReminder,
+        DmMessageType::ElectionStartsNow,
+    ];
+
+    public ?int $scheduleElectionId = null;
+
+    public string $newType = 'election_announcement';
+
+    public string $newAudience = 'members';
+
+    public string $newDate = '';
+
+    public string $newTime = '09:00';
+
+    /** @var array<string, string> */
+    public array $newVariables = [];
+
+    public bool $paused = false;
+
+    public function mount(DirectMessagePause $pause): void
+    {
+        $this->boardActor();
+
+        $this->scheduleElectionId = $this->defaultElection()?->id;
+        $this->applyNewTypeDefaults();
+        $this->paused = $pause->isPaused();
+    }
+
+    public function updatedScheduleElectionId(): void
+    {
+        $this->boardActor();
+
+        $this->scheduleElectionId = $this->scheduleElection?->id;
+        $this->resetErrorBag();
+        $this->applyNewTypeDefaults();
+    }
+
+    public function updatedNewType(): void
+    {
+        $this->boardActor();
+
+        if (! in_array(DmMessageType::tryFrom($this->newType), self::SCHEDULE_TYPES, true)) {
+            $this->newType = DmMessageType::ElectionAnnouncement->value;
+        }
+
+        $this->resetErrorBag();
+        $this->applyNewTypeDefaults();
+    }
+
+    public function addSchedule(ScheduleDirectMessage $schedule): void
+    {
+        $actor = $this->boardActor();
+        $election = $this->scheduleElection ?? abort(404);
+
+        $type = DmMessageType::tryFrom($this->newType);
+        $audience = DmAudience::tryFrom($this->newAudience);
+
+        $this->validate([
+            'newDate' => ['required', 'date_format:Y-m-d'],
+            'newTime' => ['required', 'date_format:H:i'],
+        ], [
+            'newDate.*' => __('Wähle den Tag, an dem die Nachricht rausgeht.'),
+            'newTime.*' => __('Wähle die Uhrzeit, zum Beispiel 09:00.'),
+        ]);
+
+        if (! in_array($type, self::SCHEDULE_TYPES, true) || $audience === null) {
+            $this->addError('newType', __('Wähle eine der angebotenen Nachrichten.'));
+
+            return;
+        }
+
+        $sendAt = Carbon::createFromFormat('Y-m-d H:i', $this->newDate.' '.$this->newTime, DisplayTime::zone())->utc();
+
+        if ($sendAt->isPast()) {
+            $this->addError('newDate', __('Dieser Zeitpunkt ist schon vorbei. Wähle einen späteren.'));
+
+            return;
+        }
+
+        try {
+            $schedule->handle($election, $type, $audience, $sendAt, $this->newMessageVariables($type), author: $actor);
+        } catch (DirectMessageTextInvalid) {
+            foreach ($this->problemsOf($type, $type->defaultText(), $this->newMessageVariables($type))['variables'] as $variable => $problem) {
+                $this->addError('newVariables.'.$variable, $problem);
+            }
+
+            return;
+        }
+
+        unset($this->scheduleRows);
+        $this->dispatch('messages-changed');
+        Flux::toast(__('„:type“ ist eingeplant für :when.', ['type' => $type->label(), 'when' => $this->longDate($sendAt)]), variant: 'success');
+    }
+
+    /**
+     * Take a planned row out before it has gone out. A row that was already
+     * started stays: its run is history.
+     */
+    public function removeSchedule(int $scheduleId): void
+    {
+        $this->boardActor();
+
+        $row = DmSchedule::query()->with('message')->findOrFail($scheduleId);
+
+        if ($row->dm_run_id !== null) {
+            Flux::toast(__('Diese Nachricht ist schon raus und steht im Verlauf.'), variant: 'danger');
+
+            return;
+        }
+
+        $label = $row->message->type->label();
+        $message = $row->message;
+        $row->delete();
+
+        // The text was written for this row only.
+        if (! $message->runs()->exists() && ! DmSchedule::query()->where('dm_message_id', $message->id)->exists()) {
+            $message->delete();
+        }
+
+        unset($this->scheduleRows);
+        $this->dispatch('messages-changed');
+        Flux::toast(__('„:type“ ist aus dem Zeitplan entfernt.', ['type' => $label]));
+    }
+
+    public function updatedPaused(DirectMessagePause $pause): void
+    {
+        $this->boardActor();
+
+        if ($this->paused) {
+            $pause->pause();
+            Flux::toast(__('Versand pausiert. Bis zum Fortsetzen geht keine Nachricht raus.'));
+        } else {
+            $pause->resume();
+            Flux::toast(__('Versand fortgesetzt. Was liegen geblieben ist, geht jetzt raus.'), variant: 'success');
+        }
+
+        $this->paused = $pause->isPaused();
+        unset($this->pausedAt);
+        $this->dispatch('messages-changed');
+    }
+
+    #[Computed]
+    public function scheduleElection(): ?Election
+    {
+        $this->boardActor();
+
+        return $this->scheduleElectionId === null ? null : $this->elections->firstWhere('id', $this->scheduleElectionId);
+    }
+
+    #[Computed]
+    public function pausedAt(): ?CarbonInterface
+    {
+        $this->boardActor();
+
+        return app(DirectMessagePause::class)->pausedAt();
+    }
+
+    /**
+     * @return EloquentCollection<int, DmSchedule>
+     */
+    #[Computed]
+    public function scheduleRows(): EloquentCollection
+    {
+        $this->boardActor();
+
+        return $this->scheduleElectionId === null ? new EloquentCollection : DmSchedule::query()
+            ->with(['message', 'election', 'run'])
+            ->where('election_event_id', $this->scheduleElectionId)
+            ->orderBy('send_at')
+            ->orderBy('id')
+            ->get();
+    }
+
+    /**
+     * @return list<DmMessageType>
+     */
+    public function scheduleTypes(): array
+    {
+        return self::SCHEDULE_TYPES;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    protected function newMessageVariables(DmMessageType $type): array
+    {
+        return $this->valuesFor($type, $this->newVariables);
+    }
+
+    protected function applyNewTypeDefaults(): void
+    {
+        $type = DmMessageType::tryFrom($this->newType) ?? DmMessageType::ElectionAnnouncement;
+        $this->newAudience = $this->defaultAudience($type)->value;
+        $this->newVariables = $this->defaultValues($type, $this->scheduleElection);
+    }
+};
+?>
+
 @php
     $election = $this->scheduleElection;
     $newTypeCase = \App\Enums\DmMessageType::tryFrom($newType) ?? \App\Enums\DmMessageType::ElectionAnnouncement;

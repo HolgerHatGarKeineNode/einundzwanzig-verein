@@ -7,8 +7,11 @@ use App\Models\EinundzwanzigPleb;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
 use App\Models\Profile;
+use App\Support\NostrAuth;
 use Livewire\Exceptions\MethodNotFoundException;
 use Livewire\Livewire;
+
+require_once __DIR__.'/../Services/Election/helpers.php';
 
 /**
  * S4 of the page optimisation plan: every public method of a Livewire
@@ -41,11 +44,13 @@ it('refuses a guest calling runOffOf on the election page', function () {
 });
 
 it('refuses a guest calling a model helper of the message centre', function (string $method, Closure $argument) {
-    $page = Livewire::test('association.messages.admin');
+    // The helpers live in the history tab, a component of its own that only
+    // the board can mount; the session is a guest's by the time of the call.
+    NostrAuth::login(electionBoard(1)[0]->pubkey);
+    $history = Livewire::test('association.messages.admin-history');
+    NostrAuth::logout();
 
-    expect($page->instance()->isGuest)->toBeTrue();
-
-    expect(fn () => $page->call($method, $argument()))->toThrow(MethodNotFoundException::class);
+    expect(fn () => $history->call($method, $argument()))->toThrow(MethodNotFoundException::class);
 })->with([
     'nameOf' => ['nameOf', fn () => EinundzwanzigPleb::factory()->create()->id],
     'recipientsOf' => ['recipientsOf', fn () => DmMessage::factory()->create()->freezeRun([EinundzwanzigPleb::factory()->create()])->id],
