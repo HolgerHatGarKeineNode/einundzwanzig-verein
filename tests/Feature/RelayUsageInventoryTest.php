@@ -84,7 +84,6 @@ it('lets no file but the listed ones open a relay connection of its own', functi
             'app/Services/Nostr/Relay/WebSocket/WebSocketRelayConnection.php',
             'app/Services/Nostr/Relay/WebSocket/WebSocketRelayConnector.php',
             'app/Traits/NostrFetcherTrait.php',
-            'resources/views/livewire/association/profile.blade.php',
             'vendor/einundzwanzig/group/src/Nostr/ProfileCache.php',
             'vendor/einundzwanzig/group/src/Nostr/SpaceCache.php',
         ]);

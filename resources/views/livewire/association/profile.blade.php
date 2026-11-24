@@ -7,21 +7,17 @@ use App\Models\EinundzwanzigPleb;
 use App\Models\PaymentEvent;
 use App\Services\BtcPayClient;
 use App\Services\MembershipService;
+use App\Services\Nostr\RelayTransport;
 use App\Support\NostrAuth;
 use App\Traits\NostrFetcherTrait;
 use Carbon\Carbon;
 use Flux\Flux;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\RateLimiter;
 use Livewire\Attributes\Locked;
 use Livewire\Attributes\Url;
 use Livewire\Component;
-use swentel\nostr\Filter\Filter;
-use swentel\nostr\Message\RequestMessage;
-use swentel\nostr\Relay\Relay;
-use swentel\nostr\Relay\RelaySet;
-use swentel\nostr\Request\Request;
-use swentel\nostr\Subscription\Subscription;
 
 new class extends Component
 {
@@ -54,7 +50,7 @@ new class extends Component
     public array $yearsPaid = [];
 
     #[Locked]
-    public array $events = [];
+    public ?string $feeEventContent = null;
 
     #[Locked]
     public $payments;
@@ -144,7 +140,7 @@ new class extends Component
         $this->showEmail = ! $this->no;
         $this->amountToPay = $this->membership()->fee();
         $this->resolveCurrentPaymentEvent();
-        $this->loadEvents();
+        $this->loadFeeEventContent();
         $this->loadPaymentStatus();
     }
 
@@ -213,7 +209,7 @@ new class extends Component
 
         $this->amountToPay = $this->membership()->fee();
         $this->resolveCurrentPaymentEvent();
-        $this->loadEvents();
+        $this->loadFeeEventContent();
         $this->loadPaymentStatus();
     }
 
@@ -451,8 +447,6 @@ new class extends Component
                 $this->currentYearIsPaid = (bool) $paymentEvent->paid;
 
                 if ($release['released']) {
-                    $this->loadEvents();
-
                     $this->invoiceStatusVariant = 'warning';
                     $this->invoiceStatusMessage = 'Die Rechnung ist abgelaufen und wurde entfernt. Starte eine neue Zahlung.';
                 } else {
@@ -608,52 +602,42 @@ new class extends Component
         return $this->membership()->resolvePaymentEvent($this->actingPleb(), (int) date('Y'));
     }
 
-    public function loadEvents(): void
+    /**
+     * The text of the newest kind-32121 fee event, shown above the pay button.
+     *
+     * The text is the same for every member, so it is cached for everybody:
+     * the page used to open a relay WebSocket on every load, with the vendor
+     * client's default timeout of 60 s, and keep every event it got in a
+     * public property. The read goes through RelayTransport now, whose
+     * deadline covers DNS, connect and EOSE together; for ten minutes the
+     * cached text is fresh, for the hour after it is served while a refresh
+     * runs behind the response. A relay that does not answer is cached as
+     * "no text" too, so it costs one wait per ten minutes, not one per page —
+     * and the pay button does not depend on it.
+     */
+    protected function loadFeeEventContent(): void
     {
-        $relayUrl = config('services.relay');
-        if (! $relayUrl) {
-            $this->events = [];
+        $relayUrl = (string) config('services.relay');
+
+        if ($relayUrl === '') {
+            $this->feeEventContent = null;
 
             return;
         }
 
-        $subscription = new Subscription;
-        $subscriptionId = $subscription->setId();
+        $content = Cache::flexible('association:fee-event-content', [600, 3600], function () use ($relayUrl): string {
+            $events = app(RelayTransport::class)->fetch($relayUrl, [
+                'kinds' => [32121],
+                'authors' => ['daf83d92768b5d0005373f83e30d4203c0b747c170449e02fea611a0da125ee6'],
+                'limit' => 1,
+            ])->events;
 
-        $filter1 = new Filter;
-        $filter1->setKinds([32121]);
-        $filter1->setAuthors(['daf83d92768b5d0005373f83e30d4203c0b747c170449e02fea611a0da125ee6']);
-        $filters = [$filter1];
+            $content = collect($events)->sortByDesc('created_at')->first()['content'] ?? null;
 
-        $requestMessage = new RequestMessage($subscriptionId, $filters);
+            return is_string($content) ? $content : '';
+        });
 
-        $relays = [
-            new Relay($relayUrl),
-        ];
-        $relaySet = new RelaySet;
-        $relaySet->setRelays($relays);
-
-        $request = new Request($relaySet, $requestMessage);
-        $response = $request->send();
-
-        $this->events = collect($response[$relayUrl] ?? [])
-            ->map(function ($event) {
-                if (! isset($event->event)) {
-                    return false;
-                }
-
-                return [
-                    'id' => $event->event->id,
-                    'kind' => $event->event->kind,
-                    'content' => $event->event->content,
-                    'pubkey' => $event->event->pubkey,
-                    'tags' => $event->event->tags,
-                    'created_at' => $event->event->created_at,
-                ];
-            })
-            ->filter()
-            ->unique('id')
-            ->toArray();
+        $this->feeEventContent = $content !== '' ? $content : null;
     }
 }
 ?>
@@ -1290,41 +1274,27 @@ new class extends Component
                                 </flux:callout>
                             @endif
 
-                            @php
-                                $latestEvent = collect($events)->sortByDesc('created_at')->first();
-                            @endphp
-
-                            @if(isset($latestEvent))
-                                <p class="text-text-secondary mb-6">{{ $latestEvent['content'] }}</p>
-
-                                <!-- Payment Button -->
-                                <div class="flex justify-center py-6">
-                                    @if(!$currentYearIsPaid)
-                                        <flux:button
-                                            wire:click="pay('{{ date('Y') }}:{{ $currentPubkey }}')"
-                                            variant="primary"
-                                            class="min-h-12 px-8 text-xl">
-                                            <i class="fa-sharp-duotone fa-solid fa-bolt-lightning mr-2"></i>
-                                            {{ __(':amount Sats bezahlen', ['amount' => $amountToPay]) }}
-                                        </flux:button>
-                                    @else
-                                        <flux:button disabled variant="primary" color="green" class="min-h-12 px-8 text-xl">
-                                            <i class="fa-sharp-duotone fa-solid fa-check-circle mr-2"></i>
-                                            Aktuelles Jahr bezahlt
-                                        </flux:button>
-                                    @endif
-                                </div>
-                            @else
-                                <flux:callout variant="danger">
-                                    <div class="flex items-start gap-3">
-                                        <i class="fa-sharp-duotone fa-solid fa-user-helmet-safety mt-1"></i>
-                                        <p class="text-sm">
-                                            Unser Nostr-Relay konnte derzeit nicht erreicht werden, um eine Zahlung zu
-                                            initialisieren. Bitte versuche es später noch einmal.
-                                        </p>
-                                    </div>
-                                </flux:callout>
+                            @if($feeEventContent)
+                                <p class="text-text-secondary mb-6">{{ $feeEventContent }}</p>
                             @endif
+
+                            <!-- Payment Button -->
+                            <div class="flex justify-center py-6">
+                                @if(!$currentYearIsPaid)
+                                    <flux:button
+                                        wire:click="pay('{{ date('Y') }}:{{ $currentPubkey }}')"
+                                        variant="primary"
+                                        class="min-h-12 px-8 text-xl">
+                                        <i class="fa-sharp-duotone fa-solid fa-bolt-lightning mr-2"></i>
+                                        {{ __(':amount Sats bezahlen', ['amount' => $amountToPay]) }}
+                                    </flux:button>
+                                @else
+                                    <flux:button disabled variant="primary" color="green" class="min-h-12 px-8 text-xl">
+                                        <i class="fa-sharp-duotone fa-solid fa-check-circle mr-2"></i>
+                                        Aktuelles Jahr bezahlt
+                                    </flux:button>
+                                @endif
+                            </div>
                         </div>
 
                         <!-- Payment History -->

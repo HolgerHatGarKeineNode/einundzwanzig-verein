@@ -531,6 +531,44 @@ it('renders no payment poll without an open invoice', function () {
     Livewire::test('association.profile')->assertDontSeeHtml('wire:poll.20s="listenForPayment"');
 });
 
+it('shows the pay button when the relay does not answer, without the fee event text', function () {
+    config(['services.relay' => 'wss://relay.example/']);
+    $relay = FakeRelayTransport::bind()->withUnansweringRelay('wss://relay.example/');
+
+    $pleb = EinundzwanzigPleb::factory()->active()->create();
+    NostrAuth::login($pleb->pubkey);
+
+    Livewire::test('association.profile')
+        ->assertSet('feeEventContent', null)
+        ->assertSee(__(':amount Sats bezahlen', ['amount' => config('einundzwanzig.config.membership_fee')]))
+        ->assertDontSee('Unser Nostr-Relay konnte derzeit nicht erreicht werden');
+
+    // The miss is cached too: the next page load does not wait on the relay again.
+    Livewire::test('association.profile');
+
+    expect($relay->fetched())->toHaveCount(1);
+});
+
+it('reads the fee event text once and serves it from the cache', function () {
+    config(['services.relay' => 'wss://relay.example/']);
+    $relay = FakeRelayTransport::bind()->withStoredEvents('wss://relay.example/', [
+        EventSigning::sign(testPrivateKey(), 32121, [], 'Dieses Event dient der Zahlung des Mitgliedsbeitrags.', time()),
+    ]);
+
+    $pleb = EinundzwanzigPleb::factory()->active()->create();
+    NostrAuth::login($pleb->pubkey);
+
+    Livewire::test('association.profile')
+        ->assertSet('feeEventContent', 'Dieses Event dient der Zahlung des Mitgliedsbeitrags.')
+        ->assertSee('Dieses Event dient der Zahlung des Mitgliedsbeitrags.');
+
+    Livewire::test('association.profile')
+        ->assertSet('feeEventContent', 'Dieses Event dient der Zahlung des Mitgliedsbeitrags.');
+
+    expect($relay->fetched())->toHaveCount(1)
+        ->and($relay->fetched()[0]['filter'])->toMatchArray(['kinds' => [32121], 'limit' => 1]);
+});
+
 it('refuses the reserved NIP-05 name on the profile screen', function () {
     /*
      * NIP-05 gives the name `_` a special meaning: clients render
