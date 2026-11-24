@@ -366,7 +366,7 @@ new class extends Component
             foreach ($years as $year) {
                 $headers[] = 'Beitrag '.$year;
             }
-            fputcsv($handle, $headers, ';');
+            fputcsv($handle, $headers, ';', '"', '');
 
             foreach ($plebs as $pleb) {
                 $row = [
@@ -382,7 +382,7 @@ new class extends Component
                     $row[] = $payment ? 'Bezahlt' : 'Offen';
                 }
 
-                fputcsv($handle, $row, ';');
+                fputcsv($handle, $row, ';', '"', '');
             }
 
             fclose($handle);

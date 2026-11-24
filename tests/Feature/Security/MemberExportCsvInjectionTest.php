@@ -31,7 +31,8 @@ function exportedMemberRows(): array
     rewind($handle);
 
     $rows = [];
-    while (($row = fgetcsv($handle, null, ';', '"', '\\')) !== false) {
+    // Parse the way spreadsheets do (RFC 4180): no backslash escape.
+    while (($row = fgetcsv($handle, null, ';', '"', '')) !== false) {
         $rows[] = $row;
     }
     fclose($handle);
@@ -84,4 +85,16 @@ it('leaves ordinary cells untouched', function () {
 
     expect($row[0])->toBe('Alice Example')
         ->and($row[2])->toBe('alice@example.com');
+});
+
+it('keeps a name with a backslash before a quote in one cell', function () {
+    EinundzwanzigPleb::factory()->create(['pubkey' => CSV_EXPORT_BOARD_PUBKEY]);
+    $name = 'x\\";=1+1;';
+    $pleb = memberWithName($name);
+
+    $row = collect(exportedMemberRows())->first(fn (array $row): bool => in_array($pleb->npub, $row, true));
+
+    expect($row)->not->toBeNull()
+        ->and($row[0])->toBe($name)
+        ->and($row[1])->toBe($pleb->npub);
 });
