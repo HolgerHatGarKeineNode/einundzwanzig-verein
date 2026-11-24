@@ -136,7 +136,7 @@ it('stops the vendor NIP-17 path, which dials public relays whatever the configu
 
 /*
  * A refusal is only an exception, and exceptions get caught: by phrity's
- * Client::connect(), by swentel's Request::send(), by NostrFetcherTrait. The
+ * Client::connect(), by swentel's Request::send(), by a catch-all in application code. The
  * child process runs a test whose body is green after swallowing one — the
  * check after the test has to fail it regardless.
  */

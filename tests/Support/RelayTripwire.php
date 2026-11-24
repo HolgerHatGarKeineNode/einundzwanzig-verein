@@ -22,7 +22,7 @@ use PHPUnit\Framework\Assert;
  *    after every test. This is the layer that matters: phrity's
  *    Client::connect() catches every Throwable and rethrows its own
  *    exception, swentel's Request::send() catches that and returns an error
- *    array, and NostrFetcherTrait catches whatever is left. A refusal alone
+ *    array, and a catch-all in application code takes whatever is left. A refusal alone
  *    ends up as "no data", and the test stays green.
  *
  * tests/Feature/RelayStrayConnectionTest.php proves each layer by its effect.

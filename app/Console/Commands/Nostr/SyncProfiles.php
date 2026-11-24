@@ -3,13 +3,11 @@
 namespace App\Console\Commands\Nostr;
 
 use App\Models\EinundzwanzigPleb;
-use App\Traits\NostrFetcherTrait;
+use App\Services\Nostr\ProfileFetcher;
 use Illuminate\Console\Command;
 
 class SyncProfiles extends Command
 {
-    use NostrFetcherTrait;
-
     /**
      * The name and signature of the console command.
      *
@@ -27,7 +25,7 @@ class SyncProfiles extends Command
     /**
      * Execute the console command.
      */
-    public function handle()
+    public function handle(ProfileFetcher $profiles): void
     {
         /*
          * GELOESCHTE MITGLIEDER BLEIBEN HIER DRAUSSEN — und diese Stelle ist
@@ -59,7 +57,7 @@ class SyncProfiles extends Command
         if ($count > 0) {
             $bar = $this->output->createProgressBar($count);
             $bar->start();
-            $this->fetchProfile($plebs->pluck('npub')->toArray());
+            $profiles->fetch($plebs->pluck('pubkey')->all());
 
             $bar->finish();
             $this->info("\n✅ Successfully synced $count profiles!");

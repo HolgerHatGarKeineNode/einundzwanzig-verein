@@ -2,39 +2,40 @@
 
 namespace App\Console\Commands\Nostr;
 
-use App\Traits\NostrFetcherTrait;
+use App\Services\Nostr\ProfileFetcher;
 use Illuminate\Console\Command;
 
 class FetchProfile extends Command
 {
-    use NostrFetcherTrait;
-
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'nostr:pofile {--pubkey=}';
+    protected $signature = 'nostr:profile {--pubkey= : Hex pubkey or npub}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Command description';
+    protected $description = 'Read one kind-0 profile from the profile relays and store it';
 
     /**
      * Execute the console command.
      */
-    public function handle()
+    public function handle(ProfileFetcher $profiles): int
     {
         $pubkey = $this->option('pubkey');
+
         if (empty($pubkey)) {
             $this->error('Please provide a pubkey');
 
-            return;
+            return self::FAILURE;
         }
 
-        $this->fetchProfile([$pubkey]);
+        $this->line('profiles_stored='.$profiles->fetch([$pubkey]));
+
+        return self::SUCCESS;
     }
 }

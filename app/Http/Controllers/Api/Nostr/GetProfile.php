@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api\Nostr;
 
 use App\Http\Controllers\Controller;
 use App\Models\Profile;
-use App\Traits\NostrFetcherTrait;
+use App\Services\Nostr\ProfileFetcher;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -25,8 +25,6 @@ use Illuminate\Support\Facades\Cache;
  */
 class GetProfile extends Controller
 {
-    use NostrFetcherTrait;
-
     /**
      * How long a pubkey whose profile the relays did not deliver is left
      * alone. Every login asks this endpoint, and an unanswered lookup used to
@@ -34,13 +32,22 @@ class GetProfile extends Controller
      */
     private const MISS_TTL_SECONDS = 600;
 
+    /**
+     * Each relay's budget here, DNS and connect included. The lookup runs
+     * inside the request; AppServiceProvider hands this controller a
+     * ProfileFetcher on a transport with this deadline.
+     */
+    public const float RELAY_DEADLINE_SECONDS = 2.0;
+
+    public function __construct(private readonly ProfileFetcher $profiles) {}
+
     public function __invoke(string $key, Request $request): Profile|JsonResponse
     {
         $profile = Profile::query()->where('pubkey', $key)->first();
 
         // add() is atomic: concurrent misses for one pubkey start one lookup.
         if (! $profile && Cache::add('nostr-profile-lookup:'.$key, true, self::MISS_TTL_SECONDS)) {
-            $this->fetchProfile([$key]);
+            $this->profiles->fetch([$key]);
 
             $profile = Profile::query()->where('pubkey', $key)->first();
         }
@@ -50,10 +57,5 @@ class GetProfile extends Controller
         }
 
         return $profile;
-    }
-
-    protected function profileRelayTimeout(): int|float|null
-    {
-        return 2;
     }
 }

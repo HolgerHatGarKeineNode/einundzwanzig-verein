@@ -3,7 +3,10 @@
 use App\Http\Controllers\Api\Nostr\GetProfile;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Profile;
+use App\Providers\AppServiceProvider;
+use App\Services\Nostr\NostrRelayTransport;
 use Illuminate\Support\Facades\Http;
+use Tests\Support\FakeRelayTransport;
 
 /**
  * GET /api/nostr/profile/{key} — Einzelprofil, unauthentifiziert, LESEND.
@@ -22,32 +25,19 @@ function profilePubkey(string $seed): string
 }
 
 /**
- * Ersetzt den Controller durch einen, der den Relay-Abruf nur PROTOKOLLIERT statt ihn
- * auszufuehren. Notwendig, weil `fetchProfile()` ueber `swentel/nostr` eine WebSocket-
- * Verbindung aufbaut und nicht ueber den HTTP-Client laeuft — `Http::assertNothingSent()`
- * allein wuerde eine Relay-Verbindung also gar nicht sehen und ein gruenes, aber
- * bedeutungsloses Ergebnis liefern.
+ * One in-memory profile relay that records each request instead of connecting.
+ * Needed because the relay lookup goes over a WebSocket, not the HTTP client:
+ * `Http::assertNothingSent()` alone would not see a relay connection and give a
+ * green but meaningless result.
  *
- * Laravel loest den Controller einer Route ueber den Container auf
- * (`Illuminate\Routing\Route::getController()` → `$container->make()`), eine
- * Container-Instanz greift hier also.
+ * Returns a closure that lists the authors of each request in order.
  */
-function spyOnProfileFetch(): object
+function spyOnProfileFetch(): Closure
 {
-    $spy = new class extends GetProfile
-    {
-        /** @var array<int, array<int, string>> */
-        public array $fetched = [];
+    config(['einundzwanzig.config.profile_relays' => ['wss://profiles.example.com']]);
+    $relay = FakeRelayTransport::bind();
 
-        public function fetchProfile($npubs)
-        {
-            $this->fetched[] = $npubs;
-        }
-    };
-
-    app()->instance(GetProfile::class, $spy);
-
-    return $spy;
+    return fn (): array => array_map(fn (array $call): array => $call['filter']['authors'], $relay->fetched());
 }
 
 it('legt fuer einen unbekannten Pubkey keinen EinundzwanzigPleb an', function () {
@@ -106,17 +96,17 @@ it('weist alles ab, was kein 64-stelliger Kleinbuchstaben-Hex ist', function (st
 
 it('erreicht den Controller bei ungueltigem Key gar nicht erst', function () {
     Http::fake([]);
-    $spy = spyOnProfileFetch();
+    $fetched = spyOnProfileFetch();
 
     $this->getJson('/api/nostr/profile/testkey')->assertNotFound();
 
-    expect($spy->fetched)->toBe([]);
+    expect($fetched())->toBe([]);
     Http::assertNothingSent();
 });
 
 it('holt fuer einen gueltigen, unbekannten Pubkey genau einen Relay-Abruf', function () {
     Http::fake([]);
-    $spy = spyOnProfileFetch();
+    $fetched = spyOnProfileFetch();
 
     $pubkey = profilePubkey('gueltig-unbekannt');
 
@@ -124,19 +114,19 @@ it('holt fuer einen gueltigen, unbekannten Pubkey genau einen Relay-Abruf', func
 
     // Gegenprobe zum Test darueber: derselbe Spion zeichnet hier sehr wohl auf,
     // ein leeres `fetched` dort ist also die Route-Constraint und kein toter Spion.
-    expect($spy->fetched)->toBe([[$pubkey]]);
+    expect($fetched())->toBe([[$pubkey]]);
 });
 
 it('fragt die Relays nicht noch einmal, wenn das Profil bereits gespiegelt ist', function () {
     Http::fake([]);
-    $spy = spyOnProfileFetch();
+    $fetched = spyOnProfileFetch();
 
     $pubkey = profilePubkey('gespiegelt');
     Profile::factory()->create(['pubkey' => $pubkey]);
 
     $this->getJson('/api/nostr/profile/'.$pubkey)->assertOk();
 
-    expect($spy->fetched)->toBe([]);
+    expect($fetched())->toBe([]);
 });
 
 it('antwortet mit 404 statt mit 200, wenn kein Profil existiert', function () {
@@ -149,24 +139,33 @@ it('antwortet mit 404 statt mit 200, wenn kein Profil existiert', function () {
 
 it('does not ask the relays again for a pubkey they did not deliver within ten minutes', function () {
     Http::fake([]);
-    $spy = spyOnProfileFetch();
+    $fetched = spyOnProfileFetch();
 
     $pubkey = profilePubkey('miss-cached');
 
     $this->getJson('/api/nostr/profile/'.$pubkey)->assertNotFound();
     $this->getJson('/api/nostr/profile/'.$pubkey)->assertNotFound();
 
-    expect($spy->fetched)->toBe([[$pubkey]]);
+    expect($fetched())->toBe([[$pubkey]]);
 
     $this->travel(11)->minutes();
 
     $this->getJson('/api/nostr/profile/'.$pubkey)->assertNotFound();
 
-    expect($spy->fetched)->toBe([[$pubkey], [$pubkey]]);
+    expect($fetched())->toBe([[$pubkey], [$pubkey]]);
 });
 
 it('waits two seconds per relay instead of the vendor default of 60', function () {
-    $timeout = (fn () => $this->profileRelayTimeout())->call(app(GetProfile::class));
+    // The production binding is registered outside `testing` only; register it as production would.
+    app()->detectEnvironment(fn (): string => 'production');
+    (new AppServiceProvider(app()))->register();
+    $controller = app(GetProfile::class);
+    app()->detectEnvironment(fn (): string => 'testing');
 
-    expect($timeout)->toBe(2);
+    $fetcher = (fn () => $this->profiles)->call($controller);
+    $transport = (fn () => $this->transport)->call($fetcher);
+
+    expect($transport)->toBeInstanceOf(NostrRelayTransport::class)
+        ->and((fn () => $this->deadlineSeconds)->call($transport))->toBe(GetProfile::RELAY_DEADLINE_SECONDS)
+        ->and(GetProfile::RELAY_DEADLINE_SECONDS)->toBe(2.0);
 });

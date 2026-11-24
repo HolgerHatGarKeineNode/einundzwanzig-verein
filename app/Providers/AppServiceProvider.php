@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Auth\NostrUser;
+use App\Http\Controllers\Api\Nostr\GetProfile;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
@@ -15,6 +16,7 @@ use App\Policies\ProjectProposalPolicy;
 use App\Policies\VotePolicy;
 use App\Services\Nostr\NostrRelayTransport;
 use App\Services\Nostr\NotificationKey;
+use App\Services\Nostr\ProfileFetcher;
 use App\Services\Nostr\Relay\DnsHostResolver;
 use App\Services\Nostr\Relay\HostResolver;
 use App\Services\Nostr\Relay\RelayConnector;
@@ -54,6 +56,11 @@ class AppServiceProvider extends ServiceProvider
             $this->app->bind(HostResolver::class, DnsHostResolver::class);
             $this->app->bind(RelayConnector::class, WebSocketRelayConnector::class);
             $this->app->bind(RelayTransport::class, NostrRelayTransport::class);
+
+            // The profile endpoint reads relays inside the request: a shorter deadline per relay.
+            $this->app->when(GetProfile::class)->needs(ProfileFetcher::class)->give(
+                fn ($app): ProfileFetcher => new ProfileFetcher($app->make(NostrRelayTransport::class, ['deadlineSeconds' => GetProfile::RELAY_DEADLINE_SECONDS])),
+            );
         }
     }
 
