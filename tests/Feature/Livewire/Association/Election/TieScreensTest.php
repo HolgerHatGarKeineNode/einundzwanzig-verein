@@ -19,8 +19,10 @@ use App\Services\Election\ElectionAuditLog;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\OpenRound;
 use App\Services\Election\RecordCastingVote;
+use App\Services\Election\RefusalText;
 use App\Services\Election\RoundManifest;
 use App\Services\Election\RoundReport;
+use App\Services\Election\TallyResult;
 use App\Services\Election\TallyRound;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
@@ -29,6 +31,7 @@ use Livewire\Features\SupportTesting\Testable;
 use Livewire\Livewire;
 
 require_once __DIR__.'/../../../../Feature/Services/Election/helpers.php';
+require_once __DIR__.'/helpers.php';
 
 /*
  * A tie on every screen (statutes Art. 6: „Bei Stimmengleichheit fällt
@@ -75,6 +78,14 @@ function tiedEvening(string $title = 'Präsidium', bool $tied = true): array
 function tieAdmin(): Testable
 {
     return Livewire::test('association.election.admin');
+}
+
+/**
+ * The meeting component of the round's election, where the tie dialogs live.
+ */
+function tieLive(ElectionRound $round): Testable
+{
+    return liveControl($round->election);
 }
 
 /**
@@ -161,7 +172,9 @@ it('shows the result with a line naming the chair once the casting vote is recor
     tieAdmin()->assertSee($line)
         ->assertSee('Anmerkung: Nach Aussprache')
         ->assertDontSeeHtml("startCastingVote({$round->id})")
-        ->assertDontSeeHtml("startTieRunOff({$round->id})");
+        ->assertDontSeeHtml("startTieRunOff({$round->id})")
+        ->assertDontSee(runSheetClick('start-casting-vote', $round->id))
+        ->assertDontSee(runSheetClick('start-tie-run-off', $round->id));
 });
 
 it('says on every screen that the assembly resolved a run-off instead', function () {
@@ -173,13 +186,15 @@ it('says on every screen that the assembly resolved a run-off instead', function
     $this->get(route('association.election.admin.protocol', $election))->assertOk()->assertSee($sentence);
     tieMemberPage()->assertSee($sentence);
     NostrAuth::login($board->pubkey);
-    tieAdmin()->assertSee($sentence)->assertDontSeeHtml("startCastingVote({$round->id})");
+    tieAdmin()->assertSee($sentence)
+        ->assertDontSeeHtml("startCastingVote({$round->id})")
+        ->assertDontSee(runSheetClick('start-casting-vote', $round->id));
 });
 
 it('takes the casting vote in the board dialog, with the tied counts, the count rule and the chair', function () {
     [, $election, $round, $ids] = tiedEvening();
 
-    tieAdmin()
+    tieLive($round)
         ->call('startCastingVote', $round->id)
         ->assertSee('Stichentscheid zu „Präsidium“')
         ->assertSeeHtml('data-test="casting-candidate-'.$ids['alice'].'"')
@@ -206,7 +221,7 @@ it('refuses a chair name over 60 characters in the dialog with a German error, a
     [, $election, $round, $ids] = tiedEvening();
     $chair = 'Erika Magdalena Mustermann-Vorsitz von der Leyen-Schwarzwald';
 
-    $page = tieAdmin()
+    $page = tieLive($round)
         ->call('startCastingVote', $round->id)
         ->assertSeeHtml('maxlength="60"')
         ->set('castingCandidates', [$ids['alice']])
@@ -227,9 +242,9 @@ it('refuses the dialog for a round that is not tied, and for a member', function
     [, $election, $round, $ids] = tiedEvening();
     $other = openElectionRound(election: $election);
 
-    tieAdmin()->call('startCastingVote', $other->id)->assertNotFound();
+    tieLive($round)->call('startCastingVote', $other->id)->assertNotFound();
 
-    $page = tieAdmin()->call('startCastingVote', $round->id)->set('castingCandidates', [$ids['alice']])->set('castingChair', 'Erika Vorsitz');
+    $page = tieLive($round)->call('startCastingVote', $round->id)->set('castingCandidates', [$ids['alice']])->set('castingChair', 'Erika Vorsitz');
     $member = electionVoter();
     NostrAuth::login($member->pubkey);
     $page->call('recordCastingVote')->assertForbidden();
@@ -285,7 +300,7 @@ it('refuses in the dialog a casting vote for a person elected in another round, 
     castElectionBallot($treasury, $voters[1], [$treasuryAlice => 'for']);
     app(CloseRound::class)->handle($treasury);
 
-    $page = tieAdmin()
+    $page = tieLive($round)
         ->call('startCastingVote', $round->id)
         ->set('castingCandidates', [$ids['alice']])
         ->set('castingChair', 'Erika Vorsitz')
@@ -315,7 +330,7 @@ it('refuses in the dialog a casting vote for a person standing in another opened
     app(Candidacies::class)->withdraw($runOff->candidates()->where('einundzwanzig_pleb_id', $alice->id)->firstOrFail(), $board, 'steht in der Kasse');
     app(ElectionStewardship::class)->annul(app(OpenRound::class)->handle($runOff->fresh()), $board, 'zurück an die Vorsitzende');
 
-    $page = tieAdmin()
+    $page = tieLive($round)
         ->call('startCastingVote', $round->id)
         ->set('castingCandidates', [$ids['alice']])
         ->set('castingChair', 'Erika Vorsitz')
@@ -333,7 +348,7 @@ it('refuses in the dialog a casting vote for a person standing in another opened
 it('refuses the casting vote with a form error when the round was annulled while the dialog was open', function () {
     [$board, $election, $round, $ids] = tiedEvening();
 
-    $page = tieAdmin()
+    $page = tieLive($round)
         ->call('startCastingVote', $round->id)
         ->call('$refresh')->assertOk()
         ->set('castingCandidates', [$ids['alice']])
@@ -414,10 +429,10 @@ function fakeUnreadableCountServices(): void
 {
     app()->bind(CreateRunOff::class, fn ($app) => new class($app->make(TallyRound::class), $app->make(ElectionAuditLog::class)) extends CreateRunOff
     {
-        public function proposal(ElectionRound $round): array
+        public function proposal(ElectionRound $round, ?TallyResult $effective = null): array
         {
             try {
-                return parent::proposal($round);
+                return parent::proposal($round, $effective);
             } catch (UnexpectedValueException) {
                 return ['candidates' => [], 'seats' => 0, 'needs_resolution' => false];
             }
@@ -470,7 +485,7 @@ it('answers a tie dialog on a round with an unreadable count with the verify hin
     $hint = 'Ergebnis nicht lesbar: Die gespeicherten Stimmen passen nicht zu diesem Wahlgang. Prüfen mit „php artisan election:verify '.$round->id.'“.';
 
     // The dialog was already open when the row broke.
-    $page = tieAdmin()->call('startCastingVote', $round->id)->set('castingCandidates', [$ids['alice']])->set('castingChair', 'Erika Vorsitz');
+    $page = tieLive($round)->call('startCastingVote', $round->id)->set('castingCandidates', [$ids['alice']])->set('castingChair', 'Erika Vorsitz');
     corruptStoredVotes($round);
 
     $page->call('recordCastingVote')->assertOk()->assertHasErrors(['castingCandidates'])->assertSee($hint);
@@ -478,7 +493,7 @@ it('answers a tie dialog on a round with an unreadable count with the verify hin
 
     // Opening either dialog afresh: a toast, no dialog, and the live list marks the round.
     foreach (['startCastingVote', 'startTieRunOff'] as $action) {
-        tieAdmin()->call($action, $round->id)->assertOk()
+        tieLive($round)->call($action, $round->id)->assertOk()
             ->assertDispatched('toast-show', fn (string $event, array $params): bool => $params['dataset']['variant'] === 'danger' && $params['slots']['text'] === $hint)
             ->assertSet('tieRoundId', null)
             ->assertSeeHtml('data-test="live-unreadable-'.$round->id.'"')
@@ -489,13 +504,13 @@ it('answers a tie dialog on a round with an unreadable count with the verify hin
 it('names the unreadable count when the run-off of such a round is refused', function () {
     fakeUnreadableCountServices();
     [, , $round] = tiedEvening();
-    $page = tieAdmin()->call('startTieRunOff', $round->id)->set('runOffResolved', true);
+    $page = tieLive($round)->call('startTieRunOff', $round->id)->set('runOffResolved', true);
     corruptStoredVotes($round);
     $refusal = 'Für „Präsidium“ lässt sich keine Stichwahl anlegen: Ergebnis nicht lesbar. Prüft den Wahlgang mit „php artisan election:verify '.$round->id.'“ oder annulliert ihn.';
 
     $page->call('confirmTieRunOff')->assertOk()->assertHasErrors(['runOffResolved'])->assertSee($refusal);
 
-    tieAdmin()->call('createRunOff', $round->id)->assertOk()
+    tieLive($round)->call('createRunOff', $round->id)->assertOk()
         ->assertDispatched('toast-show', fn (string $event, array $params): bool => $params['dataset']['variant'] === 'danger' && $params['slots']['text'] === $refusal);
     expect(ElectionRound::query()->where('parent_round_id', $round->id)->exists())->toBeFalse();
 });
@@ -508,14 +523,13 @@ it('names the unreadable count when the run-off of such a round is refused', fun
 it('names the earlier round with an unreadable count when opening is refused for its candidate', function () {
     fakeUnreadableCountServices();
     [, , $round, $ids] = tiedEvening();
-    $page = tieAdmin();
     corruptStoredVotes($round);
     $member = (int) ElectionCandidate::query()->findOrFail($ids['alice'])->einundzwanzig_pleb_id;
 
-    $text = (new ReflectionMethod($page->instance(), 'refusalText'))->invoke($page->instance(), 'open', new ElectionCandidateBlockedException(
+    $text = app(RefusalText::class)->of('open', new ElectionCandidateBlockedException(
         'A candidate of this round stands in an earlier round of the election whose stored votes cannot be counted; check it with election:verify.',
         $member,
-    ));
+    ), $round->election);
 
     expect($text)->toBe('Alice Ambrosius kandidiert auch in „Präsidium“, und dessen Ergebnis ist nicht lesbar. Prüft ihn mit „php artisan election:verify '.$round->id.'“ oder annulliert ihn.')
         ->not->toContain('Lade die Seite neu');
@@ -535,7 +549,7 @@ it('decides a yes = no tie with Nein only when the chair confirms it, never by a
     $round = app(CloseRound::class)->handle($round);
     NostrAuth::login($board->pubkey);
 
-    tieAdmin()
+    tieLive($round)
         ->call('startCastingVote', $round->id)
         ->assertSeeHtml('data-test="casting-all-no"')
         ->set('castingChair', 'Erika Vorsitz')
@@ -550,7 +564,7 @@ it('decides a yes = no tie with Nein only when the chair confirms it, never by a
 
     expect(ElectionCastingVote::query()->where('election_round_id', $round->id)->exists())->toBeFalse();
 
-    tieAdmin()
+    tieLive($round)
         ->call('startCastingVote', $round->id)
         ->set('castingChair', 'Erika Vorsitz')
         ->set('castingAllNo', true)

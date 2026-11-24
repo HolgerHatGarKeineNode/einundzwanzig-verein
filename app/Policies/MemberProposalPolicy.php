@@ -8,6 +8,7 @@ use App\Enums\MemberProposalState;
 use App\Models\EinundzwanzigPleb;
 use App\Models\MemberProposal;
 use App\Models\MemberProposalComment;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * Who may do what with the members' proposals.
@@ -135,8 +136,6 @@ class MemberProposalPolicy
 
     private function isBoard(NostrUser $user): bool
     {
-        $pleb = $user->getPleb();
-
-        return $pleb instanceof EinundzwanzigPleb && $pleb->isBoardMember();
+        return Gate::forUser($user)->allows('board');
     }
 }

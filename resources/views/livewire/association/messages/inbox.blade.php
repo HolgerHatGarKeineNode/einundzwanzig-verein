@@ -1,6 +1,7 @@
 <?php
 
 use App\Jobs\Dm\SendInboxReply;
+use App\Livewire\Traits\WithViewer;
 use App\Models\DmInboxMessage;
 use App\Models\EinundzwanzigPleb;
 use App\Models\MemberProposal;
@@ -26,6 +27,8 @@ new
 #[Title('Posteingang des Vorstands')]
 class extends Component
 {
+    use WithViewer;
+
     private const MAX_REPLY_CHARS = 4000;
 
     private const CONVERSATIONS_SHOWN = 100;
@@ -39,6 +42,22 @@ class extends Component
 
     public string $reply = '';
 
+    /**
+     * Members by pubkey, null for anyone who is none, read once per request:
+     * the list names up to CONVERSATIONS_SHOWN contacts and the open thread
+     * asks for its member several times. Private, so never in the snapshot.
+     *
+     * @var array<string, EinundzwanzigPleb|null>
+     */
+    private array $members = [];
+
+    /**
+     * Cached Nostr profiles by pubkey, for contacts who are no member.
+     *
+     * @var array<string, Profile|null>
+     */
+    private array $profiles = [];
+
     public function mount(): void
     {
         if (! NostrAuth::check()) {
@@ -47,7 +66,7 @@ class extends Component
             return;
         }
 
-        $this->actor();
+        $this->boardActor();
 
         if ($this->contact !== null) {
             $this->open($this->contact);
@@ -56,7 +75,7 @@ class extends Component
 
     public function open(string $contact): void
     {
-        $this->actor();
+        $this->boardActor();
 
         if (! DmInboxMessage::query()->where('counterparty_pubkey', $contact)->exists()) {
             $this->contact = null;
@@ -77,14 +96,14 @@ class extends Component
 
     public function close(): void
     {
-        $this->actor();
+        $this->boardActor();
         $this->contact = null;
         $this->reply = '';
     }
 
     public function send(): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
 
         $this->validate(
             ['reply' => ['required', 'string', 'min:2', 'max:'.self::MAX_REPLY_CHARS]],
@@ -144,16 +163,16 @@ class extends Component
             ->pluck('unread', 'counterparty_pubkey');
 
         $last = DmInboxMessage::query()->whereIn('id', $latest->values())->get()->keyBy('id');
-        $members = EinundzwanzigPleb::query()->notErased()->whereIn('pubkey', $latest->keys())->pluck('id', 'pubkey');
+        $this->loadContacts($latest->keys()->all());
         app(\App\Support\NostrAvatars::class)->preload($latest->keys());
 
-        return $latest->map(function (int $lastId, string $contact) use ($last, $unread, $members): array {
+        return $latest->map(function (int $lastId, string $contact) use ($last, $unread): array {
             $message = $last[$lastId];
 
             return [
                 'contact' => $contact,
                 'name' => $this->nameOf($contact),
-                'is_member' => $members->has($contact),
+                'is_member' => $this->memberFor($contact) !== null,
                 'preview' => ($message->direction === DmInboxMessage::OUT ? __('Vorstand: ') : '').str($message->body)->squish()->limit(90)->toString(),
                 'last_at' => $message->sent_at,
                 'unread' => (int) ($unread[$contact] ?? 0),
@@ -178,9 +197,49 @@ class extends Component
             ->get();
     }
 
+    /**
+     * Reads the members and, for everyone else, the cached profiles behind
+     * `$contacts` in two queries, so naming the list does not query per row.
+     *
+     * @param  list<string>  $contacts
+     */
+    protected function loadContacts(array $contacts): void
+    {
+        $missing = array_values(array_diff($contacts, array_keys($this->members)));
+
+        if ($missing === []) {
+            return;
+        }
+
+        $members = EinundzwanzigPleb::query()->notErased()->with(['profile', 'dmRelays'])->whereIn('pubkey', $missing)->get()->keyBy('pubkey');
+        $others = [];
+
+        foreach ($missing as $contact) {
+            $this->members[$contact] = $members->get($contact);
+
+            if ($this->members[$contact] === null && ! array_key_exists($contact, $this->profiles)) {
+                $others[] = $contact;
+            }
+        }
+
+        if ($others !== []) {
+            $profiles = Profile::query()->whereIn('pubkey', $others)->get()->keyBy('pubkey');
+
+            foreach ($others as $contact) {
+                $this->profiles[$contact] = $profiles->get($contact);
+            }
+        }
+    }
+
     protected function memberFor(?string $contact): ?EinundzwanzigPleb
     {
-        return $contact === null ? null : EinundzwanzigPleb::query()->notErased()->with(['profile', 'dmRelays'])->where('pubkey', $contact)->first();
+        if ($contact === null) {
+            return null;
+        }
+
+        $this->loadContacts([$contact]);
+
+        return $this->members[$contact];
     }
 
     /**
@@ -196,15 +255,10 @@ class extends Component
             return MemberProposal::authorNameOf($member);
         }
 
-        $profile = Profile::query()->where('pubkey', $contact)->first();
+        // Loaded with the member lookup above: a contact who is no member has an entry here.
+        $profile = $this->profiles[$contact] ?? null;
 
-        if (filled($profile?->name) || filled($profile?->display_name)) {
-            return (string) ($profile->name ?: $profile->display_name);
-        }
-
-        $npub = (new Key)->convertPublicKeyToBech32($contact);
-
-        return substr($npub, 0, 12).'…'.substr($npub, -6);
+        return $profile?->label() ?? EinundzwanzigPleb::shortenNpub((new Key)->convertPublicKeyToBech32($contact));
     }
 
     protected function contactIsMember(): bool
@@ -235,14 +289,6 @@ class extends Component
         };
     }
 
-    protected function actor(): EinundzwanzigPleb
-    {
-        $pleb = NostrAuth::user()?->getPleb();
-
-        abort_unless($pleb instanceof EinundzwanzigPleb && ! $pleb->isErased() && $pleb->isBoardMember(), 403);
-
-        return $pleb;
-    }
 };
 ?>
 
@@ -260,12 +306,12 @@ class extends Component
             $thread = $this->thread();
         @endphp
 
-        <header class="mb-8 max-w-2xl">
-            <h1 class="text-3xl font-bold leading-tight text-text-primary">{{ __('Posteingang des Vorstands') }}</h1>
-            <p class="mt-2 text-base text-text-secondary">
+        <x-page-header>
+            <x-slot:title>{{ __('Posteingang des Vorstands') }}</x-slot:title>
+            <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                 {{ __('Alle Nostr-Direktnachrichten an das Vereinskonto, von Mitgliedern und allen anderen. Jedes Vorstandsmitglied sieht alle Gespräche; eure Antwort geht als Nostr-Direktnachricht vom Vereinskonto.') }}
             </p>
-        </header>
+        </x-page-header>
 
         @unless ($this->inboxIsOn())
             <div role="status" class="mb-8 rounded-r-lg border-l-4 border-warning bg-bg-elevated p-4" data-test="inbox-off">
@@ -294,12 +340,13 @@ class extends Component
                                         data-test="open-{{ $conversation['contact'] }}"></button>
                                 <span class="pointer-events-none relative flex w-full items-baseline justify-between gap-3">
                                     <span class="min-w-0 break-words text-base font-bold text-text-primary"><span class="pointer-events-auto relative"><x-nostr-profile :pubkey="$conversation['contact']" :name="$conversation['name']" /></span>@unless ($conversation['is_member'])<span class="ms-2 whitespace-nowrap text-sm font-normal text-text-tertiary" data-test="not-member">{{ __('kein Mitglied') }}</span>@endunless</span>
-                                    <span class="shrink-0 text-sm tabular-nums text-text-tertiary">{{ $conversation['last_at']->timezone('Europe/Berlin')->format('d.m. H:i') }}</span>
+                                    <span class="shrink-0 text-sm tabular-nums text-text-tertiary">{{ \App\Support\DisplayTime::of($conversation['last_at'])->format('d.m. H:i') }}</span>
                                 </span>
                                 <span class="pointer-events-none relative flex w-full items-start justify-between gap-3">
                                     <span class="min-w-0 break-words text-sm text-text-secondary">{{ $conversation['preview'] }}</span>
                                     @if ($conversation['unread'] > 0)
-                                        <flux:badge color="orange" size="sm" class="shrink-0" data-test="unread-{{ $conversation['contact'] }}">{{ trans_choice('{1} 1 neu|[2,*] :count neu', $conversation['unread'], ['count' => $conversation['unread']]) }}</flux:badge>
+                                        {{-- Unread as on the member's message page: white border and the word, no state colour. --}}
+                                        <span class="shrink-0 rounded-sm border border-text-primary px-1.5 text-sm font-bold whitespace-nowrap text-text-primary" data-test="unread-{{ $conversation['contact'] }}">{{ trans_choice('{1} 1 neu|[2,*] :count neu', $conversation['unread'], ['count' => $conversation['unread']]) }}</span>
                                     @endif
                                 </span>
                             </li>
@@ -325,7 +372,7 @@ class extends Component
                                     @if ($message->direction === \App\Models\DmInboxMessage::OUT)
                                         {{ __('Vorstand, :name', ['name' => \App\Models\MemberProposal::authorNameOf($message->author)]) }} ·
                                     @endif
-                                    <span class="tabular-nums">{{ $message->sent_at->timezone('Europe/Berlin')->format('d.m.Y H:i') }}</span>
+                                    <span class="tabular-nums">{{ \App\Support\DisplayTime::of($message->sent_at)->format('d.m.Y H:i') }}</span>
                                     @if ($message->direction === \App\Models\DmInboxMessage::OUT)
                                         · <span @class(['text-danger' => in_array($message->status, [\App\Models\DmInboxMessage::STATUS_NO_INBOX, \App\Models\DmInboxMessage::STATUS_FAILED], true)])>{{ $this->statusLabel($message->status) }}</span>
                                     @endif

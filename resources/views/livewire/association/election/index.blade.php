@@ -5,13 +5,17 @@ use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionFeeRule;
 use App\Enums\ElectionOutcome;
+use App\Enums\ElectionPhase;
 use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionBallotRefusedException;
 use App\Exceptions\ElectionBallotWriteException;
 use App\Exceptions\ElectionRoundStateException;
+use App\Livewire\Traits\WithViewer;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
+use App\Models\ElectionCastingVote;
+use App\Models\ElectionManifest;
 use App\Models\ElectionRound;
 use App\Models\MemberProposal;
 use App\Services\Election\Candidacies;
@@ -21,13 +25,13 @@ use App\Services\Election\ElectoralRoll;
 use App\Services\Election\TallyResult;
 use App\Services\Election\TallyRound;
 use App\Services\Election\VoteEvent;
+use App\Support\DisplayTime;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Flux\Flux;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Url;
@@ -35,10 +39,9 @@ use Livewire\Component;
 
 new class extends Component
 {
-    private const STATEMENT_MAX = 2000;
+    use WithViewer;
 
-    /** Times are stored in UTC (app.timezone) and shown as members in Germany read them. */
-    public const DISPLAY_TIMEZONE = 'Europe/Berlin';
+    private const STATEMENT_MAX = 2000;
 
     /**
      * What the rounds looked like at the last render, so a poll that finds
@@ -69,21 +72,7 @@ new class extends Component
 
     public string $statement = '';
 
-    /**
-     * The member behind the session, or null. Resolved on every request,
-     * never stored on the component.
-     */
-    protected function viewer(): ?EinundzwanzigPleb
-    {
-        $pleb = NostrAuth::user()?->getPleb();
 
-        return $pleb instanceof EinundzwanzigPleb && ! $pleb->isErased() ? $pleb : null;
-    }
-
-    protected function can(string $ability, mixed $subject): bool
-    {
-        return Gate::forUser(NostrAuth::user())->allows($ability, $subject);
-    }
 
     /**
      * The member's own pubkey, for the signer check in the browser.
@@ -125,7 +114,7 @@ new class extends Component
             })
             ->orderByDesc('id')
             ->get()
-            ->filter(fn (Election $election): bool => $this->can('view', $election))
+            ->filter(fn (Election $election): bool => $this->viewerCan('view', $election))
             ->values();
     }
 
@@ -141,9 +130,9 @@ new class extends Component
         $real = $elections->reject(fn (Election $election): bool => $election->is_test);
 
         return $elections->firstWhere('id', $this->electionId)
-            ?? $real->first(fn (Election $election): bool => $this->phaseOf($election) !== 'result')
+            ?? $real->first(fn (Election $election): bool => $election->phaseOfRounds() !== ElectionPhase::Result)
             ?? $real->first()
-            ?? $elections->first(fn (Election $election): bool => $this->phaseOf($election) !== 'result')
+            ?? $elections->first(fn (Election $election): bool => $election->phaseOfRounds() !== ElectionPhase::Result)
             ?? $elections->first();
     }
 
@@ -169,32 +158,10 @@ new class extends Component
             ->get();
     }
 
-    protected function phaseOf(Election $election): string
-    {
-        $rounds = $election->rounds()->get();
-        $now = now();
-
-        if ($rounds->isEmpty()) {
-            return 'announced';
-        }
-
-        if ($rounds->every(fn (ElectionRound $round): bool => $round->closed_at !== null || $round->annulled_at !== null)) {
-            return 'result';
-        }
-
-        if ($rounds->contains(fn (ElectionRound $round): bool => $round->opened_at !== null)) {
-            return 'meeting';
-        }
-
-        return $rounds->contains(fn (ElectionRound $round): bool => $round->parent_round_id === null && $round->stateAt($now) === ElectionRoundState::Draft)
-            ? 'candidacy'
-            : 'announced';
-    }
-
     #[Computed]
     public function phase(): string
     {
-        return $this->election === null ? 'none' : $this->phaseOf($this->election);
+        return $this->election?->phaseOfRounds()->value ?? 'none';
     }
 
     /**
@@ -279,7 +246,7 @@ new class extends Component
             return collect();
         }
 
-        return $this->rounds->filter(fn (ElectionRound $round): bool => $this->can('submitCandidacy', $round))->values();
+        return $this->rounds->filter(fn (ElectionRound $round): bool => $this->viewerCan('submitCandidacy', $round))->values();
     }
 
     /**
@@ -314,7 +281,7 @@ new class extends Component
     public function withdrawableIds(): array
     {
         return $this->ownCandidacies
-            ->filter(fn (ElectionCandidate $candidate): bool => $this->can('withdrawOwnCandidacy', $candidate))
+            ->filter(fn (ElectionCandidate $candidate): bool => $this->viewerCan('withdrawOwnCandidacy', $candidate))
             ->map(fn (ElectionCandidate $candidate): int => (int) $candidate->getKey())
             ->values()
             ->all();
@@ -416,7 +383,9 @@ new class extends Component
 
     /**
      * Per round that has been opened: its state now, whether the member is
-     * on its roll, and the id of the member's own vote event, if any.
+     * on its roll, and the id of the member's own vote event, if any. Roll
+     * and votes are read in one query each, whatever the number of rounds:
+     * the fingerprint asks this on every poll.
      *
      * @return array<int, array{state: ElectionRoundState, onRoll: bool, eventId: string|null}>
      */
@@ -424,22 +393,22 @@ new class extends Component
     public function standing(): array
     {
         $viewer = $this->viewer();
-        $roll = app(ElectoralRoll::class);
         $now = now();
-        $standing = [];
+        $states = $this->allRounds->mapWithKeys(fn (ElectionRound $round): array => [(int) $round->getKey() => $round->stateAt($now)]);
+        $openedIds = $states->reject(fn (ElectionRoundState $state): bool => $state === ElectionRoundState::Draft)->keys()->all();
+        $onRoll = [];
+        $eventIds = [];
 
-        foreach ($this->allRounds as $round) {
-            $state = $round->stateAt($now);
-            $opened = $state !== ElectionRoundState::Draft;
-
-            $standing[$round->getKey()] = [
-                'state' => $state,
-                'onRoll' => $opened && $viewer !== null && $roll->contains($round, $viewer),
-                'eventId' => $opened && $viewer !== null ? $round->voteEventIdOf($viewer) : null,
-            ];
+        if ($viewer !== null && $openedIds !== []) {
+            $onRoll = array_flip(app(ElectoralRoll::class)->roundIdsContaining($viewer, $openedIds));
+            $eventIds = ElectionRound::voteEventIdsOf($viewer, $openedIds);
         }
 
-        return $standing;
+        return $states->map(fn (ElectionRoundState $state, int $id): array => [
+            'state' => $state,
+            'onRoll' => isset($onRoll[$id]),
+            'eventId' => $eventIds[$id] ?? null,
+        ])->all();
     }
 
     /**
@@ -628,7 +597,7 @@ new class extends Component
      * there is one without that; null when there is none. An annulled
      * run-off does not count.
      */
-    public function runOffOf(ElectionRound $round): ?string
+    protected function runOffOf(ElectionRound $round): ?string
     {
         $byId = $this->allRounds->keyBy('id');
         $isBelow = function (ElectionRound $each) use ($byId, $round): bool {
@@ -651,7 +620,7 @@ new class extends Component
         return $runOffs->contains(fn (ElectionRound $each): bool => ($this->results[$each->getKey()]->elected ?? []) !== []) ? 'decided' : 'pending';
     }
 
-    public function candidateName(ElectionRound $round, int $candidateId): string
+    protected function candidateName(ElectionRound $round, int $candidateId): string
     {
         return MemberProposal::authorNameOf($round->candidates->firstWhere('id', $candidateId)?->pleb);
     }
@@ -666,7 +635,7 @@ new class extends Component
 
     public function displayTime(CarbonInterface $moment, string $format): string
     {
-        return $moment->copy()->timezone(self::DISPLAY_TIMEZONE)->format($format);
+        return DisplayTime::of($moment)->format($format);
     }
 
     /**
@@ -703,11 +672,37 @@ new class extends Component
             $this->election?->getKey(),
             $this->phase,
             collect($this->standing)->map(fn (array $standing): array => [$standing['state']->value, $standing['onRoll'], $standing['eventId'] !== null])->all(),
-            // The effective result, so a recorded casting vote re-renders too.
-            collect($this->results)->map(fn (TallyResult $result): array => [$result->outcome->value, $result->elected, $result->castingVote?->chair])->all(),
+            // What the results are made of, never the results: a tally per sealed round on every poll was the cost of this page.
+            $this->resultInputs(),
             [$this->meeting['at']?->getTimestamp(), $this->meeting['url']],
             $this->allRounds->map(fn (ElectionRound $round): array => [$round->getKey(), $round->candidates->count()])->all(),
         ], JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * Per round the columns and rows its shown result depends on: the seal,
+     * an annulment, the reveal, the manifest and a recorded casting vote. A
+     * change in any of them changes `results()`; reading them costs two
+     * queries, whatever the number of rounds.
+     *
+     * @return array<int, array<int, mixed>>
+     */
+    protected function resultInputs(): array
+    {
+        $sealedIds = $this->allRounds->filter(fn (ElectionRound $round): bool => $round->isSealed())->map(fn (ElectionRound $round): int => (int) $round->getKey())->values()->all();
+        $manifests = $sealedIds === [] ? collect() : ElectionManifest::query()->whereIn('election_round_id', $sealedIds)->pluck('id', 'election_round_id');
+        $castingVotes = $sealedIds === [] ? collect() : ElectionCastingVote::query()->whereIn('election_round_id', $sealedIds)->get(['id', 'election_round_id', 'created_at'])->keyBy('election_round_id');
+
+        return $this->allRounds->map(fn (ElectionRound $round): array => [
+            $round->getKey(),
+            $round->closed_at?->getTimestamp(),
+            $round->annulled_at?->getTimestamp(),
+            $round->reveal_at?->getTimestamp(),
+            $round->reveal_at !== null && $round->reveal_at->isFuture(),
+            $manifests->get($round->getKey()),
+            $castingVotes->get($round->getKey())?->getKey(),
+            $castingVotes->get($round->getKey())?->created_at?->getTimestamp(),
+        ])->all();
     }
 
     /**
@@ -972,11 +967,9 @@ new class extends Component
             @endif
         </div>
     @else
-        <header class="mb-8 max-w-2xl">
-            <h1 class="hyphens-auto break-words text-3xl font-bold leading-tight text-text-primary sm:text-4xl">
-                {{ $this->election?->name ?? __('Wahl') }}
-            </h1>
-            <p class="mt-2 text-base leading-normal text-text-secondary">
+        <x-page-header>
+            <x-slot:title>{{ $this->election?->name ?? __('Wahl') }}</x-slot:title>
+            <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                 @if ($this->election === null)
                     {{ __('Hier läuft die Vorstandswahl des Vereins, live in der Versammlung.') }}
                 @else
@@ -1003,7 +996,7 @@ new class extends Component
                     @endforeach
                 </nav>
             @endif
-        </header>
+        </x-page-header>
 
         @if ($this->election?->is_test)
             <div role="note" class="mb-8 flex items-start gap-3 rounded-md border border-warning/60 bg-[repeating-linear-gradient(135deg,rgb(250_204_21/0.10)_0_12px,transparent_12px_24px)] px-4 py-3">

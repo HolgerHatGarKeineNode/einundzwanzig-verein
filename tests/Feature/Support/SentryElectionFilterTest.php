@@ -37,6 +37,10 @@ const SENTRY_ELECTION_ROUTES = [
 /** @var list<string> */
 const SENTRY_ELECTION_COMPONENTS = [
     'association.election.admin',
+    'association.election.admin-candidacies',
+    'association.election.admin-form',
+    'association.election.admin-live',
+    'association.election.admin-roll',
     'association.election.index',
     'association.election.protocol',
     'association.election.screen',
@@ -47,6 +51,9 @@ const SENTRY_ELECTION_COMPONENTS = [
 const SENTRY_DM_COMPONENTS = [
     'association.messages',
     'association.messages.admin',
+    'association.messages.admin-compose',
+    'association.messages.admin-history',
+    'association.messages.admin-schedule',
 ];
 
 /** @var list<string> */
@@ -68,8 +75,10 @@ const SENTRY_ELECTION_CLASSES = [
     'App\Services\Election\OpenRound',
     'App\Services\Election\PurgeTestElection',
     'App\Services\Election\RecordCastingVote',
+    'App\Services\Election\RefusalText',
     'App\Services\Election\RoundManifest',
     'App\Services\Election\RoundReport',
+    'App\Services\Election\RunSheet',
     'App\Services\Election\Tally',
     'App\Services\Election\TallyResult',
     'App\Services\Election\TallyRound',

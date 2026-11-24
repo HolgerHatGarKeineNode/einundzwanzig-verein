@@ -1,3 +1,486 @@
+<?php
+
+use App\Enums\DmAudience;
+use App\Enums\DmMessageType;
+use App\Livewire\Traits\WithMessageDrafts;
+use App\Livewire\Traits\WithViewer;
+use App\Models\EinundzwanzigPleb;
+use App\Models\Election;
+use App\Models\MemberProposal;
+use App\Services\Dm\ComposeDirectMessage;
+use App\Services\Dm\DirectMessageAudience;
+use App\Services\Dm\DirectMessageAudienceChanged;
+use App\Services\Dm\DirectMessageDryRun;
+use App\Services\Dm\DirectMessagePause;
+use App\Services\Dm\DirectMessageRepeatLock;
+use App\Services\Dm\DirectMessageText;
+use App\Services\Dm\DirectMessageTextInvalid;
+use App\Services\Dm\StartDirectMessageRun;
+use App\Services\Nostr\NotificationKey;
+use Flux\Flux;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
+use Livewire\Attributes\Reactive;
+use Livewire\Component;
+
+/**
+ * "Neue Nachricht" of the board's message centre: a message from type to
+ * confirmed sending — type, audience, text, preview, dry run, test to self,
+ * send.
+ *
+ * A child of `association.messages.admin`, mounted with the page and shown
+ * while its tab is open, so the draft outlives a tab switch.
+ * Board only and callable on its own like every Livewire component: every
+ * public method and every computed property resolves the acting board
+ * member from the session and answers 403 to anybody else. A confirmed
+ * sending is handed to the page as `message-sent` with the run's id.
+ */
+new class extends Component
+{
+    use WithMessageDrafts;
+    use WithViewer;
+
+    private const UNREACHABLE_NAMES_SHOWN = 8;
+
+    /**
+     * Whether the tab is open. The page keeps this tab mounted while another
+     * one is open, so a half-written message survives a look at another tab;
+     * hidden, it renders nothing.
+     */
+    #[Reactive]
+    public bool $visible = false;
+
+    public string $type = 'election_announcement';
+
+    public string $audience = 'members';
+
+    public ?int $electionId = null;
+
+    /** @var array<string, string> */
+    public array $variables = [];
+
+    public string $text = '';
+
+    /**
+     * The last dry run: what it found and for which draft. Sending is only
+     * offered while the draft is still the one the dry run saw, and a start
+     * freezes exactly `recipient_ids` or nothing.
+     *
+     * @var array{signature: string, count: int, recipient_ids: list<int>, unreachable: list<string>, unreachable_count: int, skipped: int, lock_hours: int}|null
+     */
+    #[Locked]
+    public ?array $dryRun = null;
+
+    public function mount(): void
+    {
+        $this->boardActor();
+
+        $this->electionId = $this->defaultElection()?->id;
+        $this->applyTypeDefaults(DmMessageType::ElectionAnnouncement);
+        $this->text = DmMessageType::ElectionAnnouncement->defaultText();
+    }
+
+    public function updatedType(): void
+    {
+        $this->boardActor();
+
+        $type = DmMessageType::tryFrom($this->type) ?? DmMessageType::Individual;
+        $this->type = $type->value;
+        $previousDefaults = array_map(fn (DmMessageType $any): string => $any->defaultText(), DmMessageType::cases());
+
+        if (trim($this->text) === '' || in_array($this->text, $previousDefaults, true)) {
+            $this->text = $type->defaultText();
+        }
+
+        $this->applyTypeDefaults($type);
+        $this->forgetDraft();
+    }
+
+    public function updatedAudience(): void
+    {
+        $this->boardActor();
+
+        $this->audience = (DmAudience::tryFrom($this->audience) ?? DmAudience::Members)->value;
+        $this->forgetDraft();
+    }
+
+    public function updatedElectionId(): void
+    {
+        $this->boardActor();
+
+        $election = $this->composeElection;
+        $this->electionId = $election?->id;
+        $this->applyTypeDefaults($this->composeType(), onlyElectionValues: true);
+        $this->forgetDraft();
+    }
+
+    public function updatedText(): void
+    {
+        $this->boardActor();
+        $this->forgetDraft();
+    }
+
+    public function updatedVariables(): void
+    {
+        $this->boardActor();
+        $this->forgetDraft();
+    }
+
+    public function restoreDefaultText(): void
+    {
+        $this->boardActor();
+
+        $this->text = $this->composeType()->defaultText();
+        $this->forgetDraft();
+    }
+
+    /**
+     * Count the audience and look at who cannot be reached. Writes nothing.
+     */
+    public function runDryRun(DirectMessageDryRun $dryRun): void
+    {
+        $this->boardActor();
+
+        $result = $dryRun->handle(
+            $this->composeType(),
+            $this->composeAudience(),
+            $this->composeElectionOrNull(),
+            $this->messageVariables(),
+            $this->text,
+            sampleSize: 0,
+        );
+
+        if ($result->problems !== []) {
+            $this->dryRun = null;
+
+            return;
+        }
+
+        $unreachable = EinundzwanzigPleb::query()
+            ->with('profile')
+            ->whereKey(array_slice($result->unreachableIds, 0, self::UNREACHABLE_NAMES_SHOWN))
+            ->orderBy('id')
+            ->get()
+            ->map(fn (EinundzwanzigPleb $member): string => MemberProposal::authorNameOf($member))
+            ->all();
+
+        $this->dryRun = [
+            'signature' => $this->draftSignature(),
+            'count' => $result->count,
+            'recipient_ids' => $result->recipientIds,
+            'unreachable' => $unreachable,
+            'unreachable_count' => count($result->unreachableIds),
+            'skipped' => count($result->skippedIds),
+            'lock_hours' => app(DirectMessageRepeatLock::class)->hours(),
+        ];
+    }
+
+    /**
+     * One real message to the board member writing it, nobody else.
+     */
+    public function sendTestToSelf(ComposeDirectMessage $compose, StartDirectMessageRun $start, DirectMessagePause $pause): void
+    {
+        $actor = $this->boardActor();
+
+        if ($pause->isPaused()) {
+            Flux::toast(__('Der Versand ist pausiert. Setze ihn im Zeitplan fort, dann geht auch der Test raus.'), variant: 'danger');
+
+            return;
+        }
+
+        try {
+            $message = $compose->handle($this->composeType(), $actor, $this->messageVariables(), $this->text);
+        } catch (DirectMessageTextInvalid) {
+            Flux::toast(__('Der Text ist noch nicht vollständig. Was fehlt, steht unter dem Textfeld.'), variant: 'danger');
+
+            return;
+        }
+
+        if ($start->toSelf($message, $actor) === null) {
+            $message->delete();
+            Flux::toast(__('Der Versand ist pausiert. Setze ihn im Zeitplan fort, dann geht auch der Test raus.'), variant: 'danger');
+
+            return;
+        }
+
+        if (! $this->senderKeyUsable) {
+            Flux::toast(__('Test an dich gestartet. Er steht nur in deinem Posteingang im Portal: Ohne Absenderschlüssel kommt er in keinem Nostr-Client an.'), variant: 'warning');
+
+            return;
+        }
+
+        Flux::toast(__('Test an dich gestartet. Er steht im Verlauf und kommt in deinem Nostr-Client an.'), variant: 'success');
+    }
+
+    /**
+     * Start the sending the board confirmed. The frozen recipient list is
+     * the dry run's list: when the audience changed since (somebody joined,
+     * paid or left), nothing is started and the board is asked for a new
+     * dry run, so the number sent is always the number shown. A started
+     * run is handed to the page as `message-sent`, which opens it in the
+     * history.
+     */
+    public function confirmSend(ComposeDirectMessage $compose, StartDirectMessageRun $start, DirectMessagePause $pause): void
+    {
+        $actor = $this->boardActor();
+
+        if ($this->dryRun === null || $this->dryRun['signature'] !== $this->draftSignature()) {
+            Flux::modal('confirm-send')->close();
+            Flux::toast(__('Seit dem Probelauf hat sich etwas geändert. Starte ihn neu, dann siehst du die Zahl, die gesendet wird.'), variant: 'danger');
+
+            return;
+        }
+
+        if ($pause->isPaused()) {
+            Flux::modal('confirm-send')->close();
+            Flux::toast(__('Der Versand ist pausiert. Setze ihn im Zeitplan fort, dann kannst du senden.'), variant: 'danger');
+
+            return;
+        }
+
+        try {
+            $message = $compose->handle($this->composeType(), $actor, $this->messageVariables(), $this->text);
+        } catch (DirectMessageTextInvalid) {
+            Flux::modal('confirm-send')->close();
+            Flux::toast(__('Der Text ist noch nicht vollständig. Was fehlt, steht unter dem Textfeld.'), variant: 'danger');
+
+            return;
+        }
+
+        try {
+            $run = $start->handle($message, $this->composeAudience(), $this->composeElectionOrNull(), $this->dryRun['recipient_ids'] ?? []);
+        } catch (DirectMessageAudienceChanged $changed) {
+            // The text was written for this sending only.
+            $message->delete();
+            $this->dryRun = null;
+            Flux::modal('confirm-send')->close();
+            $reason = $changed->currentCount === $changed->confirmedCount
+                ? __('Die Zielgruppe hat sich seit dem Probelauf geändert: gleich viele, aber andere Mitglieder. Es wurde nichts gesendet. Starte den Probelauf neu.')
+                : trans_choice('Die Zielgruppe hat sich seit dem Probelauf geändert: jetzt ein Mitglied statt :confirmed. Es wurde nichts gesendet. Starte den Probelauf neu.|Die Zielgruppe hat sich seit dem Probelauf geändert: jetzt :count Mitglieder statt :confirmed. Es wurde nichts gesendet. Starte den Probelauf neu.', $changed->currentCount, ['count' => $changed->currentCount, 'confirmed' => $changed->confirmedCount]);
+            Flux::toast($reason, variant: 'danger');
+
+            return;
+        } catch (LockTimeoutException) {
+            // Another start held the lock too long; nothing was written.
+            $message->delete();
+            Flux::modal('confirm-send')->close();
+            Flux::toast(__('Gerade startet ein anderer Versand. Es wurde nichts gesendet. Versuche es in einer Minute noch einmal.'), variant: 'danger');
+
+            return;
+        }
+
+        Flux::modal('confirm-send')->close();
+
+        if ($run === null) {
+            Flux::toast(__('Der Versand ist pausiert. Setze ihn im Zeitplan fort, dann kannst du senden.'), variant: 'danger');
+
+            return;
+        }
+
+        $this->dryRun = null;
+        $this->dispatch('message-sent', runId: $run->id);
+
+        $skipped = count($run->skipped_ids ?? []);
+
+        if ($run->recipient_count === 0 && $skipped > 0) {
+            Flux::toast(trans_choice('Nichts gesendet: Ein Mitglied hat diese Nachricht in den letzten :hours Stunden schon bekommen und ist übersprungen.|Nichts gesendet: Alle :count Mitglieder haben diese Nachricht in den letzten :hours Stunden schon bekommen und sind übersprungen.', $skipped, ['count' => $skipped, 'hours' => app(DirectMessageRepeatLock::class)->hours()]), variant: 'warning');
+
+            return;
+        }
+
+        $started = trans_choice('Gestartet: geht an ein Mitglied.|Gestartet: geht an :count Mitglieder.', $run->recipient_count, ['count' => $run->recipient_count]);
+
+        if ($skipped > 0) {
+            $started .= ' '.trans_choice('Übersprungen: ein Mitglied, es hat sie in den letzten :hours Stunden schon bekommen.|Übersprungen: :count Mitglieder, sie haben sie in den letzten :hours Stunden schon bekommen.', $skipped, ['count' => $skipped, 'hours' => app(DirectMessageRepeatLock::class)->hours()]);
+        }
+
+        if (! $this->senderKeyUsable) {
+            Flux::toast($started.' '.__('Ohne Absenderschlüssel steht sie nur im Posteingang im Portal.'), variant: 'warning');
+
+            return;
+        }
+
+        Flux::toast($started, variant: 'success');
+    }
+
+    #[Computed]
+    public function composeElection(): ?Election
+    {
+        $this->boardActor();
+
+        return $this->electionId === null ? null : $this->elections->firstWhere('id', $this->electionId);
+    }
+
+    /**
+     * Whether the sender key (NOSTR_NOTIFICATION_KEY) can seal a message.
+     * Without it every Nostr delivery fails as `no_sender_key`, and only the
+     * portal inbox copy arrives, so the board is told before it sends.
+     * Yes or no only: the key itself never reaches the page.
+     */
+    #[Computed]
+    public function senderKeyUsable(): bool
+    {
+        $this->boardActor();
+
+        return app(NotificationKey::class)->isUsable();
+    }
+
+    /**
+     * The audience sentence for the draft, counted now.
+     */
+    #[Computed]
+    public function audienceSentence(): ?string
+    {
+        $this->boardActor();
+
+        $audience = $this->composeAudience();
+
+        if ($audience->needsElection() && $this->composeElection === null) {
+            return null;
+        }
+
+        return app(DirectMessageAudience::class)->describe($audience, $this->composeElectionOrNull());
+    }
+
+    #[Computed]
+    public function audienceCount(): int
+    {
+        $this->boardActor();
+
+        $audience = $this->composeAudience();
+
+        if ($audience->needsElection() && $this->composeElection === null) {
+            return 0;
+        }
+
+        return app(DirectMessageAudience::class)->query($audience, $this->composeElectionOrNull())->count();
+    }
+
+    /**
+     * What keeps the draft from being sent, in German and placed where it
+     * belongs: under the text, under a value, or above everything.
+     *
+     * @return array{text: list<string>, variables: array<string, string>, general: list<string>}
+     */
+    #[Computed]
+    public function draftProblems(): array
+    {
+        $this->boardActor();
+
+        return $this->problemsOf($this->composeType(), $this->text, $this->messageVariables());
+    }
+
+    /**
+     * The text as the first three recipients would get it.
+     *
+     * @return list<array{name: string, text: string}>
+     */
+    #[Computed]
+    public function previews(): array
+    {
+        $this->boardActor();
+
+        $audience = $this->composeAudience();
+
+        if ($audience->needsElection() && $this->composeElection === null) {
+            return [];
+        }
+
+        $result = app(DirectMessageDryRun::class)->handle(
+            $this->composeType(),
+            $audience,
+            $this->composeElectionOrNull(),
+            $this->messageVariables(),
+            $this->text,
+        );
+        $names = EinundzwanzigPleb::query()->with('profile')->whereKey(array_column($result->previews, 'recipient_id'))->get()->keyBy('id');
+        $text = app(DirectMessageText::class);
+
+        // The header names the recipient as {name} in the text does (display name first);
+        // without a profile name it falls back to the npub, not to „Mitglied“.
+        return array_map(function (array $preview) use ($names, $text): array {
+            $recipient = $names->get($preview['recipient_id']);
+
+            return [
+                'name' => ($recipient === null ? null : $text->profileNameOf($recipient)) ?? MemberProposal::authorNameOf($recipient),
+                'text' => $preview['text'],
+            ];
+        }, $result->previews);
+    }
+
+    public function dryRunIsCurrent(): bool
+    {
+        return $this->dryRun !== null && $this->dryRun['signature'] === $this->draftSignature();
+    }
+
+    protected function composeType(): DmMessageType
+    {
+        return DmMessageType::tryFrom($this->type) ?? DmMessageType::Individual;
+    }
+
+    protected function composeAudience(): DmAudience
+    {
+        return DmAudience::tryFrom($this->audience) ?? DmAudience::Members;
+    }
+
+    protected function composeElectionOrNull(): ?Election
+    {
+        return $this->composeAudience()->needsElection() ? $this->composeElection : null;
+    }
+
+    /**
+     * Only the values the type knows, as strings.
+     *
+     * @return array<string, string>
+     */
+    protected function messageVariables(): array
+    {
+        return $this->valuesFor($this->composeType(), $this->variables);
+    }
+
+    protected function draftSignature(): string
+    {
+        return hash('sha256', json_encode([
+            $this->composeType()->value,
+            $this->composeAudience()->value,
+            $this->composeElectionOrNull()?->id,
+            $this->messageVariables(),
+            $this->text,
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    protected function forgetDraft(): void
+    {
+        unset($this->composeElection, $this->audienceSentence, $this->audienceCount, $this->draftProblems, $this->previews);
+    }
+
+    /**
+     * Fill the type's values from the election and pick the audience the
+     * type is usually for.
+     */
+    protected function applyTypeDefaults(DmMessageType $type, bool $onlyElectionValues = false): void
+    {
+        $defaults = $this->defaultValues($type, $this->composeElection);
+
+        if (! $onlyElectionValues) {
+            $this->audience = $this->defaultAudience($type)->value;
+            $this->variables = $defaults;
+
+            return;
+        }
+
+        foreach (['assembly_date', 'year', 'round'] as $fromElection) {
+            if (array_key_exists($fromElection, $defaults)) {
+                $this->variables[$fromElection] = $defaults[$fromElection];
+            }
+        }
+    }
+};
+?>
+
+<div>
+@if ($visible)
 @php
     $composeType = \App\Enums\DmMessageType::tryFrom($type) ?? \App\Enums\DmMessageType::Individual;
     $composeAudience = \App\Enums\DmAudience::tryFrom($audience) ?? \App\Enums\DmAudience::Members;
@@ -232,3 +715,5 @@
         </div>
     </flux:modal>
 @endif
+@endif
+</div>

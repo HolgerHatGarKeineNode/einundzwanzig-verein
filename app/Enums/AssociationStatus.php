@@ -29,6 +29,15 @@ enum AssociationStatus: int
     #[Label('Ehrenmitglied')] #[Color('negative')]
     case HONORARY = 4;
 
+    /**
+     * Is this a membership (Passiv, Aktiv, Ehrenmitglied)? Whether it is a
+     * paid one for a year is `EinundzwanzigPleb::hasPaidMembership()`.
+     */
+    public function isMembership(): bool
+    {
+        return $this !== self::DEFAULT;
+    }
+
     public static function selectOptions()
     {
         return collect(self::options())

@@ -1,11 +1,12 @@
 <?php
 
 use App\Enums\AssociationStatus;
+use App\Exceptions\MemberStatusLockedException;
+use App\Livewire\Traits\WithViewer;
 use App\Models\DmDelivery;
 use App\Models\EinundzwanzigPleb;
-use App\Models\Election;
 use App\Models\PaymentEvent;
-use App\Support\Board;
+use App\Services\MembershipService;
 use App\Support\NostrAuth;
 use Flux\Flux;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -20,6 +21,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 new class extends Component
 {
     use WithPagination;
+    use WithViewer;
 
     /**
      * Columns the table may be sorted by, mapped to a fully-qualified
@@ -71,7 +73,6 @@ new class extends Component
 
     protected $listeners = [
         'nostrLoggedOut' => 'handleNostrLoggedOut',
-        'nostrLoggedIn' => 'handleNostrLoggedIn',
     ];
 
     public function mount(): void
@@ -80,14 +81,6 @@ new class extends Component
             $this->currentPubkey = NostrAuth::pubkey();
             $this->currentPleb = NostrAuth::user()?->getPleb();
         }
-
-        $this->refreshAccess();
-    }
-
-    public function handleNostrLoggedIn($signedEvent = null): void
-    {
-        $this->currentPubkey = NostrAuth::loginWithSignedEvent($signedEvent);
-        $this->currentPleb = NostrAuth::user()?->getPleb();
 
         $this->refreshAccess();
     }
@@ -101,25 +94,22 @@ new class extends Component
     }
 
     /**
-     * Managing members is a board task, so the board list in
-     * `config/einundzwanzig.config.current_board` is the single source —
-     * the same one `EinundzwanzigPleb::isBoardMember()` and the proposal
-     * policies use. `App\Support\Board` resolves the configured
-     * npubs to hex pubkeys, because a Nostr session only ever carries the
-     * hex form. Authorization is re-checked server-side on every sensitive
-     * action — gating the view on $isAllowed is cosmetic only, because
-     * Livewire exposes every public method as a directly callable endpoint
-     * regardless of what the view renders.
+     * Managing members is a board task (`WithViewer::boardActor()`: logged
+     * in, not erased, on the board list in
+     * `config/einundzwanzig.config.current_board`). Authorization is
+     * re-checked server-side on every sensitive action — gating the view on
+     * $isAllowed is cosmetic only, because Livewire exposes every public
+     * method as a directly callable endpoint regardless of what the view
+     * renders.
      */
     private function isAuthorized(): bool
     {
-        return NostrAuth::check()
-            && Board::containsPubkey(NostrAuth::pubkey());
+        return $this->viewerIsBoard();
     }
 
     private function ensureAuthorized(): void
     {
-        abort_unless($this->isAuthorized(), 403);
+        $this->boardActor();
     }
 
     private function refreshAccess(): void
@@ -146,7 +136,7 @@ new class extends Component
             ->with([
                 'profile',
                 'paymentEvents' => fn ($query) => $query
-                    ->where('year', date('Y'))
+                    ->where('year', now()->year)
                     ->where('paid', true),
             ]);
 
@@ -160,7 +150,7 @@ new class extends Component
 
         if ($this->showPaidOnly) {
             $query->whereHas('paymentEvents', fn ($query) => $query
-                ->where('year', date('Y'))
+                ->where('year', now()->year)
                 ->where('paid', true)
             );
         }
@@ -213,7 +203,7 @@ new class extends Component
     {
         $this->ensureAuthorized();
 
-        $this->showPaidOnly = !$this->showPaidOnly;
+        $this->showPaidOnly = ! $this->showPaidOnly;
         $this->resetPage();
     }
 
@@ -251,23 +241,10 @@ new class extends Component
     }
 
     /**
-     * The board path PASSIVE → ACTIVE/HONORARY. It never grants the
-     * membership itself — that follows from the paid annual fee.
-     *
-     * Two guards, both load-bearing:
-     * - `application_for` may be null (no application pending, or one that was
-     *   already handled). `AssociationStatus::from(null)` is fatal, so nothing
-     *   happens at all in that case.
-     * - The target status is never allowed to fall below the current one. A
-     *   stale application row must not demote an honorary member back to
-     *   passive; a demotion is a deliberate act, not a side effect of
-     *   confirming an application.
-     *
-     * Refused while a real election is announced and not finished
-     * (`Election::lockingMemberStatus()`): its roll rests on the categories,
-     * so the Wahlleitung enters a voter there, with a reason in the audit log.
+     * Accepting and rejecting are `MembershipService::acceptApplication()` and
+     * `rejectApplication()`; this component only authorizes and reports.
      */
-    public function acceptPleb(): void
+    public function acceptPleb(MembershipService $membership): void
     {
         $this->ensureAuthorized();
 
@@ -275,48 +252,22 @@ new class extends Component
             return;
         }
 
-        $election = Election::lockingMemberStatus();
-
-        if ($election !== null) {
-            $this->confirmAcceptId = null;
-            Flux::modal('confirm-accept-pleb')->close();
-            Flux::toast(__('Die Wahl „:name“ ist angekündigt und noch nicht abgeschlossen. Bis dahin ändert ihr hier keinen Mitgliedsstatus, denn das Wählerverzeichnis hängt daran. Den Antrag nehmt ihr nach der Wahl an. Hat ein Aktiv- oder Ehrenmitglied bar bezahlt, tragt ihr es auf der Wahlseite unter „Wählerverzeichnis“ mit Grund als wahlberechtigt ein.', ['name' => $election->name]), variant: 'danger');
-
-            return;
+        try {
+            $membership->acceptApplication(EinundzwanzigPleb::query()->findOrFail($this->confirmAcceptId));
+        } catch (MemberStatusLockedException $locked) {
+            Flux::toast(__('Die Wahl „:name“ ist angekündigt und noch nicht abgeschlossen. Bis dahin ändert ihr hier keinen Mitgliedsstatus, denn das Wählerverzeichnis hängt daran. Den Antrag nehmt ihr nach der Wahl an. Hat ein Aktiv- oder Ehrenmitglied bar bezahlt, tragt ihr es auf der Wahlseite unter „Wählerverzeichnis“ mit Grund als wahlberechtigt ein.', ['name' => $locked->election->name]), variant: 'danger');
         }
-
-        $pleb = EinundzwanzigPleb::query()->findOrFail($this->confirmAcceptId);
-        $target = AssociationStatus::tryFrom((int) $pleb->application_for);
-
-        if ($pleb->application_for === null || $target === null) {
-            $this->confirmAcceptId = null;
-            Flux::modal('confirm-accept-pleb')->close();
-
-            return;
-        }
-
-        if ($target->value > $pleb->association_status->value) {
-            $pleb->association_status = $target;
-        }
-
-        $pleb->archived_application_text = $pleb->application_text;
-        $pleb->application_for = null;
-        $pleb->application_text = null;
-        $pleb->save();
 
         $this->confirmAcceptId = null;
         Flux::modal('confirm-accept-pleb')->close();
     }
 
-    public function deletePleb(): void
+    public function deletePleb(MembershipService $membership): void
     {
         $this->ensureAuthorized();
 
         if ($this->confirmDeleteId) {
-            $pleb = EinundzwanzigPleb::query()->findOrFail($this->confirmDeleteId);
-            $pleb->application_for = null;
-            $pleb->application_text = null;
-            $pleb->save();
+            $membership->rejectApplication(EinundzwanzigPleb::query()->findOrFail($this->confirmDeleteId));
 
             $this->confirmDeleteId = null;
             Flux::modal('confirm-delete-pleb')->close();
@@ -333,7 +284,7 @@ new class extends Component
     {
         $this->ensureAuthorized();
 
-        $currentYear = (int) date('Y');
+        $currentYear = now()->year;
         $years = PaymentEvent::query()
             ->where('year', '>=', 2025)
             ->distinct()
@@ -366,13 +317,13 @@ new class extends Component
             foreach ($years as $year) {
                 $headers[] = 'Beitrag '.$year;
             }
-            fputcsv($handle, $headers, ';');
+            fputcsv($handle, $headers, ';', '"', '');
 
             foreach ($plebs as $pleb) {
                 $row = [
-                    $pleb->profile?->name ?: $pleb->profile?->display_name ?? '',
-                    $pleb->npub,
-                    $pleb->email ?? '',
+                    $this->csvCell($pleb->profile?->label() ?? ''),
+                    $this->csvCell((string) $pleb->npub),
+                    $this->csvCell($pleb->email ?? ''),
                     $pleb->association_status->label(),
                 ];
 
@@ -382,13 +333,23 @@ new class extends Component
                     $row[] = $payment ? 'Bezahlt' : 'Offen';
                 }
 
-                fputcsv($handle, $row, ';');
+                fputcsv($handle, $row, ';', '"', '');
             }
 
             fclose($handle);
         }, 'mitglieder-export-'.date('Y-m-d').'.csv', [
             'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
+    }
+
+    /**
+     * Keeps a member-controlled value text in a spreadsheet: a cell starting
+     * with `=`, `+`, `-`, `@`, a tab or a carriage return would otherwise be
+     * evaluated as a formula when the export is opened.
+     */
+    private function csvCell(string $value): string
+    {
+        return $value !== '' && str_contains("=+-@\t\r", $value[0]) ? "'".$value : $value;
     }
 
     #[Computed]
@@ -430,10 +391,12 @@ new class extends Component
 };
 ?>
 
-<div>
+<div class="mx-auto w-full max-w-5xl pb-32">
+    <x-page-header title="Mitglieder" />
+
     @if($isAllowed)
-        <div class="overflow-hidden rounded-xl border border-border-subtle bg-bg-surface">
-            <div class="flex gap-2 border-b border-border-subtle p-4 sm:px-6">
+        <div class="overflow-hidden rounded-lg border border-border-default bg-bg-surface">
+            <div class="flex flex-col gap-2 border-b border-border-default p-4 sm:flex-row sm:px-6">
                 <flux:input
                         wire:model.live.debounce.300ms="search"
                     placeholder="Suche nach Name oder Npub..."
@@ -444,6 +407,7 @@ new class extends Component
                     wire:click="togglePaidFilter"
                     :variant="$showPaidOnly ? 'primary' : 'ghost'"
                     icon="check"
+                    class="min-h-11"
                 >
                     {{ $showPaidOnly ? 'Alle anzeigen' : 'Nur Bezahlt' }}
                 </flux:button>
@@ -451,6 +415,7 @@ new class extends Component
                     wire:click="exportCsv"
                     variant="ghost"
                     icon="arrow-down-tray"
+                    class="min-h-11"
                 >
                     CSV Export
                 </flux:button>
@@ -479,7 +444,7 @@ new class extends Component
                 >
                     Aktueller Status
                 </flux:table.column>
-                <flux:table.column>Beitrag {{ date('Y') }}</flux:table.column>
+                <flux:table.column>Beitrag {{ now()->year }}</flux:table.column>
                 <flux:table.column>Aktionen</flux:table.column>
             </flux:table.columns>
 
@@ -498,12 +463,12 @@ new class extends Component
                         <flux:table.cell>
                             <div class="flex flex-col">
                                 <flux:heading size="sm">
-                                    {{ $pleb->profile?->name ?: $pleb->profile?->display_name ?? '' }}
+                                    <x-pleb-name :pleb="$pleb" />
                                 </flux:heading>
                                 <a
                                     target="_blank"
                                     href="https://nostrudel.ninja/u/{{ $pleb->npub }}"
-                                    class="text-xs text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                                    class="inline-flex min-h-6 items-center text-sm text-text-tertiary underline underline-offset-4 hover:text-text-primary"
                                 >
                                     Nostr Profile
                                 </a>
@@ -531,15 +496,15 @@ new class extends Component
                                 <flux:button
                                     wire:click="openPaymentModal({{ $pleb->id }})"
                                     variant="ghost"
-                                    size="sm"
                                     icon="banknotes"
+                                    class="min-h-11"
                                 >
-                                        <span class="text-green-500">
+                                        <span class="text-success">
                                             {{ number_format($pleb->paymentEvents->first()->amount, 0, ',', '.') }}
                                         </span>
                                 </flux:button>
                             @else
-                                <flux:text class="text-zinc-500">keine Zahlung vorhanden</flux:text>
+                                <flux:text class="text-text-tertiary">keine Zahlung vorhanden</flux:text>
                             @endif
                         </flux:table.cell>
 
@@ -550,25 +515,25 @@ new class extends Component
                                     variant="ghost"
                                     icon="envelope"
                                     class="min-h-11 min-w-11"
-                                    :aria-label="__('Nachrichten an :name', ['name' => $pleb->profile?->name ?: ($pleb->profile?->display_name ?: __('dieses Mitglied'))])"
+                                    :aria-label="__('Nachrichten an :name', ['name' => $pleb->displayName()])"
                                     data-test="member-messages-{{ $pleb->id }}"
                                 />
                                 <flux:button
                                     wire:click="delete({{ $pleb->id }})"
                                     variant="ghost"
-                                    size="sm"
                                     icon="trash"
-                                    inset="top bottom"
-                                ></flux:button>
+                                    class="min-h-11 min-w-11"
+                                    :aria-label="__('Mitglied :name löschen', ['name' => $pleb->displayName()])"
+                                />
 
                                 @if($pleb->application_for)
                                     <flux:button
                                         wire:click="accept({{ $pleb->id }})"
                                         variant="ghost"
-                                        size="sm"
                                         icon="check"
-                                        inset="top bottom"
-                                    ></flux:button>
+                                        class="min-h-11 min-w-11"
+                                        :aria-label="__('Mitglied :name akzeptieren', ['name' => $pleb->displayName()])"
+                                    />
                                 @endif
                             </div>
                         </flux:table.cell>
@@ -578,13 +543,13 @@ new class extends Component
             </flux:table>
         </div>
     @else
-        <div class="px-4 sm:px-6 lg:px-8 py-8 w-full mx-auto">
+        <div>
             <flux:callout variant="warning" icon="exclamation-circle">
                 <flux:heading>Mitglieder können nicht bearbeitet werden</flux:heading>
                 <p>
                     Zugriff auf die Mitgliederverwaltung ist nur für spezielle autorisierte Benutzer möglich.
                 </p>
-                <p class="mt-3">
+                <p class="mt-4">
                     @if(!NostrAuth::check())
                         Bitte melde dich zunächst mit Nostr an.
                     @else
@@ -603,7 +568,7 @@ new class extends Component
                 <div>
                     <flux:heading size="lg">Zahlungsdetails</flux:heading>
                     <flux:subheading class="mt-2">
-                        {{ $this->selectedPleb->profile?->name ?: $this->selectedPleb->profile?->display_name ?? 'Unbekannt' }}
+                        <x-pleb-name :pleb="$this->selectedPleb" />
                     </flux:subheading>
                 </div>
 
@@ -665,7 +630,7 @@ new class extends Component
                             <li wire:key="member-delivery-{{ $delivery->id }}" class="py-3" data-test="member-delivery-{{ $delivery->id }}">
                                 <p class="flex flex-wrap items-baseline justify-between gap-x-4">
                                     <span class="text-base font-bold text-text-primary">{{ $delivery->run?->message?->type->label() }}</span>
-                                    <time datetime="{{ $delivery->created_at->toIso8601String() }}" class="text-sm text-text-tertiary">{{ $delivery->created_at->copy()->timezone('Europe/Berlin')->locale('de')->isoFormat('D. MMM YYYY, HH:mm') }}</time>
+                                    <time datetime="{{ $delivery->created_at->toIso8601String() }}" class="text-sm text-text-tertiary">{{ \App\Support\DisplayTime::of($delivery->created_at)->locale('de')->isoFormat('D. MMM YYYY, HH:mm') }}</time>
                                 </p>
                                 <p @class(['text-sm', 'text-danger' => $delivery->status->isFailure(), 'text-text-secondary' => ! $delivery->status->isFailure()])>
                                     {{ $delivery->status->label() }}@if ($delivery->seen_at){{ __(', im Portal geöffnet') }}@endif

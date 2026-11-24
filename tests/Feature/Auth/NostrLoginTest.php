@@ -3,6 +3,7 @@
 use App\Enums\AssociationStatus;
 use App\Models\EinundzwanzigPleb;
 use App\Support\NostrAuth;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Validation\ValidationException;
 use swentel\nostr\Key\Key as NostrKey;
@@ -346,4 +347,24 @@ it('tells the login client when the server refuses the login event', function ()
 
     expect(NostrAuth::check())->toBeFalse()
         ->and($component->effects['xjs'] ?? [])->toBe([]);
+});
+
+it('rate limits the shared login after ten attempts per minute', function () {
+    for ($i = 0; $i < 10; $i++) {
+        RateLimiter::attempt('nostr-login:127.0.0.1', 10, function (): void {});
+    }
+
+    // The limiter runs before the signature check, so an empty payload is enough.
+    Livewire\Livewire::test('auth-button')
+        ->call('handleNostrLoggedIn', [])
+        ->assertStatus(429);
+
+    expect(NostrAuth::check())->toBeFalse();
+});
+
+it('lets a login through below the limit', function () {
+    Livewire\Livewire::test('auth-button')
+        ->call('handleNostrLoggedIn', [])
+        ->assertStatus(200)
+        ->assertDispatched('nostr-login-refused');
 });

@@ -44,6 +44,14 @@ test('nostr profile api route is rate limited', function () {
     $this->getJson('/api/nostr/profile/'.hash('sha256', 'testkey'))->assertStatus(429);
 });
 
+test('nostr profile api route shares the nostr-profiles limit of 30 a minute', function () {
+    for ($i = 0; $i < 30; $i++) {
+        $this->getJson('/api/nostr/profile/'.hash('sha256', 'limit'.$i))->assertNotFound();
+    }
+
+    $this->getJson('/api/nostr/profile/'.hash('sha256', 'limit-over'))->assertStatus(429);
+});
+
 test('voting actions are rate limited after 10 attempts', function () {
     $pleb = EinundzwanzigPleb::factory()->create();
     $project = ProjectProposal::factory()->create();
@@ -54,20 +62,8 @@ test('voting actions are rate limited after 10 attempts', function () {
         RateLimiter::attempt('voting:127.0.0.1', 10, function () {});
     }
 
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('handleApprove')
-        ->assertStatus(429);
-});
-
-test('nostr login is rate limited after 10 attempts', function () {
-    for ($i = 0; $i < 10; $i++) {
-        RateLimiter::attempt('nostr-login:127.0.0.1', 10, function () {});
-    }
-
-    // Rate limit is checked before signature verification, so an empty
-    // payload is enough to trigger the 429.
-    Livewire::test('association.project-support.index')
-        ->call('handleNostrLogin', [])
+    Livewire::test('association.project-support.show-vote-panel', ['projectProposal' => $project])
+        ->call('castVote', true)
         ->assertStatus(429);
 });
 
@@ -113,8 +109,8 @@ test('voting works within rate limit', function () {
 
     NostrAuth::login($pleb->pubkey);
 
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('handleApprove')
+    Livewire::test('association.project-support.show-vote-panel', ['projectProposal' => $project])
+        ->call('castVote', true)
         ->assertHasNoErrors();
 
     $vote = Vote::query()

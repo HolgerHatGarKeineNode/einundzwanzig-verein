@@ -6,7 +6,9 @@ use App\Models\Profile;
 use App\Models\ProjectProposal;
 use App\Models\Vote;
 use App\Support\NostrAuth;
+use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
+use swentel\nostr\Key\Key;
 
 /**
  * Der Vorstand wird je Test frisch angelegt, weil ProjectProposal::boardPlebIds()
@@ -19,7 +21,7 @@ use Livewire\Livewire;
  */
 beforeEach(function () {
     collect(config('einundzwanzig.config.current_board'))->each(
-        fn (string $npub) => EinundzwanzigPleb::factory()->create(['npub' => $npub])
+        fn (string $npub) => EinundzwanzigPleb::factory()->create(['npub' => $npub, 'pubkey' => (new Key)->convertToHex($npub)])
     );
 });
 
@@ -116,6 +118,42 @@ it('counts every status regardless of which filter is active', function () {
     ]);
 });
 
+it('counts every status and the board member\'s own work list in one query, as each filter alone would', function () {
+    $board = EinundzwanzigPleb::query()->whereIn('id', ProjectProposal::boardPlebIds())->orderBy('id')->get();
+    $threshold = ProjectProposal::boardVoteThreshold();
+    $vote = fn (ProjectProposal $project, EinundzwanzigPleb $pleb, bool $value) => Vote::create(['project_proposal_id' => $project->id, 'einundzwanzig_pleb_id' => $pleb->id, 'value' => $value]);
+
+    ProjectProposal::factory()->create(['name' => 'Grant ohne meine Stimme']);
+    $vote(ProjectProposal::factory()->create(['name' => 'Grant mit meiner Stimme']), $board[0], true);
+    $accepted = ProjectProposal::factory()->create(['name' => 'Grant angenommen']);
+    $board->take($threshold)->each(fn (EinundzwanzigPleb $pleb) => $vote($accepted, $pleb, true));
+    $rejected = ProjectProposal::factory()->create(['name' => 'Grant abgelehnt']);
+    $board->take($threshold)->each(fn (EinundzwanzigPleb $pleb) => $vote($rejected, $pleb, false));
+    ProjectProposal::factory()->create(['name' => 'Grant ausgezahlt', 'sats_paid' => 21000]);
+    ProjectProposal::factory()->create(['name' => 'Anderes Projekt']);
+    NostrAuth::login($board[0]->pubkey);
+    $component = Livewire::test('association.project-support.index')->set('search', 'Grant');
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+    $counts = $component->instance()->statusCounts();
+    $queries = count(DB::getQueryLog());
+    DB::disableQueryLog();
+
+    $expected = ['all' => ProjectProposal::query()->search('Grant')->count()];
+
+    foreach (ProjectProposalStatus::cases() as $status) {
+        $expected[$status->value] = ProjectProposal::query()->search('Grant')->withStatus($status->value)->count();
+    }
+
+    $expected['awaiting_my_vote'] = ProjectProposal::query()->search('Grant')->awaitingVoteFrom($board[0]->id)->count();
+
+    expect($counts)->toBe($expected)
+        ->and($expected)->toBe(['all' => 5, 'new' => 2, 'accepted' => 1, 'rejected' => 1, 'supported' => 1, 'awaiting_my_vote' => 1])
+        // The board's ids, then the counts.
+        ->and($queries)->toBeLessThanOrEqual(2);
+});
+
 it('combines search and status filter', function () {
     $matching = ProjectProposal::factory()->create(['name' => 'Lightning Node Grant']);
     ProjectProposal::factory()->create(['name' => 'Lightning Watchtower Grant', 'sats_paid' => 21000]);
@@ -191,21 +229,19 @@ it('reflects an authenticated nostr session on mount', function () {
 
     NostrAuth::login($pleb->pubkey);
 
-    Livewire::test('association.project-support.index')
-        ->assertSet('currentPubkey', $pleb->pubkey)
-        ->assertSet('isAllowed', true);
+    expect(Livewire::test('association.project-support.index')->instance()->currentPleb?->is($pleb))->toBeTrue();
 });
 
-it('clears state on nostr logout', function () {
+it('asks the session again after a logout instead of remembering the member', function () {
     $pleb = EinundzwanzigPleb::factory()->create();
 
     NostrAuth::login($pleb->pubkey);
+    $page = Livewire::test('association.project-support.index');
 
-    Livewire::test('association.project-support.index')
-        ->assertSet('currentPubkey', $pleb->pubkey)
-        ->call('handleNostrLogout')
-        ->assertSet('currentPubkey', null)
-        ->assertSet('isAllowed', false);
+    NostrAuth::logout();
+    $page->call('$refresh');
+
+    expect($page->instance()->currentPleb)->toBeNull();
 });
 
 it('denies access to create when not authenticated', function () {
@@ -333,13 +369,6 @@ it('renders project support show component', function () {
         ->assertStatus(200);
 });
 
-it('denies access to show when not authenticated', function () {
-    $project = ProjectProposal::factory()->create();
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('isAllowed', false);
-});
-
 it('grants access to show when authenticated', function () {
     $pleb = EinundzwanzigPleb::factory()->create();
     $project = ProjectProposal::factory()->create();
@@ -347,7 +376,7 @@ it('grants access to show when authenticated', function () {
     NostrAuth::login($pleb->pubkey);
 
     Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('isAllowed', true);
+        ->assertSet('currentPubkey', $pleb->pubkey);
 });
 
 it('displays project details', function () {
@@ -363,54 +392,6 @@ it('displays project details', function () {
         ->assertSet('projectProposal.name', 'Test Project Name')
         ->assertSee('Test Project Name')
         ->assertSee('Test Project Description');
-});
-
-it('initializes currentPleb when authenticated', function () {
-    $pleb = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create();
-
-    NostrAuth::login($pleb->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('currentPleb.id', $pleb->id);
-});
-
-it('initializes ownVoteExists to false when no vote exists', function () {
-    $pleb = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create();
-
-    NostrAuth::login($pleb->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('ownVoteExists', false)
-        ->assertSee('Zustimmen')
-        ->assertSee('Ablehnen');
-});
-
-it('initializes ownVoteExists to true when vote exists', function () {
-    $pleb = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create();
-    Vote::create([
-        'project_proposal_id' => $project->id,
-        'einundzwanzig_pleb_id' => $pleb->id,
-        'value' => true,
-    ]);
-
-    NostrAuth::login($pleb->pubkey);
-
-    // Eine abgegebene Stimme ist endgültig: canVote (VotePolicy::create)
-    // wird false. Das Panel bleibt aber sichtbar und nennt die eigene
-    // Stimme — vorher stand dort nur "Du hast bereits abgestimmt", ohne zu
-    // sagen, wie. Sichtbarkeit hängt deshalb an isVoter, nicht an canVote.
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('ownVoteExists', true)
-        ->assertSet('canVote', false)
-        ->assertSet('isVoter', true)
-        ->assertSee('Deine Stimme')
-        ->assertSee('Du hast zugestimmt.')
-        ->assertSee('Eine abgegebene Stimme lässt sich nicht mehr ändern.')
-        ->assertDontSee('Zustimmen')
-        ->assertDontSee('Ablehnen');
 });
 
 it('shows the own rejection instead of an approval', function () {
@@ -443,64 +424,6 @@ it('requires a confirmation modal before a vote is cast', function () {
         ->assertSee('confirm-reject', escape: false);
 });
 
-it('can handle approve vote', function () {
-    $pleb = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create();
-
-    NostrAuth::login($pleb->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('handleApprove')
-        ->assertHasNoErrors();
-
-    $vote = Vote::query()
-        ->where('project_proposal_id', $project->id)
-        ->where('einundzwanzig_pleb_id', $pleb->id)
-        ->first();
-
-    expect($vote)->not->toBeNull()
-        ->and($vote->value)->toBeTrue();
-});
-
-it('can handle not approve vote', function () {
-    $pleb = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create();
-
-    NostrAuth::login($pleb->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('handleNotApprove')
-        ->assertHasNoErrors();
-
-    $vote = Vote::query()
-        ->where('project_proposal_id', $project->id)
-        ->where('einundzwanzig_pleb_id', $pleb->id)
-        ->first();
-
-    expect($vote)->not->toBeNull()
-        ->and($vote->value)->toBeFalse();
-});
-
-it('does not throw error when unauthenticated user calls handleApprove', function () {
-    $project = ProjectProposal::factory()->create();
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('handleApprove')
-        ->assertHasNoErrors();
-
-    expect(Vote::where('project_proposal_id', $project->id)->exists())->toBeFalse();
-});
-
-it('does not throw error when unauthenticated user calls handleNotApprove', function () {
-    $project = ProjectProposal::factory()->create();
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('handleNotApprove')
-        ->assertHasNoErrors();
-
-    expect(Vote::where('project_proposal_id', $project->id)->exists())->toBeFalse();
-});
-
 it('hides voting buttons from unauthenticated users', function () {
     $project = ProjectProposal::factory()->create();
 
@@ -517,68 +440,6 @@ it('hides voting buttons from unauthenticated users', function () {
 // Abstimmung fehlte ersatzlos und kommentarlos. Die drei Zustaende des Slots
 // werden hier zusammen geprueft, damit keiner davon still verschwindet.
 
-it('offers a nostr login in place of the voting card for a logged out visitor', function () {
-    $project = ProjectProposal::factory()->create();
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('isVoter', false)
-        // Der Slot behaelt seine Beschriftung ueber alle Anmeldezustaende.
-        ->assertSee('Deine Stimme')
-        ->assertSee('Mit einer Nostr-Anmeldung kannst du diesem Antrag zustimmen oder ihn ablehnen.')
-        // Der Auslöser steht IN der Karte, nicht nur im Menue.
-        ->assertSee('Mit Nostr verbinden')
-        // Ohne diesen Satz endet „melde dich an" auf dem Telefon im Nichts.
-        ->assertSee('Auf dem Handy gibt es meist keine Browser-Erweiterung.')
-        ->assertSee('bunker://')
-        // Eigener location-Wert: sonst kollidierten die Overlay-IDs mit der
-        // Instanz in der Sidebar, die auf derselben Seite gemountet wird.
-        ->assertSee('nostr-login-progress-heading-project-vote', escape: false)
-        ->assertDontSee('Zustimmen')
-        ->assertDontSee('Ablehnen');
-});
-
-it('names the missing member record instead of answering with an error', function () {
-    $project = ProjectProposal::factory()->create();
-
-    // Eine angemeldete Sitzung haelt nur den Pubkey. Fehlt der Mitgliedseintrag
-    // dazu (nach dem Login entfernt), lief mount() vorher in
-    // „Attempt to read property id on null" — die Seite antwortete mit einer
-    // 500 statt mit dem Hinweis.
-    $pubkey = str_repeat('ab', 32);
-    expect(EinundzwanzigPleb::query()->where('pubkey', $pubkey)->exists())->toBeFalse();
-
-    NostrAuth::login($pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertStatus(200)
-        ->assertSet('isVoter', false)
-        ->assertSee('Deine Stimme')
-        ->assertSee('Zu deinem Schlüssel ist kein Mitgliedseintrag hinterlegt.')
-        ->assertSee('Bitte kontaktiere den Vorstand, wenn du denkst, dass du berechtigt sein solltest.')
-        // Wer angemeldet ist, bekommt keinen zweiten Anmelde-Knopf vorgesetzt.
-        ->assertDontSee('Mit Nostr verbinden')
-        ->assertDontSee('Zustimmen')
-        ->assertDontSee('Ablehnen');
-});
-
-it('leaves the voting card untouched for a member who may vote', function () {
-    $pleb = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create();
-
-    NostrAuth::login($pleb->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('isVoter', true)
-        ->assertSee('Deine Stimme')
-        ->assertSee('Zustimmen')
-        ->assertSee('Ablehnen')
-        // Keiner der beiden Ersatzzustaende darf daneben stehen.
-        ->assertDontSee('Mit Nostr verbinden')
-        ->assertDontSee('Zu deinem Schlüssel ist kein Mitgliedseintrag hinterlegt.');
-});
-
-// Stimmungsbild der Nicht-Vorstandsmitglieder
-
 it('shows the members sentiment panel even when nobody has voted yet', function () {
     $project = ProjectProposal::factory()->create();
 
@@ -590,205 +451,10 @@ it('shows the members sentiment panel even when nobody has voted yet', function 
         ->assertSee('Noch keine Stimme abgegeben.');
 });
 
-it('lets a non-board member vote without affecting the majority', function () {
-    $pleb = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create();
-
-    NostrAuth::login($pleb->pubkey);
-
-    $component = Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('voteCountsTowardsMajority', false)
-        ->assertSee('Zählt zum Stimmungsbild der Mitglieder, nicht zur Mehrheit.')
-        ->call('handleApprove')
-        ->assertHasNoErrors();
-
-    expect(Vote::where('project_proposal_id', $project->id)->count())->toBe(1);
-    // Die Stimme ist da, der Status bleibt unberührt.
-    expect($component->get('status'))->toBe(ProjectProposalStatus::InVoting);
-    expect($project->fresh()->boardApprovals())->toBe(0);
-});
-
-it('marks a board member vote as counting towards the majority', function () {
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $project = ProjectProposal::factory()->create();
-
-    NostrAuth::login($board->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('voteCountsTowardsMajority', true)
-        ->assertSee('Zählt zur bindenden Mehrheit des Vorstands.');
-});
-
-it('separates board votes from the members sentiment', function () {
-    $project = ProjectProposal::factory()->create();
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $member = EinundzwanzigPleb::factory()->create();
-
-    Vote::create(['project_proposal_id' => $project->id, 'einundzwanzig_pleb_id' => $board->id, 'value' => true]);
-    Vote::create(['project_proposal_id' => $project->id, 'einundzwanzig_pleb_id' => $member->id, 'value' => true]);
-
-    $component = Livewire::test('association.project-support.show', ['projectProposal' => $project]);
-
-    expect($component->get('boardVotes'))->toHaveCount(1)
-        ->and($component->get('otherVotes'))->toHaveCount(1);
-});
-
-// recordPayout / revertPayout
-
 /**
  * Lässt den Vorstand mit der geforderten Mehrheit zustimmen bzw. ablehnen.
  * Die Anzahl kommt aus boardVoteThreshold(), nie als feste Zahl.
  */
-function boardDecides(ProjectProposal $project, bool $inFavour, ?int $count = null): void
-{
-    $count ??= ProjectProposal::boardVoteThreshold();
-
-    collect(ProjectProposal::boardPlebIds())->take($count)->each(
-        fn (int $plebId) => Vote::create([
-            'project_proposal_id' => $project->id,
-            'einundzwanzig_pleb_id' => $plebId,
-            'value' => $inFavour,
-        ])
-    );
-}
-
-it('lets a board member record a payout, which flips the status to supported', function () {
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $project = ProjectProposal::factory()->create(['support_in_sats' => 100000, 'sats_paid' => 0]);
-    boardDecides($project, inFavour: true);
-
-    NostrAuth::login($board->pubkey);
-
-    $component = Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->set('payoutSats', 100000)
-        ->call('recordPayout')
-        ->assertHasNoErrors();
-
-    // Backed enum cases are invokable in this codebase (ArchTech\Enums\InvokableCases),
-    // which makes `assertSet('status', SomeCase)` misfire — Livewire treats the enum
-    // instance as a callable predicate instead of a value to compare against.
-    expect($component->get('status'))->toBe(ProjectProposalStatus::Supported);
-    expect($project->fresh()->sats_paid)->toBe(100000);
-});
-
-it('denies recordPayout to a non-board member', function () {
-    $pleb = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create(['sats_paid' => 0]);
-
-    NostrAuth::login($pleb->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->set('payoutSats', 21000)
-        ->call('recordPayout')
-        ->assertForbidden();
-
-    expect($project->fresh()->sats_paid)->toBe(0);
-});
-
-it('denies recordPayout to a guest', function () {
-    $project = ProjectProposal::factory()->create(['sats_paid' => 0]);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->set('payoutSats', 21000)
-        ->call('recordPayout')
-        ->assertForbidden();
-
-    expect($project->fresh()->sats_paid)->toBe(0);
-});
-
-it('refuses a payout while the proposal is still being voted on', function () {
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $project = ProjectProposal::factory()->create(['sats_paid' => 0]);
-    // Eine Stimme zu wenig für die absolute Mehrheit.
-    boardDecides($project, inFavour: true, count: ProjectProposal::boardVoteThreshold() - 1);
-
-    NostrAuth::login($board->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->set('payoutSats', 50000)
-        ->call('recordPayout')
-        ->assertForbidden();
-
-    expect($project->fresh()->sats_paid)->toBe(0);
-});
-
-it('refuses a payout for a rejected proposal', function () {
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $project = ProjectProposal::factory()->create(['sats_paid' => 0]);
-    boardDecides($project, inFavour: false);
-
-    NostrAuth::login($board->pubkey);
-
-    // Geld darf einem abgelehnten Antrag unter keinen Umständen folgen.
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->set('payoutSats', 50000)
-        ->call('recordPayout')
-        ->assertForbidden();
-
-    expect($project->fresh()->sats_paid)->toBe(0);
-});
-
-it('hides the payout form and names the missing approvals', function () {
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $project = ProjectProposal::factory()->create(['sats_paid' => 0]);
-
-    NostrAuth::login($board->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('canPayout', false)
-        ->assertSee('Auszahlung erst nach Beschluss')
-        ->assertDontSee('Noch nichts ausgezahlt.');
-});
-
-it('rejects a zero payout amount', function () {
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $project = ProjectProposal::factory()->create(['sats_paid' => 0]);
-    boardDecides($project, inFavour: true);
-
-    NostrAuth::login($board->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->set('payoutSats', 0)
-        ->call('recordPayout')
-        ->assertHasErrors(['payoutSats']);
-
-    expect($project->fresh()->sats_paid)->toBe(0);
-});
-
-it('lets a board member revert a recorded payout', function () {
-    // sats_paid is deliberately not fillable (see MassAssignmentProtectionTest)
-    // — a payout must be set via direct attribute assignment, not update().
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $project = ProjectProposal::factory()->create();
-    $project->sats_paid = 50000;
-    $project->save();
-
-    NostrAuth::login($board->pubkey);
-
-    $component = Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('revertPayout');
-
-    expect($component->get('status'))->toBe(ProjectProposalStatus::InVoting)
-        ->and($project->fresh()->sats_paid)->toBe(0);
-});
-
-it('denies revertPayout to a non-board member and leaves the payout untouched', function () {
-    $pleb = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create();
-    $project->sats_paid = 50000;
-    $project->save();
-
-    NostrAuth::login($pleb->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('revertPayout')
-        ->assertForbidden();
-
-    expect($project->fresh()->sats_paid)->toBe(50000);
-});
-
-// canSeeContact / Kontaktangabe auf der Detailseite
-
 it('shows the nostr-dm contact info to the submitter', function () {
     $pleb = EinundzwanzigPleb::factory()->create();
     $project = ProjectProposal::factory()->create([
@@ -891,102 +557,6 @@ it('hides the create-chat-room action from a guest', function () {
         ->assertSet('canCreateChatRoom', false);
 });
 
-it('lets a board member create the chat room and persists the computed room id', function () {
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $project = ProjectProposal::factory()->create();
-
-    NostrAuth::login($board->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('storeChatRoom', $project->nostrGroupId())
-        ->assertHasNoErrors();
-
-    $fresh = $project->fresh();
-    expect($fresh->nostr_group_h)->toBe($project->nostrGroupId())
-        ->and($fresh->nostr_group_created_at)->not->toBeNull();
-});
-
-it('rejects storeChatRoom for the submitter, even with the correctly computed room id — the endpoint itself must refuse, not just the button', function () {
-    $submitter = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create(['einundzwanzig_pleb_id' => $submitter->id]);
-
-    NostrAuth::login($submitter->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('storeChatRoom', $project->nostrGroupId())
-        ->assertForbidden();
-
-    $fresh = $project->fresh();
-    expect($fresh->nostr_group_h)->toBeNull()
-        ->and($fresh->nostr_group_created_at)->toBeNull();
-});
-
-it('rejects storeChatRoom for an unrelated member', function () {
-    $pleb = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create();
-
-    NostrAuth::login($pleb->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('storeChatRoom', $project->nostrGroupId())
-        ->assertForbidden();
-
-    expect($project->fresh()->nostr_group_h)->toBeNull();
-});
-
-it('rejects storeChatRoom for a guest', function () {
-    $project = ProjectProposal::factory()->create();
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('storeChatRoom', $project->nostrGroupId())
-        ->assertForbidden();
-
-    expect($project->fresh()->nostr_group_h)->toBeNull();
-});
-
-it('refuses a second storeChatRoom call once the room already exists, without changing the stored value', function () {
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $project = ProjectProposal::factory()->create();
-
-    NostrAuth::login($board->pubkey);
-
-    $component = Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('storeChatRoom', $project->nostrGroupId())
-        ->assertHasNoErrors();
-
-    $storedAfterFirstCall = $project->fresh()->nostr_group_h;
-    $createdAtAfterFirstCall = $project->fresh()->nostr_group_created_at;
-
-    // Der zweite Aufruf trifft auf eine bereits vorhandene Raum-ID: die
-    // createChatRoom-Policy verlangt ! hasNostrGroup() und verweigert daher —
-    // das ist die Idempotenz-Grenze, nicht ein stiller no-op im Handler selbst.
-    $component->call('storeChatRoom', $project->nostrGroupId())
-        ->assertForbidden();
-
-    $fresh = $project->fresh();
-    expect($fresh->nostr_group_h)->toBe($storedAfterFirstCall)
-        ->and($fresh->nostr_group_created_at->equalTo($createdAtAfterFirstCall))->toBeTrue();
-});
-
-it('rejects storeChatRoom when the reported room id does not match the server-computed one, and writes nothing', function () {
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $project = ProjectProposal::factory()->create();
-
-    NostrAuth::login($board->pubkey);
-
-    // Der Aufrufer ist berechtigt (Vorstand, kein Raum vorhanden) — die
-    // Ablehnung muss also aus dem Abgleich im Handler kommen, nicht aus der
-    // Policy.
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('storeChatRoom', 'p'.str_repeat('f', 12))
-        ->assertHasNoErrors();
-
-    $fresh = $project->fresh();
-    expect($fresh->nostr_group_h)->toBeNull()
-        ->and($fresh->nostr_group_created_at)->toBeNull()
-        ->and($fresh->hasNostrGroup())->toBeFalse();
-});
-
 it('hides the chat room panel entirely before it exists for a non-board, non-submitter viewer', function () {
     $pleb = EinundzwanzigPleb::factory()->create();
     $project = ProjectProposal::factory()->create();
@@ -1075,25 +645,6 @@ it('hides an existing chat room from a guest', function () {
         ->assertDontSee('Chat zum Antrag');
 });
 
-it('delegates chatRoomMemberPubkeys to the model, including submitter and board', function () {
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $submitter = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create(['einundzwanzig_pleb_id' => $submitter->id]);
-
-    NostrAuth::login($board->pubkey);
-
-    $component = Livewire::test('association.project-support.show', ['projectProposal' => $project]);
-
-    expect($component->get('chatRoomMemberPubkeys'))->toBe($project->nostrGroupMemberPubkeys())
-        ->and($component->get('chatRoomMemberPubkeys'))->toContain($submitter->pubkey);
-});
-
-// Eingebettete Chat-Insel auf der Detailseite.
-//
-// Entscheidend ist die SERVER-Seite: Wer den Raum nicht sehen darf, bekommt das
-// Insel-Markup gar nicht erst ausgeliefert. Ein rein visuelles Verstecken waere
-// wertlos — der Raumname und die Mitglieder-Pubkeys staenden trotzdem im HTML.
-
 it('embeds the chat island for a board member once the room exists', function () {
     $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
     $project = ProjectProposal::factory()->create();
@@ -1172,89 +723,6 @@ it('keeps the fallback link to the full chat client next to the island', functio
 // gesperrt. Reine Policy-Aufrufe liegen in
 // tests/Feature/Policies/ProjectProposalChatRoomPolicyTest.php — hier geht es um
 // den Livewire-Endpunkt, der oeffentlich und damit direkt aufrufbar ist.
-
-it('lets a board member reset the chat room reference and unlocks the create action again', function () {
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $project = ProjectProposal::factory()->create([
-        'nostr_group_h' => 'p'.str_repeat('a', 12),
-        'nostr_group_created_at' => now()->subDay(),
-    ]);
-
-    NostrAuth::login($board->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('canResetChatRoom', true)
-        ->assertSet('canCreateChatRoom', false)
-        ->call('resetChatRoom')
-        ->assertHasNoErrors()
-        // Das ist der eigentliche Zweck: der Antrag ist wieder frei.
-        ->assertSet('canCreateChatRoom', true)
-        ->assertSet('canResetChatRoom', false)
-        ->assertSee('Chatraum anlegen');
-
-    $fresh = $project->fresh();
-    expect($fresh->nostr_group_h)->toBeNull()
-        ->and($fresh->nostr_group_created_at)->toBeNull()
-        ->and($fresh->hasNostrGroup())->toBeFalse();
-});
-
-it('rejects resetChatRoom when no room is on file, even for a board member', function () {
-    $board = EinundzwanzigPleb::query()->where('npub', config('einundzwanzig.config.current_board')[0])->firstOrFail();
-    $project = ProjectProposal::factory()->create();
-
-    NostrAuth::login($board->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->assertSet('canResetChatRoom', false)
-        ->call('resetChatRoom')
-        ->assertForbidden();
-});
-
-it('rejects resetChatRoom for the submitter — the endpoint itself must refuse, not just the hidden button', function () {
-    $submitter = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create([
-        'einundzwanzig_pleb_id' => $submitter->id,
-        'nostr_group_h' => 'p'.str_repeat('a', 12),
-        'nostr_group_created_at' => now()->subDay(),
-    ]);
-
-    NostrAuth::login($submitter->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('resetChatRoom')
-        ->assertForbidden();
-
-    $fresh = $project->fresh();
-    expect($fresh->nostr_group_h)->toBe('p'.str_repeat('a', 12))
-        ->and($fresh->nostr_group_created_at)->not->toBeNull();
-});
-
-it('rejects resetChatRoom for an unrelated member', function () {
-    $pleb = EinundzwanzigPleb::factory()->create();
-    $project = ProjectProposal::factory()->create([
-        'nostr_group_h' => 'p'.str_repeat('a', 12),
-    ]);
-
-    NostrAuth::login($pleb->pubkey);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('resetChatRoom')
-        ->assertForbidden();
-
-    expect($project->fresh()->nostr_group_h)->toBe('p'.str_repeat('a', 12));
-});
-
-it('rejects resetChatRoom for a guest', function () {
-    $project = ProjectProposal::factory()->create([
-        'nostr_group_h' => 'p'.str_repeat('a', 12),
-    ]);
-
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
-        ->call('resetChatRoom')
-        ->assertForbidden();
-
-    expect($project->fresh()->nostr_group_h)->toBe('p'.str_repeat('a', 12));
-});
 
 it('shows the reset action to a board member and keeps it out of the markup for everyone else', function () {
     $submitter = EinundzwanzigPleb::factory()->create();

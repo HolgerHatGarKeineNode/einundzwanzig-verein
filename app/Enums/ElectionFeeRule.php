@@ -21,4 +21,45 @@ enum ElectionFeeRule: string
     {
         return $this !== self::LastTwelveMonths;
     }
+
+    /**
+     * The rule in a few words; `$year` defaults to the current year.
+     */
+    public function label(?int $year = null): string
+    {
+        $year ??= (int) now()->year;
+
+        return match ($this) {
+            self::Year => __('Beitrag :year', ['year' => $year]),
+            self::YearOrPrevious => __('Beitrag :year oder :previous', ['year' => $year, 'previous' => $year - 1]),
+            self::LastTwelveMonths => __('Beitrag in den letzten 12 Monaten'),
+        };
+    }
+
+    /**
+     * Who may vote under the rule, as one sentence; `$year` defaults to the
+     * current year.
+     */
+    public function hint(?int $year = null): string
+    {
+        $year ??= (int) now()->year;
+
+        return match ($this) {
+            self::Year => __('Wählen darf, wer als Aktiv- oder Ehrenmitglied den Beitrag für :year bezahlt hat.', ['year' => $year]),
+            self::YearOrPrevious => __('Wählen darf, wer als Aktiv- oder Ehrenmitglied den Beitrag für :year oder für :previous bezahlt hat.', ['year' => $year, 'previous' => $year - 1]),
+            self::LastTwelveMonths => __('Wählen darf, wer als Aktiv- oder Ehrenmitglied in den zwölf Monaten vor dem Öffnen des Wahlgangs einen Beitrag bezahlt hat.'),
+        };
+    }
+
+    /**
+     * What a member who is not entitled under the rule lacks.
+     */
+    public function missingText(?int $year): string
+    {
+        return match ($this) {
+            self::Year => __('Beitrag :year fehlt', ['year' => $year]),
+            self::YearOrPrevious => __('Beitrag :year oder :previous fehlt', ['year' => $year, 'previous' => (int) $year - 1]),
+            self::LastTwelveMonths => __('Kein Beitrag in den letzten 12 Monaten'),
+        };
+    }
 }

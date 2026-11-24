@@ -7,7 +7,7 @@ use App\Services\Nostr\RelayTransport;
  *
  * RelayStrayConnectionTest runs this file in a child process to see the check
  * after each test do its work: the test body below is green on its own — it
- * swallows the refusal the way NostrFetcherTrait does — and must fail anyway.
+ * swallows the refusal the way a catch-all in application code does — and must fail anyway.
  * The file name does not end in "Test.php", so no suite collects it; it sits
  * under tests/Feature so the hooks from tests/Pest.php apply to it.
  */

@@ -20,7 +20,7 @@ use Illuminate\Http\Response;
  *
  * WHAT THIS CONTROLLER DELIBERATELY DOES NOT DO: decide who becomes a member,
  * or on what terms. It resolves the delivery to a payment event and hands that
- * to `MembershipService::markPaid()` / `reversePayment()`. The amount check,
+ * to `MembershipService::markPaid()`. The amount check,
  * the currency check, the year check, the transaction and the audit trail all
  * live there, so `POST /payments/{year}/refresh` — and whatever the next
  * caller turns out to be — is bound by the identical rules. The measured
@@ -42,9 +42,14 @@ class BtcPayWebhookController extends Controller
      * and dropped, exactly as before — `InvoiceProcessing`,
      * `InvoiceReceivedPayment` and friends carry no decision for us.
      *
+     * `InvoiceInvalid` joined them on 2026-11-24. It used to take a booked fee
+     * back (a Storno); a settled fee is final now (owner decision, verbatim:
+     * "Wenn Webhook meldet, dass bezahlt, dann ist bezahlt! Lightning Invoices
+     * sind nicht rückholbar!"), and on an unpaid fee it never did anything.
+     *
      * @var list<string>
      */
-    private const HANDLED_TYPES = ['InvoiceSettled', 'InvoiceInvalid'];
+    private const HANDLED_TYPES = ['InvoiceSettled'];
 
     public function __construct(private readonly MembershipService $membership) {}
 
@@ -131,34 +136,30 @@ class BtcPayWebhookController extends Controller
          * and leaves `processed_at` unset — so BTCPay's next attempt does the
          * work rather than finding a "done" marker over a job that never ran.
          */
-        if ($type === 'InvoiceSettled') {
-            $result = $this->membership->markPaid(
-                $paymentEvent,
-                source: 'webhook',
-                deliveryId: $delivery->delivery_key,
-                settlement: $settlement,
-            );
+        $result = $this->membership->markPaid(
+            $paymentEvent,
+            source: 'webhook',
+            deliveryId: $delivery->delivery_key,
+            settlement: $settlement,
+        );
 
-            /*
-             * A REFUSAL IS NOT ALWAYS A VERDICT, and the difference decides
-             * whether this delivery is recoverable.
-             *
-             * BTCPay retries on 5xx and stops for good on a 2xx. Acknowledging
-             * a TRANSIENT refusal — the store answered with an unreadable body,
-             * or has not caught up with its own settled event yet — marked the
-             * delivery done and left the redelivery that would have carried the
-             * right answer with nothing to do. A momentary upstream fault
-             * became a permanently unbooked payment.
-             *
-             * A wrong amount or a wrong currency is the opposite: an answer.
-             * Retrying it eight times over an hour changes nothing, so it is
-             * acknowledged and the review row is the follow-up.
-             */
-            if ($result['review']?->reasonCase()?->isTransient()) {
-                abort(Response::HTTP_SERVICE_UNAVAILABLE);
-            }
-        } else {
-            $this->membership->reversePayment($paymentEvent, 'InvoiceInvalid', 'webhook', $delivery->delivery_key);
+        /*
+         * A REFUSAL IS NOT ALWAYS A VERDICT, and the difference decides
+         * whether this delivery is recoverable.
+         *
+         * BTCPay retries on 5xx and stops for good on a 2xx. Acknowledging
+         * a TRANSIENT refusal — the store answered with an unreadable body,
+         * or has not caught up with its own settled event yet — marked the
+         * delivery done and left the redelivery that would have carried the
+         * right answer with nothing to do. A momentary upstream fault
+         * became a permanently unbooked payment.
+         *
+         * A wrong amount or a wrong currency is the opposite: an answer.
+         * Retrying it eight times over an hour changes nothing, so it is
+         * acknowledged and the review row is the follow-up.
+         */
+        if ($result['review']?->reasonCase()?->isTransient()) {
+            abort(Response::HTTP_SERVICE_UNAVAILABLE);
         }
 
         $delivery->markProcessed();

@@ -18,4 +18,14 @@ enum ElectionRollSource: string
 
     /** Entered by hand by the Wahlleitung (`EnrolByHand`). */
     case ByHand = 'by_hand';
+
+    public function label(): string
+    {
+        return match ($this) {
+            self::Opening => __('beim Öffnen'),
+            self::LatePayment => __('durch Nachzahlung'),
+            self::Inherited => __('aus dem Wahlgang übernommen'),
+            self::ByHand => __('von Hand nachgetragen'),
+        };
+    }
 }

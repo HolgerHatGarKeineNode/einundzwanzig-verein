@@ -19,7 +19,7 @@ use Symfony\Component\HtmlSanitizer\HtmlSanitizerConfig;
  * any login.
  *
  * WHAT MAKES THAT WORSE THAN A DEFACEMENT. The detail page carries the board's
- * own actions — `handleApprove`, `handleNotApprove`, `recordPayout`,
+ * own actions — `castVote`, `recordPayout`,
  * `revertPayout`. Every public Livewire method is callable as
  * `$wire.<name>()` from injected script, and the policies behind them check
  * the VIEWER. A board member opening a poisoned proposal would approve it, or

@@ -88,8 +88,13 @@ it('lets a brand new pubkey log in and apply in one go', function () {
 
     expect(EinundzwanzigPleb::query()->where('pubkey', $pubkey)->exists())->toBeFalse();
 
+    // The sidebar's auth-button logs in and reloads; the profile page then
+    // mounts with the session.
+    Livewire::test('auth-button', ['location' => 'sidebar'])
+        ->call('handleNostrLoggedIn', $signedEvent, 'sidebar')
+        ->assertHasNoErrors();
+
     Livewire::test('association.profile')
-        ->call('handleNostrLoggedIn', $signedEvent)
         ->assertSet('currentPubkey', $pubkey)
         ->assertHasNoErrors()
         ->set('form.check', true)

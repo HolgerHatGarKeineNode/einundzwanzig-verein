@@ -2,6 +2,7 @@
 
 use App\Models\DmInboxMessage;
 use App\Models\EinundzwanzigPleb;
+use App\Models\Profile;
 use App\Services\Dm\DirectMessageText;
 use App\Services\MembershipService;
 use App\Services\Nostr\DirectMessageSigner;
@@ -11,6 +12,7 @@ use App\Services\Nostr\EventVerification;
 use App\Services\Nostr\NotificationKey;
 use App\Support\NostrAuth;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
 use swentel\nostr\Encryption\Nip44;
 use swentel\nostr\Key\Key;
@@ -246,4 +248,37 @@ it('answers someone who is no member at the inbox relays their own kind 10050 li
         ->toBe(['einundzwanzig_pleb_id' => null, 'counterparty_pubkey' => $pubkey, 'status' => 'sent'])
         ->and(array_column($published, 'relay'))->toBe(['wss://stranger-inbox.example/'])
         ->and(openWrapWith($published[0]['event'], $secret)['content'])->toBe('Über das Portal, Antrag unter Mitgliedschaft.');
+});
+
+it('names every conversation of the inbox in a fixed number of queries, however many there are', function () {
+    armBoardInbox();
+    [$board] = electionBoard(1);
+    NostrAuth::login($board->pubkey);
+    $added = 0;
+    // Each pair: a member with a portal profile and someone else with a cached Nostr profile.
+    $addConversations = function (int $pairs) use (&$added): void {
+        for ($i = 0; $i < $pairs; $i++, $added++) {
+            $member = EinundzwanzigPleb::factory()->active()->create();
+            Profile::factory()->create(['pubkey' => $member->pubkey, 'name' => 'Mitglied '.$added]);
+            DmInboxMessage::factory()->create(['einundzwanzig_pleb_id' => $member->id]);
+            $stranger = bin2hex(random_bytes(32));
+            Profile::factory()->create(['pubkey' => $stranger, 'name' => 'Gast '.$added]);
+            DmInboxMessage::factory()->create(['einundzwanzig_pleb_id' => null, 'counterparty_pubkey' => $stranger]);
+        }
+    };
+    $queriesToRender = function (): int {
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        Livewire::test('association.messages.inbox')->assertSee('Mitglied 0')->assertSee('Gast 0');
+        $count = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        return $count;
+    };
+
+    $addConversations(2);
+    $fewer = $queriesToRender();
+    $addConversations(6);
+
+    expect($queriesToRender())->toBe($fewer);
 });

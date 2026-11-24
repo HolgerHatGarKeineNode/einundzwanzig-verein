@@ -5,6 +5,7 @@ use App\Models\EinundzwanzigPleb;
 use App\Models\ProjectProposal;
 use App\Models\Vote;
 use Illuminate\Support\Collection;
+use swentel\nostr\Key\Key;
 
 /**
  * Der Vorstand wird je Test frisch angelegt, weil ProjectProposal::boardPlebIds()
@@ -18,7 +19,7 @@ use Illuminate\Support\Collection;
  */
 beforeEach(function () {
     $this->board = collect(config('einundzwanzig.config.current_board'))
-        ->map(fn (string $npub) => EinundzwanzigPleb::factory()->create(['npub' => $npub]))
+        ->map(fn (string $npub) => EinundzwanzigPleb::factory()->create(['npub' => $npub, 'pubkey' => (new Key)->convertToHex($npub)]))
         ->values();
 });
 
@@ -155,4 +156,12 @@ it('does not let votes from non-board members reach the board threshold', functi
 
     expect($project->status())->toBe(ProjectProposalStatus::InVoting)
         ->and($project->supporters())->toBe($threshold);
+});
+
+it('finds the board by the indexed hex pubkey that its configured npubs decode to', function () {
+    $pubkeys = $this->board->pluck('pubkey')->sort()->values()->all();
+    // A row whose npub column says board but whose key is someone else's is not the board.
+    EinundzwanzigPleb::factory()->create(['npub' => config('einundzwanzig.config.current_board')[0]]);
+
+    expect(EinundzwanzigPleb::query()->whereIn('id', ProjectProposal::boardPlebIds())->pluck('pubkey')->sort()->values()->all())->toBe($pubkeys);
 });

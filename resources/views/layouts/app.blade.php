@@ -1,7 +1,5 @@
 @php
     $currentRoute = request()->route()->getName();
-    $isCurrentRouteClass = 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100';
-    $isNotCurrentRouteClass = 'text-gray-600 dark:text-gray-400';
     $inboxMember = \App\Support\NostrAuth::user()?->getPleb();
     $unreadMessages = $inboxMember instanceof \App\Models\EinundzwanzigPleb
         ? app(\App\Services\Dm\DirectMessageInbox::class)->unreadCount($inboxMember)
@@ -19,7 +17,6 @@
         {!! seo($SEOData ?? null) !!}
     @endif
     <title>{{ $title ?? 'Page Title' }}</title>
-    <script src="https://kit.fontawesome.com/866fd3d0ab.js" crossorigin="anonymous"></script>
     @googlefonts
     {{-- Seiteneigene Skripte, die VOR app.js laufen muessen. app.js startet
          Alpine; wer eine Alpine-Komponente bereitstellt, muss sie vorher
@@ -141,6 +138,11 @@
     }
 </script>
 @include('partials.wnj-nsec-guard')
-<script src="{{ asset('dist/window.nostr.min.js.js') }}"></script>
+{{-- defer: the 187 KB vendor file no longer holds up parsing. It still runs
+     after the inline guard above and before DOMContentLoaded, which is all
+     the guard relies on. It now runs AFTER app.js (a module script, deferred
+     as well and earlier in the document), so nothing in app.js may read
+     window.nostr while it loads; today only click handlers do. --}}
+<script src="{{ asset('dist/window.nostr.min.js.js') }}" defer></script>
 </body>
 </html>

@@ -99,3 +99,48 @@ it('has correct default values', function () {
         ->assertSet('form.contact_via_nostr_dm', true)
         ->assertSet('form.contact_alternative', '');
 });
+
+/*
+ * R9 of the page optimisation plan: create and edit share ProjectProposalForm,
+ * so a value one page refuses the other refuses too. Before, each page carried
+ * its own copy of the rules.
+ */
+it('refuses the same invalid input on the create and the edit page', function (string $page, string $field, mixed $value) {
+    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
+    $own = ProjectProposal::factory()->create(['einundzwanzig_pleb_id' => $pleb->id, 'name' => 'Mein Antrag']);
+    ProjectProposal::factory()->create(['name' => 'Fremder Antrag']);
+    NostrAuth::login($pleb->pubkey);
+
+    [$component, $parameters, $action] = $page === 'create'
+        ? ['association.project-support.form.create', [], 'save']
+        : ['association.project-support.form.edit', ['projectProposal' => $own], 'update'];
+
+    Livewire::test($component, $parameters)
+        ->set('form.name', 'Gültiger Name')
+        ->set('form.description', 'Beschreibung')
+        ->set('form.support_in_sats', 21000)
+        ->set('form.website', 'https://example.com')
+        ->set("form.{$field}", $value)
+        ->call($action)
+        ->assertHasErrors(["form.{$field}"]);
+})->with(['create', 'edit'])->with([
+    'empty name' => ['name', ''],
+    'name of another proposal' => ['name', 'Fremder Antrag'],
+    'name too long' => ['name', str_repeat('a', 256)],
+    'empty description' => ['description', ''],
+    'negative sats' => ['support_in_sats', -1],
+    'sats not a number' => ['support_in_sats', 'viele'],
+    'website not a url' => ['website', 'keine-url'],
+    'alternative contact too long' => ['contact_alternative', str_repeat('a', 256)],
+]);
+
+it('keeps the edited proposal its own name', function () {
+    $pleb = EinundzwanzigPleb::factory()->create();
+    $own = ProjectProposal::factory()->create(['einundzwanzig_pleb_id' => $pleb->id, 'name' => 'Mein Antrag']);
+    NostrAuth::login($pleb->pubkey);
+
+    Livewire::test('association.project-support.form.edit', ['projectProposal' => $own])
+        ->assertSet('form.name', 'Mein Antrag')
+        ->call('update')
+        ->assertHasNoErrors();
+});

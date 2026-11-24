@@ -1,9 +1,9 @@
 <?php
 
 use App\Enums\DmDeliveryStatus;
-use App\Models\EinundzwanzigPleb;
+use App\Livewire\Traits\WithViewer;
 use App\Services\Dm\DirectMessageInbox;
-use App\Support\NostrAuth;
+use App\Support\DisplayTime;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
@@ -14,19 +14,11 @@ new
 #[Title('Nachrichten vom Verein')]
 class extends Component
 {
+    use WithViewer;
+
     /** The delivery shown in full; one at a time. */
     public ?int $openId = null;
 
-    /**
-     * The member behind the session, or null. Resolved on every request,
-     * never stored on the component.
-     */
-    protected function viewer(): ?EinundzwanzigPleb
-    {
-        $pleb = NostrAuth::user()?->getPleb();
-
-        return $pleb instanceof EinundzwanzigPleb && ! $pleb->isErased() ? $pleb : null;
-    }
 
     #[Computed]
     public function isMember(): bool
@@ -91,7 +83,7 @@ class extends Component
 
     public function receivedAt(string $iso): string
     {
-        return Carbon::parse($iso)->timezone('Europe/Berlin')->locale('de')->isoFormat('D. MMMM YYYY, HH:mm');
+        return DisplayTime::of(Carbon::parse($iso))->locale('de')->isoFormat('D. MMMM YYYY, HH:mm');
     }
 
     /**
@@ -121,8 +113,8 @@ class extends Component
             <flux:callout.text>{{ __('Bitte melde dich zunächst mit Nostr an.') }}</flux:callout.text>
         </flux:callout>
     @else
-        <header class="mb-8">
-            <h1 class="text-3xl font-bold leading-tight text-text-primary sm:text-4xl">{{ __('Nachrichten vom Verein') }}</h1>
+        <x-page-header>
+            <x-slot:title>{{ __('Nachrichten vom Verein') }}</x-slot:title>
             @if ($this->messages->isNotEmpty())
                 <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                     @if ($this->unreadCount > 0)
@@ -131,7 +123,7 @@ class extends Component
                     {{ __('Was der Vorstand dir als Nostr-Direktnachricht schickt, steht auch hier. Antworten auf diese Nachrichten liest niemand; wen du stattdessen erreichst, steht am Ende jeder Nachricht.') }}
                 </p>
             @endif
-        </header>
+        </x-page-header>
 
         @if ($this->messages->isEmpty())
             <section class="rounded-lg border border-dashed border-border-default px-6 py-10" aria-labelledby="no-messages">

@@ -6,6 +6,7 @@ use App\Support\NostrAuth;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Livewire\Features\SupportTesting\Testable;
 use Livewire\Livewire;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
@@ -33,6 +34,14 @@ function showPage(ProjectProposal $proposal)
     return Livewire::test('association.project-support.show', ['projectProposal' => $proposal]);
 }
 
+/**
+ * The image takedown, a child component of the page mounted for the board.
+ */
+function descriptionImages(ProjectProposal $proposal): Testable
+{
+    return Livewire::test('association.project-support.show-description-images', ['projectProposal' => $proposal]);
+}
+
 function imageIsIntact(Media $media, string $path): bool
 {
     return Media::query()->whereKey($media->id)->exists() && Storage::disk('private')->exists($path);
@@ -42,7 +51,7 @@ it('lets a board member remove an image: row, file and uploader line gone, rest 
     Log::spy();
     NostrAuth::login($this->board->pubkey);
 
-    showPage($this->proposal)
+    descriptionImages($this->proposal)
         ->assertSee('Bilder in der Beschreibung')
         ->assertSeeHtml("confirmRemoveDescriptionImage('{$this->image->uuid}')")
         ->call('confirmRemoveDescriptionImage', $this->image->uuid)
@@ -51,6 +60,7 @@ it('lets a board member remove an image: row, file and uploader line gone, rest 
         ->assertHasNoErrors()
         ->assertSet('imageToRemove', null)
         ->assertDontSee('Bilder in der Beschreibung')
+        ->assertDispatched('project-proposal-changed')
         ->call('$refresh')
         ->assertOk();
 
@@ -70,7 +80,7 @@ it('accepts an uppercase reference to the image', function () {
     $this->proposal->update(['description' => 'A ![Bild](https://x.test/description-images/'.strtoupper($this->image->uuid).') B']);
     NostrAuth::login($this->board->pubkey);
 
-    showPage($this->proposal)
+    descriptionImages($this->proposal)
         ->call('confirmRemoveDescriptionImage', strtoupper($this->image->uuid))
         ->call('removeDescriptionImage')
         ->assertHasNoErrors();
@@ -85,12 +95,12 @@ it('answers 404 and deletes nothing for an image this description does not refer
     ProjectProposal::factory()->create(['description' => '![Bild]('.route('description-image', $foreign->uuid).')']);
     NostrAuth::login($this->board->pubkey);
 
-    showPage($this->proposal)
+    descriptionImages($this->proposal)
         ->call('confirmRemoveDescriptionImage', $foreign->uuid)
         ->assertNotFound();
 
     // The property is client writable: setting it directly must not get past the check.
-    showPage($this->proposal)
+    descriptionImages($this->proposal)
         ->set('imageToRemove', $foreign->uuid)
         ->call('removeDescriptionImage')
         ->assertNotFound();
@@ -106,11 +116,11 @@ it('answers 404 and deletes nothing for a main image, even when the description 
     $this->proposal->update(['description' => $description]);
     NostrAuth::login($this->board->pubkey);
 
-    showPage($this->proposal)
+    descriptionImages($this->proposal)
         ->call('confirmRemoveDescriptionImage', $main->uuid)
         ->assertNotFound();
 
-    showPage($this->proposal)
+    descriptionImages($this->proposal)
         ->set('imageToRemove', $main->uuid)
         ->call('removeDescriptionImage')
         ->assertNotFound();
@@ -134,14 +144,8 @@ it('refuses author, member and guest at the endpoint and hides the button', func
         ->assertDontSee('Bilder in der Beschreibung')
         ->assertDontSeeHtml('confirmRemoveDescriptionImage');
 
-    showPage($this->proposal)
-        ->call('confirmRemoveDescriptionImage', $this->image->uuid)
-        ->assertForbidden();
-
-    showPage($this->proposal)
-        ->set('imageToRemove', $this->image->uuid)
-        ->call('removeDescriptionImage')
-        ->assertForbidden();
+    // The takedown component refuses to mount, so neither action is reachable.
+    descriptionImages($this->proposal)->assertForbidden();
 
     expect(imageIsIntact($this->image, $this->imagePath))->toBeTrue()
         ->and($this->proposal->fresh()->description)->toContain($this->markdown);
@@ -154,7 +158,7 @@ it('lists other proposals using the image, deletes the file anyway and leaves th
     ]);
     NostrAuth::login($this->board->pubkey);
 
-    showPage($this->proposal)
+    descriptionImages($this->proposal)
         ->call('confirmRemoveDescriptionImage', $this->image->uuid)
         ->assertSee('Zweiter Antrag mit demselben Bild')
         ->call('removeDescriptionImage')
@@ -168,7 +172,7 @@ it('tells the board to edit a reference in another form by hand', function () {
     $this->proposal->update(['description' => "{$this->markdown}\n\n[Link](".route('description-image', $this->image->uuid).')']);
     NostrAuth::login($this->board->pubkey);
 
-    showPage($this->proposal)
+    descriptionImages($this->proposal)
         ->call('confirmRemoveDescriptionImage', $this->image->uuid)
         ->assertSee('Diese Stelle bitte danach von Hand bearbeiten.')
         ->call('removeDescriptionImage');
@@ -179,7 +183,31 @@ it('tells the board to edit a reference in another form by hand', function () {
 it('does not show the hand-edit notice when the uploader form is the only reference', function () {
     NostrAuth::login($this->board->pubkey);
 
-    showPage($this->proposal)
+    descriptionImages($this->proposal)
         ->call('confirmRemoveDescriptionImage', $this->image->uuid)
         ->assertDontSee('Diese Stelle bitte danach von Hand bearbeiten.');
+});
+
+it('hands a removal to the page, whose description loses the image', function () {
+    NostrAuth::login($this->board->pubkey);
+    $page = showPage($this->proposal)->assertSeeHtml(route('description-image', $this->image->uuid));
+
+    descriptionImages($this->proposal)
+        ->call('confirmRemoveDescriptionImage', $this->image->uuid)
+        ->call('removeDescriptionImage')
+        ->assertDispatched('project-proposal-changed');
+
+    $page->dispatch('project-proposal-changed')
+        ->assertDontSeeHtml(route('description-image', $this->image->uuid))
+        ->assertSee('letzte Zeile');
+});
+
+it('stops answering when the session leaves the board after the takedown was rendered', function () {
+    NostrAuth::login($this->board->pubkey);
+    $panel = descriptionImages($this->proposal);
+
+    NostrAuth::login($this->author->pubkey);
+    $panel->call('$refresh')->assertForbidden();
+
+    expect(imageIsIntact($this->image, $this->imagePath))->toBeTrue();
 });

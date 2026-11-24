@@ -75,7 +75,6 @@ it('lets no file but the listed ones open a relay connection of its own', functi
     // A scan that silently covered nothing would agree with any list.
     expect($scanned)->toBeGreaterThan(250)
         ->and($found)->toBe([
-            'app/Console/Commands/Nostr/FetchEvents.php',
             'app/Jobs/PublishPaymentEventToNostr.php',
             // The production RelayTransport's socket layer; pinned by the test below.
             'app/Services/Nostr/Relay/WebSocket/BoundedSocketClient.php',
@@ -83,8 +82,6 @@ it('lets no file but the listed ones open a relay connection of its own', functi
             'app/Services/Nostr/Relay/WebSocket/BoundedStreamFactory.php',
             'app/Services/Nostr/Relay/WebSocket/WebSocketRelayConnection.php',
             'app/Services/Nostr/Relay/WebSocket/WebSocketRelayConnector.php',
-            'app/Traits/NostrFetcherTrait.php',
-            'resources/views/livewire/association/profile.blade.php',
             'vendor/einundzwanzig/group/src/Nostr/ProfileCache.php',
             'vendor/einundzwanzig/group/src/Nostr/SpaceCache.php',
         ]);

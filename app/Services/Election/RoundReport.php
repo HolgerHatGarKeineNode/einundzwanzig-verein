@@ -63,13 +63,24 @@ class RoundReport
      */
     public function forElection(Election $election, ?CarbonInterface $now = null): Collection
     {
+        return $this->roundsOf($election)->map(fn (ElectionRound $round): array => $this->of($round, $now));
+    }
+
+    /**
+     * The rounds of `$election` in ballot order, loaded the way `of()` reads
+     * them — for a caller that picks the round to report from their columns
+     * first and then reports only that one.
+     *
+     * @return Collection<int, ElectionRound>
+     */
+    public function roundsOf(Election $election): Collection
+    {
         return ElectionRound::query()
             ->where('election_event_id', $election->getKey())
             ->orderBy('position')
             ->with(['candidates.pleb.profile', 'children'])
             ->withCount(['rollEntries', 'votes'])
-            ->get()
-            ->map(fn (ElectionRound $round): array => $this->of($round, $now));
+            ->get();
     }
 
     /**
@@ -97,7 +108,7 @@ class RoundReport
 
             try {
                 $effective = $this->tally->effective($round);
-                $proposal = $this->runOffs->proposal($round);
+                $proposal = $this->runOffs->proposal($round, $effective);
             } catch (UnexpectedValueException) {
                 $unreadable = true;
             }

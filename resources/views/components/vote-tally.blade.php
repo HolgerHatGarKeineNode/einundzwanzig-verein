@@ -16,14 +16,14 @@
                variant="micro"
                @class([
                    'shrink-0',
-                   'text-green-500' => $tone === 'approve',
-                   'text-red-400' => $tone !== 'approve',
+                   'text-success' => $tone === 'approve',
+                   'text-danger' => $tone !== 'approve',
                ])
                aria-hidden="true"/>
 
     <span class="text-sm text-text-secondary">{{ $label }}</span>
 
-    <span class="flex-1 text-right text-[11px] font-semibold uppercase tracking-[0.14em] text-text-primary">
+    <span class="flex-1 text-right text-sm font-semibold tabular-nums text-text-primary">
         {{ $votes->count() }}
     </span>
 </div>

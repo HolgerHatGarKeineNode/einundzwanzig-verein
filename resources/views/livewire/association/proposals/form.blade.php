@@ -1,6 +1,6 @@
 <?php
 
-use App\Livewire\Traits\WithMemberProposalAccess;
+use App\Livewire\Traits\WithViewer;
 use App\Models\MemberProposal;
 use App\Support\MarkdownRenderer;
 use Illuminate\Support\Facades\RateLimiter;
@@ -10,7 +10,8 @@ use Livewire\Component;
 
 new class extends Component
 {
-    use WithMemberProposalAccess;
+    use WithViewer;
+
 
     /**
      * The proposal being edited, or null while submitting a new one. Locked:
@@ -31,14 +32,14 @@ new class extends Component
     public function mount(?MemberProposal $memberProposal = null): void
     {
         if ($memberProposal === null || ! $memberProposal->exists) {
-            $this->isAllowed = $this->viewerCan('create');
+            $this->isAllowed = $this->viewerCan('create', MemberProposal::class);
 
             return;
         }
 
         // Somebody who may not even read the proposal learns nothing about
         // it here — not that it exists and not that it is somebody else's.
-        if (! $this->viewerCan('viewAny')) {
+        if (! $this->viewerCan('viewAny', MemberProposal::class)) {
             return;
         }
 
@@ -77,7 +78,7 @@ new class extends Component
             : MemberProposal::query()->findOrFail($this->proposalId);
 
         $proposal === null
-            ? $this->authorizeViewer('create')
+            ? $this->authorizeViewer('create', MemberProposal::class)
             : $this->authorizeViewer('update', $proposal);
 
         if (! RateLimiter::attempt('member-proposal-save:'.$this->viewer()->id, 10, function () {})) {
@@ -107,7 +108,7 @@ new class extends Component
 };
 ?>
 
-<div>
+<div class="mx-auto w-full max-w-3xl pb-32">
     @if (! $isAllowed)
         <x-proposal-members-only
             :heading="$proposalId === null ? __('Vorschlag kann nicht eingereicht werden') : __('Dieser Vorschlag kann nicht mehr geändert werden')"
@@ -118,33 +119,30 @@ new class extends Component
             </p>
         @endif
     @else
-        <div class="w-full max-w-6xl mx-auto pb-20">
+        <div>
             <flux:button
                 :href="$proposalId === null ? route('association.proposals.index') : route('association.proposals.show', $proposalId)"
                 variant="ghost" icon="arrow-left" inset="left" class="mb-4 min-h-11" wire:navigate>
                 {{ $proposalId === null ? __('Vorschläge') : __('Zurück zum Vorschlag') }}
             </flux:button>
 
-            <div class="mb-6 max-w-2xl">
-                <h1 class="text-2xl sm:text-3xl font-bold leading-tight text-text-primary break-words">
-                    {{ $proposalId === null ? __('Vorschlag einreichen') : __('Vorschlag ändern') }}
-                </h1>
-                <p class="mt-2 text-base text-text-secondary">
+            <x-page-header>
+                <x-slot:title>{{ $proposalId === null ? __('Vorschlag einreichen') : __('Vorschlag ändern') }}</x-slot:title>
+                <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                     {{ __('Alle Mitglieder können ihn lesen, kommentieren und dafür oder dagegen stimmen. Der Vorstand entscheidet, ob er in eine Sitzung kommt.') }}
                 </p>
-            </div>
+            </x-page-header>
 
             <form wire:submit="save" class="space-y-6">
-                <flux:field class="max-w-2xl [&_input]:min-h-11">
+                <flux:field class="[&_input]:min-h-11">
                     <flux:label>{{ __('Titel') }}</flux:label>
                     <flux:description>{{ __('Ein Satz, der sagt, was der Verein tun soll.') }}</flux:description>
                     <flux:input wire:model="form.title" maxlength="255" />
                     <flux:error name="form.title" />
                 </flux:field>
 
-                {{-- Writing and the rendered result side by side on wide screens,
-                     one under the other on narrow ones. --}}
-                <div class="grid gap-6 lg:grid-cols-2">
+                {{-- Writing first, the rendered result right under it (reading width, P3/D6). --}}
+                <div class="grid gap-6">
                     <flux:field>
                         <flux:label>{{ __('Beschreibung') }}</flux:label>
                         <flux:description>{{ __('Warum, was genau, und was es kostet, falls du das weißt. Markdown ist erlaubt. Dein Name steht am Vorschlag.') }}</flux:description>
@@ -153,7 +151,7 @@ new class extends Component
                     </flux:field>
 
                     <section aria-labelledby="preview-heading" aria-live="polite" class="min-w-0">
-                        <h2 id="preview-heading" class="text-sm font-medium text-text-primary">{{ __('Vorschau') }}</h2>
+                        <h2 id="preview-heading" class="text-sm font-semibold text-text-primary">{{ __('Vorschau') }}</h2>
                         <p class="mt-1 text-sm text-text-secondary">{{ __('So erscheint die Beschreibung auf der Seite des Vorschlags.') }}</p>
                         <div class="mt-2 min-h-32 rounded-lg border border-dashed border-border-default p-4">
                             @if (filled($this->descriptionPreview))
@@ -167,7 +165,7 @@ new class extends Component
                     </section>
                 </div>
 
-                <div class="flex flex-col-reverse gap-3 border-t border-border-subtle pt-6 sm:flex-row sm:items-center sm:justify-end">
+                <div class="flex flex-col-reverse gap-2 border-t border-border-default pt-6 sm:flex-row sm:items-center sm:justify-end">
                     <flux:button
                         :href="$proposalId === null ? route('association.proposals.index') : route('association.proposals.show', $proposalId)"
                         variant="ghost" class="min-h-11" wire:navigate>

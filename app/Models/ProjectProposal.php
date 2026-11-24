@@ -3,13 +3,16 @@
 namespace App\Models;
 
 use App\Enums\ProjectProposalStatus;
+use App\Support\Board;
 use App\Support\MarkdownRenderer;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cookie;
+use Illuminate\Support\Facades\DB;
 use Spatie\Image\Enums\Fit;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
@@ -94,6 +97,7 @@ class ProjectProposal extends Model implements HasMedia
         'einundzwanzig_pleb_id' => 'integer',
         'accepted' => 'boolean',
         'sats_paid' => 'integer',
+        'approved_sats' => 'integer',
         'contact_via_nostr_dm' => 'boolean',
         'nostr_group_created_at' => 'datetime',
     ];
@@ -115,10 +119,11 @@ class ProjectProposal extends Model implements HasMedia
         // bei langlebigen Workern (Octane, Queue) den Request: wird sie einmal
         // gefüllt, bevor ein Vorstandsmitglied als Pleb-Zeile existiert, zählen
         // dessen Stimmen bis zum Worker-Neustart als null — ausgerechnet bei der
-        // Abstimmung über Fördergelder. Die Abfrage ist eine indizierte
-        // whereIn-Suche über wenige npubs; der Preis ist die Korrektheit wert.
+        // Abstimmung über Fördergelder. The lookup matches the board's hex
+        // pubkeys (Board::pubkeys(), decoded from the configured npubs) against
+        // the uniquely indexed pubkey column; npub has no index.
         return EinundzwanzigPleb::query()
-            ->whereIn('npub', config('einundzwanzig.config.current_board', []))
+            ->whereIn('pubkey', Board::pubkeys())
             ->pluck('id')
             ->all();
     }
@@ -266,6 +271,54 @@ class ProjectProposal extends Model implements HasMedia
         }
 
         return ProjectProposalStatus::InVoting;
+    }
+
+    /**
+     * Whether the board has not yet touched the proposal: no board vote cast
+     * and nothing paid out. Only then may the submitter still change or
+     * withdraw what the board is asked to decide on.
+     */
+    public function isUntouchedByBoard(): bool
+    {
+        return ! ($this->sats_paid > 0)
+            && $this->boardApprovals() === 0
+            && $this->boardRejections() === 0;
+    }
+
+    /**
+     * The amount the board approved, and therefore the most that may be paid
+     * out. Proposals decided before the amount was frozen carry null and fall
+     * back to the requested amount.
+     */
+    public function approvedSats(): int
+    {
+        return (int) ($this->approved_sats ?? $this->support_in_sats);
+    }
+
+    /**
+     * Freezes the requested amount as the approved one once the board's
+     * majority has accepted. Called after a board vote is stored.
+     *
+     * Reads the status from a fresh copy, not from this instance, whose loaded
+     * votes or aggregates may predate the vote that just decided. The write is
+     * a guarded update so that two concurrent deciding votes freeze once, and
+     * it takes `support_in_sats` from the row itself, not from memory.
+     */
+    public function freezeApprovedSatsOnAcceptance(): void
+    {
+        $fresh = static::query()->withVoteAggregates()->find($this->getKey());
+
+        if ($fresh === null || $fresh->approved_sats !== null || $fresh->status() !== ProjectProposalStatus::Accepted) {
+            return;
+        }
+
+        static::query()
+            ->whereKey($this->getKey())
+            ->whereNull('approved_sats')
+            ->update(['approved_sats' => DB::raw('support_in_sats')]);
+
+        $this->approved_sats = (int) static::query()->whereKey($this->getKey())->value('approved_sats');
+        $this->syncOriginalAttribute('approved_sats');
     }
 
     public function boardApprovals(): int
@@ -435,6 +488,14 @@ class ProjectProposal extends Model implements HasMedia
             ->useFallbackUrl(asset('einundzwanzig-alpha.jpg'));
     }
 
+    /**
+     * A signed URL of the collection's first media. The expiry is rounded up
+     * to the next multiple of `$expireMinutes` since the epoch, so the URL
+     * stays the same for that long and the browser serves the image from
+     * its cache (`media.signed` answers with max-age=3600) instead of loading
+     * it again on every render. It is valid for at least `$expireMinutes`
+     * and less than twice that.
+     */
     public function getSignedMediaUrl(string $collection = 'main', int $expireMinutes = 60, ?string $conversion = null): string
     {
         $media = $this->getFirstMedia($collection);
@@ -448,7 +509,10 @@ class ProjectProposal extends Model implements HasMedia
             $parameters['conversion'] = $conversion;
         }
 
-        return url()->temporarySignedRoute('media.signed', now()->addMinutes($expireMinutes), $parameters);
+        $window = max(1, $expireMinutes) * 60;
+        $expiresAt = (int) ceil(now()->addMinutes($expireMinutes)->getTimestamp() / $window) * $window;
+
+        return url()->temporarySignedRoute('media.signed', Carbon::createFromTimestamp($expiresAt), $parameters);
     }
 
     public function einundzwanzigPleb(): BelongsTo

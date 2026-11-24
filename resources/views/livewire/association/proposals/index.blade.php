@@ -1,7 +1,7 @@
 <?php
 
 use App\Enums\MemberProposalState;
-use App\Livewire\Traits\WithMemberProposalAccess;
+use App\Livewire\Traits\WithViewer;
 use App\Models\MemberProposal;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -13,8 +13,8 @@ use Livewire\WithPagination;
 
 new class extends Component
 {
-    use WithMemberProposalAccess;
     use WithPagination;
+    use WithViewer;
 
     /**
      * The sort orders on offer. A whitelist, so nothing a client sends ever
@@ -59,19 +59,19 @@ new class extends Component
     #[Computed]
     public function canView(): bool
     {
-        return $this->viewerCan('viewAny');
+        return $this->viewerCan('viewAny', MemberProposal::class);
     }
 
     #[Computed]
     public function canCreate(): bool
     {
-        return $this->viewerCan('create');
+        return $this->viewerCan('create', MemberProposal::class);
     }
 
     #[Computed]
     public function canModerate(): bool
     {
-        return $this->viewerCan('moderate');
+        return $this->viewerCan('moderate', MemberProposal::class);
     }
 
     /**
@@ -92,7 +92,7 @@ new class extends Component
     #[Computed]
     public function proposals(): LengthAwarePaginator
     {
-        $this->authorizeViewer('viewAny');
+        $this->authorizeViewer('viewAny', MemberProposal::class);
 
         $selected = MemberProposalState::tryFrom($this->stateFilter);
 
@@ -132,26 +132,22 @@ new class extends Component
 };
 ?>
 
-<div>
+<div class="mx-auto w-full max-w-5xl pb-32">
     @if (! $this->canView)
         <x-proposal-members-only />
     @else
-        <div class="w-full max-w-5xl mx-auto pb-20">
+        <div>
             {{-- Head: what this page is, and the one thing to do here. --}}
-            <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-                <div class="min-w-0 max-w-2xl">
-                    <h1 class="text-2xl sm:text-3xl font-bold leading-tight text-text-primary">
-                        {{ $archive ? __('Archiv der Vorschläge') : __('Vorschläge') }}
-                    </h1>
-                    <p class="mt-2 text-base text-text-secondary">
+            <x-page-header>
+                <x-slot:title>{{ $archive ? __('Archiv der Vorschläge') : __('Vorschläge') }}</x-slot:title>
+                <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                         @if ($archive)
                             {{ __('Beschlossene, abgelehnte und erledigte Vorschläge. Alles bleibt lesbar, Stimmen und Kommentare sind geschlossen.') }}
                         @else
                             {{ __('Vorschläge der Mitglieder an den Verein. Die Abstimmung ist ein Stimmungsbild, kein Beschluss.') }}
                         @endif
-                    </p>
-                </div>
-                <div class="flex flex-wrap gap-2 sm:shrink-0">
+                </p>
+                <x-slot:actions>
                     @if ($this->canModerate)
                         <flux:button :href="route('association.proposals.board')" icon="clipboard-document-list" class="min-h-11" wire:navigate>
                             {{ __('Für die Sitzung') }}
@@ -162,8 +158,8 @@ new class extends Component
                             {{ __('Vorschlag einreichen') }}
                         </flux:button>
                     @endif
-                </div>
-            </div>
+                </x-slot:actions>
+            </x-page-header>
 
             {{-- Current and archive are two routes; the tabs say which one you are on. --}}
             <nav aria-label="{{ __('Vorschläge') }}" class="mb-4 flex gap-6 border-b border-border-default">
@@ -198,7 +194,7 @@ new class extends Component
             </div>
 
             @if ($this->proposals->isEmpty())
-                <div class="rounded-xl border border-dashed border-border-default px-6 py-12 text-center">
+                <div class="rounded-lg border border-dashed border-border-default px-6 py-12 text-center">
                     <p class="text-base text-text-secondary">
                         @if ($archive)
                             {{ __('Im Archiv liegt noch kein Vorschlag.') }}
@@ -216,10 +212,10 @@ new class extends Component
                 </div>
             @else
                 {{-- One box, one row per proposal. The whole row is the link. --}}
-                <ul class="divide-y divide-border-subtle overflow-hidden rounded-xl border border-border-subtle bg-bg-surface">
+                <ul class="divide-y divide-border-default overflow-hidden rounded-lg border border-border-default bg-bg-surface">
                     @foreach ($this->proposals as $proposal)
                         <li wire:key="proposal-{{ $proposal->id }}"
-                            class="relative grid gap-3 px-4 py-4 transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-elevated has-[a:focus-visible]:outline-2 has-[a:focus-visible]:-outline-offset-2 has-[a:focus-visible]:outline-orange-500 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6 sm:px-5">
+                            class="relative grid gap-3 px-4 py-4 transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-elevated has-[a:focus-visible]:outline-2 has-[a:focus-visible]:-outline-offset-2 has-[a:focus-visible]:outline-orange-500 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6 sm:px-6">
                             <div class="min-w-0">
                                 <a href="{{ route('association.proposals.show', $proposal) }}" wire:navigate
                                    class="text-lg font-semibold leading-snug text-text-primary break-words outline-none after:absolute after:inset-0">

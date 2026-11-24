@@ -20,8 +20,10 @@ use Illuminate\Support\Facades\Route;
 // ist kein Pubkey, sondern ein Tippfehler oder ein Scan — und wird hier abgewiesen,
 // bevor der Controller laeuft. Gleiches Muster wie `Nostr\GetProfiles`
 // (`app/Http/Controllers/Nostr/GetProfiles.php:60`).
+// The same limiter as /nostr/profiles: a miss here dials the profile relays.
 Route::get('/nostr/profile/{key}', GetProfile::class)
-    ->where('key', '[0-9a-f]{64}');
+    ->where('key', '[0-9a-f]{64}')
+    ->middleware('throttle:nostr-profiles');
 
 Route::get('/members/{year}', GetPaidMembers::class);
 
@@ -89,6 +91,9 @@ Route::prefix('v1/membership')->name('api.v1.membership.')->group(function () {
  *
  *   GET  /config            — Beitrag und Statuten, wie im Web-Zweig
  *   POST /applications      — Antrag + Statuten-Zustimmung, Subjekt im Body
+ *                             (contact fields only fill empty ones: an existing
+ *                             email or NIP-05 handle is never overwritten or
+ *                             cleared, see StoreAppApplicationController)
  *   POST /payments/{y}/invoice — BTCPay-Checkout, Subjekt im Body
  *
  * ES GIBT KEIN /me, KEIN /payments (Liste) und KEIN /export hier: ohne

@@ -183,6 +183,28 @@ class ElectionRound extends Model
     }
 
     /**
+     * The event id `$pleb` voted with per round, for several rounds in one
+     * query — voteEventIdOf() for a page that polls. Keyed by round id;
+     * rounds without a vote of theirs are missing.
+     *
+     * @param  list<int>  $roundIds
+     * @return array<int, string>
+     */
+    public static function voteEventIdsOf(EinundzwanzigPleb $pleb, array $roundIds): array
+    {
+        if ($roundIds === []) {
+            return [];
+        }
+
+        return ElectionVote::query()
+            ->whereIn('election_round_id', $roundIds)
+            ->where('einundzwanzig_pleb_id', $pleb->getKey())
+            ->pluck('event_id', 'election_round_id')
+            ->filter(fn (mixed $eventId): bool => is_string($eventId))
+            ->all();
+    }
+
+    /**
      * The event ids of every vote of this round, sorted — the published list
      * of plan decision E4. Empty until the round is sealed, so nobody can
      * watch the list grow while the round is open. An id is a hash over the

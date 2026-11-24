@@ -18,9 +18,9 @@
     $filled = min($leading === 'rejected' ? $rejections : $approvals, $threshold);
 
     $railClass = match ($status) {
-        ProjectProposalStatus::Accepted => 'border-l-blue-400',
-        ProjectProposalStatus::Supported => 'border-l-green-500',
-        ProjectProposalStatus::Rejected => 'border-l-red-400',
+        ProjectProposalStatus::Accepted => 'border-l-info',
+        ProjectProposalStatus::Supported => 'border-l-success',
+        ProjectProposalStatus::Rejected => 'border-l-danger',
         ProjectProposalStatus::InVoting => 'border-l-neutral-400',
     };
 
@@ -51,12 +51,10 @@
 
     <div class="flex-1 min-w-0 flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-            <span class="status-chip status-chip--{{ $status->value }}">
-                <flux:icon :name="$status->icon()" variant="micro" aria-hidden="true"/>
-                {{ $status->label() }}
-            </span>
+            {{-- State in word and icon; the colour comes from the enum (P3/D9). --}}
+            <flux:badge size="sm" :color="$status->color()" :icon="$status->icon()">{{ $status->label() }}</flux:badge>
             @if($canVote)
-                <span class="status-chip border border-orange-700 bg-transparent text-orange-500">
+                <span class="inline-flex items-center gap-1 rounded-md border border-orange-500 px-2 py-0.5 text-sm font-semibold text-orange-500">
                     <flux:icon name="hand-raised" variant="micro" aria-hidden="true"/>
                     Deine Stimme fehlt
                 </span>
@@ -73,7 +71,7 @@
             </a>
         </h3>
 
-        <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-orange-500">
+        <div class="text-base font-semibold tabular-nums text-text-primary">
             {{-- Ausgezahlt, sobald erfasst — sonst die beantragte Fördersumme. --}}
             {{ number_format($project->displayedSats(), 0, ',', '.') }} Sats
         </div>
@@ -88,8 +86,8 @@
             <div class="flex items-center gap-2"
                  role="img"
                  aria-label="{{ number_format($project->sats_paid, 0, ',', '.') }} Sats ausgezahlt">
-                <div class="h-1.5 flex-1 min-w-12 rounded-full bg-green-500" aria-hidden="true"></div>
-                <span class="w-28 shrink-0 text-right text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+                <div class="h-1.5 flex-1 min-w-12 rounded-full bg-success" aria-hidden="true"></div>
+                <span class="w-28 shrink-0 text-right text-sm text-text-tertiary">
                     Ausgezahlt
                 </span>
             </div>
@@ -102,18 +100,18 @@
                 <div class="h-1.5 flex-1 min-w-12 rounded-full bg-neutral-700 overflow-hidden" aria-hidden="true">
                     <div @class([
                             'h-full rounded-full',
-                            'bg-red-400' => $leading === 'rejected',
+                            'bg-danger' => $leading === 'rejected',
                             'bg-orange-500' => $leading !== 'rejected',
                          ])
                          style="width: {{ $threshold > 0 ? round($filled / $threshold * 100) : 0 }}%"></div>
                 </div>
-                <span class="w-28 shrink-0 text-right text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+                <span class="w-28 shrink-0 text-right text-sm text-text-tertiary">
                     {{ $filled }}/{{ $threshold }} {{ $leading === 'rejected' ? 'dagegen' : 'dafür' }}
                 </span>
             </div>
         @endif
 
-        <div class="hidden sm:flex items-center gap-2 text-[13px] text-text-secondary min-w-0">
+        <div class="hidden sm:flex items-center gap-2 text-sm text-text-secondary min-w-0">
             <img class="size-5 rounded-full shrink-0"
                  src="{{ $project->einundzwanzigPleb->profile?->picture }}"
                  onerror="this.src='{{ asset('einundzwanzig-alpha.jpg') }}'"
@@ -123,7 +121,7 @@
                target="_blank"
                rel="noopener"
                class="truncate hover:text-orange-500 transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
-                {{ $project->einundzwanzigPleb->profile?->name ?? str($project->einundzwanzigPleb->npub)->limit(20) }}
+                <x-pleb-name :pleb="$project->einundzwanzigPleb" />
             </a>
             @if($project->website)
                 <span aria-hidden="true">·</span>
