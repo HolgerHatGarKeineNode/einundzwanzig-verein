@@ -119,27 +119,21 @@ class extends Component
     }
 };
 ?>
-<div>
+<div class="mx-auto w-full max-w-3xl pb-32">
         @if($isAllowed)
-            <div class="px-4 sm:px-6 lg:px-8 py-8 w-full max-w-9xl mx-auto">
-                <div
-                    class="flex flex-col md:flex-row items-center mb-6 space-y-4 md:space-y-0 md:space-x-4">
-                    <div class="flex items-center justify-between gap-4 w-full">
-                        <h1 class="min-w-0 break-words text-2xl md:text-3xl text-zinc-800 dark:text-zinc-100 font-bold">
-                            Projektförderungs-Antrag anlegen
-                        </h1>
-                        <flux:button :href="route('association.projectSupport')" variant="ghost" icon="arrow-left" class="shrink-0">
+            <div>
+                <x-page-header title="Projektförderungs-Antrag anlegen" lead="Fülle das Formular aus, um eine neue Projektförderung anzulegen.">
+                    <x-slot:actions>
+                        <flux:button :href="route('association.projectSupport')" variant="ghost" icon="arrow-left" class="min-h-11">
                             Zurück
                         </flux:button>
-                    </div>
-                </div>
+                    </x-slot:actions>
+                </x-page-header>
 
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <!-- Form card -->
-                    <div class="lg:col-span-2">
-                        <flux:card>
+                <div>
+                        <section class="rounded-lg border border-border-default bg-bg-surface p-4 sm:p-6">
                             <flux:fieldset>
-                                <flux:legend>Formular</flux:legend>
+                                <flux:legend class="sr-only">Projektdaten</flux:legend>
                                 <div class="space-y-4">
                                     <flux:field>
                                         <flux:label>Name</flux:label>
@@ -190,36 +184,25 @@ class extends Component
                                     <flux:separator />
                                     <x-project-contact-fields :form="$form" />
 
-                                    <flux:button wire:click="save" wire:loading.attr="disabled" variant="primary" class="w-full mt-4">
+                                    <flux:button wire:click="save" wire:loading.attr="disabled" variant="primary" class="mt-4 min-h-11 w-full">
                                         Speichern
                                     </flux:button>
                                 </div>
                             </flux:fieldset>
-                        </flux:card>
-                    </div>
-
-                    <!-- Information card -->
-                    <div>
-                        <flux:card>
-                            <flux:heading level="2">Information</flux:heading>
-                            <p class="text-sm text-zinc-800 dark:text-zinc-100 mt-4">
-                                Fülle das Formular aus, um eine neue Projektförderung anzulegen.
-                            </p>
-                        </flux:card>
-                    </div>
+                        </section>
                 </div>
             </div>
 
             @else
-            <div class="px-4 sm:px-6 lg:px-8 py-8 w-full max-w-9xl mx-auto">
+            <div>
                 <flux:callout variant="warning" icon="exclamation-circle">
                     <flux:heading>Projektförderung kann nicht angelegt werden</flux:heading>
                     <p>Um eine Projektförderung anzulegen, benötigst du:</p>
-                    <ul class="list-disc ml-5 mt-2 space-y-1">
+                    <ul class="mt-2 ml-4 list-disc space-y-1">
                         <li>Einen Vereinsstatus von mindestens 2 (Aktives Mitglied)</li>
                         <li>Eine bezahlte Mitgliedschaft für das aktuelle Jahr ({{ date('Y') }})</li>
                     </ul>
-                    <p class="mt-3">
+                    <p class="mt-4">
                         @if(!NostrAuth::check())
                             Bitte melde dich zunächst mit Nostr an.
                         @else
