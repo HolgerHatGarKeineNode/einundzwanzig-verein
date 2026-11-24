@@ -72,6 +72,27 @@ class ElectoralRoll
     }
 
     /**
+     * Those of `$roundIds` whose roll holds `$pleb`: `contains()` for many
+     * rounds in one query, for a page that asks on every poll.
+     *
+     * @param  list<int>  $roundIds
+     * @return list<int>
+     */
+    public function roundIdsContaining(EinundzwanzigPleb $pleb, array $roundIds): array
+    {
+        if ($roundIds === []) {
+            return [];
+        }
+
+        return ElectionRollEntry::query()
+            ->whereIn('election_round_id', $roundIds)
+            ->where('einundzwanzig_pleb_id', $pleb->getKey())
+            ->pluck('election_round_id')
+            ->map(fn (mixed $id): int => (int) $id)
+            ->all();
+    }
+
+    /**
      * Write the roll of a round that is being opened. Returns the number of
      * entries on it afterwards.
      *

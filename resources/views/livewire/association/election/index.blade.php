@@ -12,7 +12,10 @@ use App\Exceptions\ElectionRoundStateException;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
+use App\Models\ElectionCastingVote;
+use App\Models\ElectionManifest;
 use App\Models\ElectionRound;
+use App\Models\ElectionVote;
 use App\Models\MemberProposal;
 use App\Services\Election\Candidacies;
 use App\Services\Election\CastBallot;
@@ -416,7 +419,9 @@ new class extends Component
 
     /**
      * Per round that has been opened: its state now, whether the member is
-     * on its roll, and the id of the member's own vote event, if any.
+     * on its roll, and the id of the member's own vote event, if any. Roll
+     * and votes are read in one query each, whatever the number of rounds:
+     * the fingerprint asks this on every poll.
      *
      * @return array<int, array{state: ElectionRoundState, onRoll: bool, eventId: string|null}>
      */
@@ -424,22 +429,25 @@ new class extends Component
     public function standing(): array
     {
         $viewer = $this->viewer();
-        $roll = app(ElectoralRoll::class);
         $now = now();
-        $standing = [];
+        $states = $this->allRounds->mapWithKeys(fn (ElectionRound $round): array => [(int) $round->getKey() => $round->stateAt($now)]);
+        $openedIds = $states->reject(fn (ElectionRoundState $state): bool => $state === ElectionRoundState::Draft)->keys()->all();
+        $onRoll = [];
+        $eventIds = collect();
 
-        foreach ($this->allRounds as $round) {
-            $state = $round->stateAt($now);
-            $opened = $state !== ElectionRoundState::Draft;
-
-            $standing[$round->getKey()] = [
-                'state' => $state,
-                'onRoll' => $opened && $viewer !== null && $roll->contains($round, $viewer),
-                'eventId' => $opened && $viewer !== null ? $round->voteEventIdOf($viewer) : null,
-            ];
+        if ($viewer !== null && $openedIds !== []) {
+            $onRoll = array_flip(app(ElectoralRoll::class)->roundIdsContaining($viewer, $openedIds));
+            $eventIds = ElectionVote::query()
+                ->whereIn('election_round_id', $openedIds)
+                ->where('einundzwanzig_pleb_id', $viewer->getKey())
+                ->pluck('event_id', 'election_round_id');
         }
 
-        return $standing;
+        return $states->map(fn (ElectionRoundState $state, int $id): array => [
+            'state' => $state,
+            'onRoll' => isset($onRoll[$id]),
+            'eventId' => is_string($eventIds->get($id)) ? $eventIds->get($id) : null,
+        ])->all();
     }
 
     /**
@@ -703,11 +711,37 @@ new class extends Component
             $this->election?->getKey(),
             $this->phase,
             collect($this->standing)->map(fn (array $standing): array => [$standing['state']->value, $standing['onRoll'], $standing['eventId'] !== null])->all(),
-            // The effective result, so a recorded casting vote re-renders too.
-            collect($this->results)->map(fn (TallyResult $result): array => [$result->outcome->value, $result->elected, $result->castingVote?->chair])->all(),
+            // What the results are made of, never the results: a tally per sealed round on every poll was the cost of this page.
+            $this->resultInputs(),
             [$this->meeting['at']?->getTimestamp(), $this->meeting['url']],
             $this->allRounds->map(fn (ElectionRound $round): array => [$round->getKey(), $round->candidates->count()])->all(),
         ], JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * Per round the columns and rows its shown result depends on: the seal,
+     * an annulment, the reveal, the manifest and a recorded casting vote. A
+     * change in any of them changes `results()`; reading them costs two
+     * queries, whatever the number of rounds.
+     *
+     * @return array<int, array<int, mixed>>
+     */
+    protected function resultInputs(): array
+    {
+        $sealedIds = $this->allRounds->filter(fn (ElectionRound $round): bool => $round->isSealed())->map(fn (ElectionRound $round): int => (int) $round->getKey())->values()->all();
+        $manifests = $sealedIds === [] ? collect() : ElectionManifest::query()->whereIn('election_round_id', $sealedIds)->pluck('id', 'election_round_id');
+        $castingVotes = $sealedIds === [] ? collect() : ElectionCastingVote::query()->whereIn('election_round_id', $sealedIds)->get(['id', 'election_round_id', 'created_at'])->keyBy('election_round_id');
+
+        return $this->allRounds->map(fn (ElectionRound $round): array => [
+            $round->getKey(),
+            $round->closed_at?->getTimestamp(),
+            $round->annulled_at?->getTimestamp(),
+            $round->reveal_at?->getTimestamp(),
+            $round->reveal_at !== null && $round->reveal_at->isFuture(),
+            $manifests->get($round->getKey()),
+            $castingVotes->get($round->getKey())?->getKey(),
+            $castingVotes->get($round->getKey())?->created_at?->getTimestamp(),
+        ])->all();
     }
 
     /**

@@ -84,3 +84,15 @@ it('reports only the shown round on each poll of the share view', function () {
     // 17 measured after the change; the baseline was 90.
     expect($queries)->toBeLessThanOrEqual(20);
 });
+
+it('fingerprints the member page from columns, not from a tally per sealed round', function () {
+    [, , $members] = sealedEvening();
+    NostrAuth::login($members[0]->pubkey);
+    $page = Livewire::test('association.election.index')
+        ->assertSeeHtml('wire:poll.5s="syncRounds"');
+
+    $queries = queriesPerTick(fn (): Testable => $page->call('syncRounds'));
+
+    // 11 measured after the change; the baseline was 37.
+    expect($queries)->toBeLessThanOrEqual(13);
+});
