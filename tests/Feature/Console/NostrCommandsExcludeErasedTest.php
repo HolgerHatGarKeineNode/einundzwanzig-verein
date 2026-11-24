@@ -1,6 +1,5 @@
 <?php
 
-use App\Console\Commands\Nostr\FetchEvents;
 use App\Console\Commands\Nostr\SyncProfiles;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Profile;
@@ -9,8 +8,8 @@ use Illuminate\Support\Facades\Artisan;
 use swentel\nostr\Key\Key;
 
 /*
- * TWO SCHEDULED COMMANDS CARRY MEMBER KEYS OUT OF THE HOUSE, and an erased
- * record used to travel with them. `DELETE /api/v1/membership/me` anonymises
+ * A SCHEDULED COMMAND CARRIES MEMBER KEYS OUT OF THE HOUSE, and an erased
+ * record used to travel with it. `DELETE /api/v1/membership/me` anonymises
  * instead of deleting, so the row survives — and a filter that sits only on the
  * public HTTP list leaves every other exit open.
  */
@@ -31,21 +30,6 @@ class SpyingSyncProfiles extends SyncProfiles
     public function fetchProfile($npubs)
     {
         $this->sentToRelays = (array) $npubs;
-    }
-}
-
-/**
- * Exposes the authors list without opening the subscription — `handle()` talks
- * to three real relays, which a test must never do.
- */
-class ProbingFetchEvents extends FetchEvents
-{
-    /**
-     * @return array<int, string>
-     */
-    public function probeSubjectPubkeys(): array
-    {
-        return $this->subjectPubkeys();
     }
 }
 
@@ -111,25 +95,4 @@ it('still syncs a member who has not been erased', function () {
     Artisan::call('sync:profiles');
 
     expect($spy->sentToRelays)->toContain($members['kept']->npub);
-});
-
-it('keeps an erased member out of the event subscription', function () {
-    /*
-     * Two independently sufficient reasons: the authors filter travels to
-     * three foreign relays, and NIP-01 requires 64 lowercase hex characters
-     * there — a tombstone is not one, and how a relay answers a malformed
-     * entry is unverified. The subscription is shared by all members, so a
-     * rejected REQ would take everyone down with it.
-     */
-    $members = erasedAndKeptMember();
-
-    $authors = (new ProbingFetchEvents)->probeSubjectPubkeys();
-
-    expect($authors)->toContain($members['kept']->pubkey)
-        ->not->toContain($members['erased']->pubkey);
-
-    // Every remaining entry is a well-formed NIP-01 pubkey.
-    foreach ($authors as $author) {
-        expect($author)->toBeNostrHexKey();
-    }
 });

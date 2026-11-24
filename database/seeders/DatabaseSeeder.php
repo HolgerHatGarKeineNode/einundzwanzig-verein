@@ -17,9 +17,6 @@ class DatabaseSeeder extends Seeder
         $this->call([
             PlebSeeder::class,
             ProjectProposalSeeder::class,
-            NostrSeeder::class,
-            MeetupSeeder::class,
-            CourseSeeder::class,
             NotificationSeeder::class,
             SecuritySeeder::class,
         ]);
