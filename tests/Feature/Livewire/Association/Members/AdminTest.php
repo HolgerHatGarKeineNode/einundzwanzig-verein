@@ -11,6 +11,7 @@ use App\Services\MembershipService;
 use App\Support\Board;
 use App\Support\NostrAuth;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Carbon;
 use Livewire\Livewire;
 use swentel\nostr\Key\Key as NostrKey;
 
@@ -526,3 +527,20 @@ it('changes a status as before when the election is a test, not announced, or fi
 
     expect($applicant->fresh()->association_status)->toBe(AssociationStatus::ACTIVE);
 })->with(['test', 'not announced', 'finished']);
+
+it('counts the fees of the new year from the first of January', function () {
+    $this->travelTo(Carbon::create(2031, 1, 1, 0, 30, 0, config('app.timezone')));
+    EinundzwanzigPleb::factory()->create(['pubkey' => ALLOWED_ADMIN_PUBKEY]);
+    $paidLastYear = EinundzwanzigPleb::factory()->active()->withPaidYear(2030)->create();
+    $paidThisYear = EinundzwanzigPleb::factory()->active()->withPaidYear(2031)->create();
+
+    NostrAuth::login(ALLOWED_ADMIN_PUBKEY);
+
+    $paidOnly = Livewire::test('association.members.admin')
+        ->assertSee('Beitrag 2031')
+        ->set('showPaidOnly', true);
+
+    expect($paidOnly->instance()->plebs->pluck('id')->all())
+        ->toContain($paidThisYear->id)
+        ->not->toContain($paidLastYear->id);
+});

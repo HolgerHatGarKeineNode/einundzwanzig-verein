@@ -534,7 +534,7 @@ class MembershipService
 
         $year ??= $this->currentYear();
 
-        if ($pleb->association_status->value > AssociationStatus::DEFAULT->value) {
+        if ($pleb->association_status->isMembership()) {
             return $pleb->paymentEvents()->where('year', $year)->where('paid', true)->exists()
                 ? MembershipStatus::Member
                 : MembershipStatus::Lapsed;

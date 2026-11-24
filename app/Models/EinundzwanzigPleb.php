@@ -253,7 +253,7 @@ class EinundzwanzigPleb extends Authenticatable implements CipherSweetEncrypted,
      */
     public function hasPaidMembership(?int $year = null): bool
     {
-        return $this->association_status->value > 1
+        return $this->association_status->isMembership()
             && $this->paymentEvents()
                 ->where('year', $year ?? (int) now()->year)
                 ->where('paid', true)

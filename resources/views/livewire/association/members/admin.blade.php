@@ -136,7 +136,7 @@ new class extends Component
             ->with([
                 'profile',
                 'paymentEvents' => fn ($query) => $query
-                    ->where('year', date('Y'))
+                    ->where('year', now()->year)
                     ->where('paid', true),
             ]);
 
@@ -150,7 +150,7 @@ new class extends Component
 
         if ($this->showPaidOnly) {
             $query->whereHas('paymentEvents', fn ($query) => $query
-                ->where('year', date('Y'))
+                ->where('year', now()->year)
                 ->where('paid', true)
             );
         }
@@ -284,7 +284,7 @@ new class extends Component
     {
         $this->ensureAuthorized();
 
-        $currentYear = (int) date('Y');
+        $currentYear = now()->year;
         $years = PaymentEvent::query()
             ->where('year', '>=', 2025)
             ->distinct()
@@ -444,7 +444,7 @@ new class extends Component
                 >
                     Aktueller Status
                 </flux:table.column>
-                <flux:table.column>Beitrag {{ date('Y') }}</flux:table.column>
+                <flux:table.column>Beitrag {{ now()->year }}</flux:table.column>
                 <flux:table.column>Aktionen</flux:table.column>
             </flux:table.columns>
 

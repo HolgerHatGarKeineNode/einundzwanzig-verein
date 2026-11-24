@@ -111,7 +111,7 @@ new class extends Component
         $this->currentPubkey = NostrAuth::pubkey();
         $this->currentPleb = EinundzwanzigPleb::query()
             ->with([
-                'paymentEvents' => fn ($query) => $query->where('year', date('Y')),
+                'paymentEvents' => fn ($query) => $query->where('year', now()->year),
                 'profile',
             ])
             ->where('pubkey', $this->currentPubkey)->first();
@@ -250,7 +250,7 @@ new class extends Component
         try {
             $result = $this->membership()->createInvoice(
                 $member,
-                (int) date('Y'),
+                now()->year,
                 (string) $comment,
                 // Back here after the checkout, still with the way to the election.
                 $this->from === 'election' ? route('association.profile', ['from' => 'election']) : null,
@@ -355,13 +355,13 @@ new class extends Component
 
     protected function resolveCurrentPaymentEvent(): PaymentEvent
     {
-        $paymentEvent = $this->membership()->resolvePaymentEvent($this->currentPleb, (int) date('Y'));
+        $paymentEvent = $this->membership()->resolvePaymentEvent($this->currentPleb, now()->year);
 
         $this->currentPleb->setRelation(
             'paymentEvents',
             $this->currentPleb
                 ->paymentEvents()
-                ->where('year', date('Y'))
+                ->where('year', now()->year)
                 ->orderBy('id')
                 ->get(),
         );
@@ -456,7 +456,7 @@ new class extends Component
         }
 
         $this->currentPleb->load([
-            'paymentEvents' => fn ($query) => $query->where('year', date('Y')),
+            'paymentEvents' => fn ($query) => $query->where('year', now()->year),
         ]);
 
         return $paymentEvent->refresh();
@@ -558,7 +558,7 @@ new class extends Component
      */
     public function createPaymentEvent(): PaymentEvent
     {
-        return $this->membership()->resolvePaymentEvent($this->actingPleb(), (int) date('Y'));
+        return $this->membership()->resolvePaymentEvent($this->actingPleb(), now()->year);
     }
 
     /**
@@ -767,7 +767,7 @@ new class extends Component
             </section>
         @endif
 
-        @if($currentPubkey && $currentPleb && !$currentPleb->application_for && $currentPleb->association_status->value < 2)
+        @if($currentPubkey && $currentPleb && !$currentPleb->application_for && ! $currentPleb->association_status->isMembership())
             {{-- Membership application. --}}
             <section aria-labelledby="become-member" class="rounded-lg border border-border-default bg-bg-surface p-4 sm:p-6">
                 <h2 id="become-member" class="text-xl font-bold leading-tight text-text-primary">Einundzwanzig Mitglied werden</h2>
@@ -864,7 +864,7 @@ new class extends Component
             </section>
         @endif
 
-        @if($currentPleb && $currentPleb->association_status->value > 1)
+        @if($currentPleb && $currentPleb->association_status->isMembership())
             {{-- Membership state in words and icon, never by colour alone. --}}
             @if($currentYearIsPaid)
                 <flux:callout variant="success" icon="check-circle">
@@ -884,7 +884,7 @@ new class extends Component
             deadlock every new application. The gate is cosmetic either way:
             Livewire exposes pay()/createPaymentEvent() directly regardless.
         --}}
-        @if($currentPleb && ($currentPleb->association_status->value > 1 || $currentPleb->applied_at))
+        @if($currentPleb && ($currentPleb->association_status->isMembership() || $currentPleb->applied_at))
             <section aria-labelledby="membership-fee" class="rounded-lg border border-border-default bg-bg-surface p-4 sm:p-6">
                 @if($this->shouldPollPayment())
                     <div wire:poll.20s="listenForPayment"></div>
@@ -930,7 +930,7 @@ new class extends Component
                     <div>
                         @if(!$currentYearIsPaid)
                             <flux:button
-                                wire:click="pay('{{ date('Y') }}:{{ $currentPubkey }}')"
+                                wire:click="pay('{{ now()->year }}:{{ $currentPubkey }}')"
                                 variant="primary"
                                 icon="bolt"
                                 class="min-h-12 w-full px-8 text-lg sm:w-auto">

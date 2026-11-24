@@ -1,7 +1,9 @@
 <?php
 
+use App\Enums\AssociationStatus;
 use App\Models\EinundzwanzigPleb;
 use App\Support\NostrAuth;
+use Illuminate\Support\Carbon;
 use Livewire\Livewire;
 
 it('shows the locked state with all services for guests', function () {
@@ -123,4 +125,42 @@ it('saves a well-formed handle on the benefits screen', function () {
         ->assertHasNoErrors();
 
     expect($pleb->fresh()->nip05_handle)->toBe('alice_bob');
+});
+
+/*
+ * R5 of the page optimisation plan: the benefits belong to every paying
+ * member, whatever kind of membership the board entered, and "this year" is
+ * the year of the application clock (`now()`), not of `date('Y')`.
+ */
+it('unlocks the benefits for every paying member', function (AssociationStatus $status, bool $unlocked) {
+    $pleb = EinundzwanzigPleb::factory()->withPaidCurrentYear()->create(['association_status' => $status]);
+    NostrAuth::login($pleb->pubkey);
+
+    $page = Livewire::test('association.benefits')->assertSet('currentYearIsPaid', $unlocked);
+
+    $unlocked ? $page->assertSee('Alle Dienste unten sind für dich freigeschaltet.') : $page->assertDontSee('Alle Dienste unten sind für dich freigeschaltet.');
+})->with([
+    'Passiv' => [AssociationStatus::PASSIVE, true],
+    'Aktiv' => [AssociationStatus::ACTIVE, true],
+    'Ehrenmitglied' => [AssociationStatus::HONORARY, true],
+    'no member, fee paid' => [AssociationStatus::DEFAULT, false],
+]);
+
+it('says the benefits are for paying members', function () {
+    Livewire::test('association.benefits')
+        ->assertSee('exklusiv für zahlende Vereinsmitglieder')
+        ->assertDontSee('exklusiv für aktive Vereinsmitglieder');
+});
+
+it('counts the new year from the first of January', function () {
+    $this->travelTo(Carbon::create(2031, 1, 1, 0, 30, 0, config('app.timezone')));
+
+    $paidLastYear = EinundzwanzigPleb::factory()->active()->withPaidYear(2030)->create();
+    $paidThisYear = EinundzwanzigPleb::factory()->active()->withPaidYear(2031)->create();
+
+    NostrAuth::login($paidLastYear->pubkey);
+    Livewire::test('association.benefits')->assertSet('currentYearIsPaid', false);
+
+    NostrAuth::login($paidThisYear->pubkey);
+    Livewire::test('association.benefits')->assertSet('currentYearIsPaid', true);
 });

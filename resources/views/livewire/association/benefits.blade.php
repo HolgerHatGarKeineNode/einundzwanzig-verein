@@ -45,10 +45,7 @@ new class extends Component
         if (NostrAuth::check()) {
             $this->currentPubkey = NostrAuth::pubkey();
             $this->currentPleb = EinundzwanzigPleb::query()
-                ->with([
-                    'paymentEvents' => fn ($query) => $query->where('year', date('Y')),
-                    'profile',
-                ])
+                ->with('profile')
                 ->where('pubkey', $this->currentPubkey)->first();
             if ($this->currentPleb) {
                 if ($this->currentPleb->nip05_handle) {
@@ -68,11 +65,8 @@ new class extends Component
                     }
                 }
 
-                // Check if current year is paid
-                $paymentEvent = $this->currentPleb->paymentEvents->first();
-                if ($paymentEvent && $paymentEvent->paid) {
-                    $this->currentYearIsPaid = true;
-                }
+                // Every paying member: Passiv, Aktiv or Ehrenmitglied with this year's fee paid.
+                $this->currentYearIsPaid = $this->currentPleb->hasPaidMembership();
             }
         }
     }
@@ -124,17 +118,17 @@ new class extends Component
 ?>
 
 <div class="mx-auto w-full max-w-3xl pb-32">
-    @php($isActiveMember = $currentPleb && $currentPleb->association_status->value > 1 && $currentYearIsPaid)
+    @php($isPayingMember = $currentPleb && $currentYearIsPaid)
 
     <x-page-header title="Vorteile deiner Mitgliedschaft">
         <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
-            Diese Dienste betreiben wir exklusiv für aktive Vereinsmitglieder. Klicke bei jedem Dienst auf
+            Diese Dienste betreiben wir exklusiv für zahlende Vereinsmitglieder. Klicke bei jedem Dienst auf
             <span class="font-semibold text-text-primary">„Anleitung anzeigen"</span>, um die Einrichtung Schritt für Schritt zu sehen.
         </p>
     </x-page-header>
 
     {{-- One status line for the whole page instead of a notice per service. --}}
-    @if($isActiveMember)
+    @if($isPayingMember)
         <flux:callout variant="success" icon="check-circle" class="mb-8">
             <flux:callout.heading>Mitgliedschaft aktiv</flux:callout.heading>
             <flux:callout.text>Alle Dienste unten sind für dich freigeschaltet.</flux:callout.text>
@@ -155,9 +149,9 @@ new class extends Component
     @endif
 
     <ul class="divide-y divide-border-default rounded-lg border border-border-default bg-bg-surface" aria-label="Dienste für Mitglieder">
-        <x-benefit-item icon="bolt" title="Nostr Relay" :active="$isActiveMember"
+        <x-benefit-item icon="bolt" title="Nostr Relay" :active="$isPayingMember"
                         description="Exklusive Schreib-Rechte auf dem Premium Outbox-Relay von Einundzwanzig.">
-            @if($isActiveMember)
+            @if($isPayingMember)
                 <x-copy-field value="wss://nostr.einundzwanzig.space" label="Relay-Adresse" />
                 <flux:accordion>
                     <flux:accordion.item heading="Anleitung anzeigen">
@@ -180,9 +174,9 @@ new class extends Component
             @endif
         </x-benefit-item>
 
-        <x-benefit-item icon="check-badge" title="NIP-05 Verifizierung" :active="$isActiveMember"
+        <x-benefit-item icon="check-badge" title="NIP-05 Verifizierung" :active="$isPayingMember"
                         description="Verifiziere deine Identität mit einem menschenlesbaren Nostr-Namen.">
-            @if($isActiveMember)
+            @if($isPayingMember)
                 @php($nip05DisplayHandle = $nip05VerifiedHandle ?: $nip05Handle)
                 <p class="flex flex-wrap items-center gap-2 text-base text-text-primary">
                     <span class="break-all">
@@ -261,9 +255,9 @@ new class extends Component
             @endif
         </x-benefit-item>
 
-        <x-benefit-item icon="shield-check" title="Lightning Watchtower" :active="$isActiveMember"
+        <x-benefit-item icon="shield-check" title="Lightning Watchtower" :active="$isPayingMember"
                         description="Schütze deine Lightning Channel – auch wenn deine Node offline ist.">
-            @if($isActiveMember)
+            @if($isPayingMember)
                 <x-copy-field value="02ce7b8a6bc3fb6245ecdcf67b25d80d03e1fea02459ae9af9e64ac1590139e467@62.171.139.240:9911" label="Watchtower-Adresse" />
                 <flux:accordion>
                     <flux:accordion.item heading="Anleitung anzeigen">
@@ -288,11 +282,11 @@ new class extends Component
             @endif
         </x-benefit-item>
 
-        <x-benefit-item icon="cloud-arrow-up" title="Blossom Medienserver" :active="$isActiveMember"
+        <x-benefit-item icon="cloud-arrow-up" title="Blossom Medienserver" :active="$isPayingMember"
                         description="Dein eigener Speicher für Bilder & Videos auf Nostr – betrieben vom Verein.">
             <x-slot:badges><flux:badge size="sm">Neu</flux:badge></x-slot:badges>
             <p class="text-base text-text-tertiary">5 GB Speicher · max. 1 GB pro Datei</p>
-            @if($isActiveMember)
+            @if($isPayingMember)
                 <x-copy-field value="https://blossom.einundzwanzig.space" label="Blossom-Adresse" />
                 <flux:accordion>
                     <flux:accordion.item heading="Was ist Blossom & wie nutze ich ihn?">
@@ -331,14 +325,14 @@ new class extends Component
             @endif
         </x-benefit-item>
 
-        <x-benefit-item icon="chat-bubble-left-right" title="Nostr Community-Gruppe" :active="$isActiveMember">
+        <x-benefit-item icon="chat-bubble-left-right" title="Nostr Community-Gruppe" :active="$isPayingMember">
             <x-slot:badges><flux:badge size="sm">Neu</flux:badge></x-slot:badges>
             <x-slot:description>
                 Chatte und poste in der Einundzwanzig-Gruppe auf unserem Community-Relay
                 (<flux:link href="https://github.com/nostr-protocol/nips/blob/master/29.md" target="_blank">NIP-29</flux:link>)
                 – wie Discord, nur auf Nostr.
             </x-slot:description>
-            @if($isActiveMember)
+            @if($isPayingMember)
                 <div>
                     <flux:button href="https://group.einundzwanzig.space" target="_blank" variant="primary" icon:trailing="arrow-up-right" class="min-h-11">
                         Gruppen Web App öffnen
@@ -377,13 +371,13 @@ new class extends Component
             @endif
         </x-benefit-item>
 
-        <x-benefit-item icon="cpu-chip" title="Buzz Relay" :active="$isActiveMember"
+        <x-benefit-item icon="cpu-chip" title="Buzz Relay" :active="$isPayingMember"
                         description="Arbeitsraum für Menschen und KI-Agenten – Kanäle, Threads, Dateien und Code, komplett auf Nostr.">
             <x-slot:badges>
                 <flux:badge size="sm">Neu</flux:badge>
                 <flux:badge color="amber" size="sm" icon="beaker">Experimentell</flux:badge>
             </x-slot:badges>
-            @if($isActiveMember)
+            @if($isPayingMember)
                 <flux:callout variant="warning" icon="beaker">
                     <flux:callout.text>
                         <strong>Testbetrieb.</strong> Buzz ist junge Software mit hohem Änderungstempo – rechne mit

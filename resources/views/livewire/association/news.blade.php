@@ -326,7 +326,7 @@ class extends Component
                 <p>Um die News einzusehen, benötigst du:</p>
                 <ul class="mt-2 ml-5 list-disc space-y-1">
                     <li>Einen Vereinsstatus von "Aktives Mitglied"</li>
-                    <li>Eine bezahlte Mitgliedschaft für das aktuelle Jahr ({{ date('Y') }})</li>
+                    <li>Eine bezahlte Mitgliedschaft für das aktuelle Jahr ({{ now()->year }})</li>
                 </ul>
                 <p class="mt-4">
                     @if(!NostrAuth::check())

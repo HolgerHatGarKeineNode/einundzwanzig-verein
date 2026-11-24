@@ -200,7 +200,7 @@ class extends Component
                     <p>Um eine Projektförderung anzulegen, benötigst du:</p>
                     <ul class="mt-2 ml-4 list-disc space-y-1">
                         <li>Einen Vereinsstatus von mindestens 2 (Aktives Mitglied)</li>
-                        <li>Eine bezahlte Mitgliedschaft für das aktuelle Jahr ({{ date('Y') }})</li>
+                        <li>Eine bezahlte Mitgliedschaft für das aktuelle Jahr ({{ now()->year }})</li>
                     </ul>
                     <p class="mt-4">
                         @if(!NostrAuth::check())
