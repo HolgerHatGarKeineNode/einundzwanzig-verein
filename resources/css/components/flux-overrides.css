@@ -79,14 +79,6 @@
         @apply bg-bg-elevated text-text-secondary border-border-default;
     }
 
-    [data-flux-badge][data-color="green"] {
-        @apply bg-green-success/20 text-green-success border-green-success/30;
-    }
-
-    [data-flux-badge][data-color="orange"] {
-        @apply bg-orange-primary/20 text-orange-primary border-orange-primary/30;
-    }
-
     /* Tabs */
     [data-flux-tab][data-selected="true"] {
         @apply border-orange-primary text-text-primary;
@@ -114,19 +106,6 @@
     /* Separators */
     [data-flux-separator] {
         @apply bg-border-default;
-    }
-
-    /* Callouts - Info boxes */
-    .callout-warning {
-        @apply bg-gradient-to-b from-amber-500/20 to-transparent border border-amber-500;
-    }
-
-    .callout-success {
-        @apply bg-gradient-to-b from-green-nostr/20 to-transparent border border-green-nostr;
-    }
-
-    .callout-purple {
-        @apply bg-gradient-to-b from-purple-accent/20 to-transparent border border-purple-accent;
     }
 }
 

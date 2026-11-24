@@ -92,13 +92,12 @@
     /* =====================================================================
        Legacy-Aliase — auf die neue Skala umgebogen, damit der Marken-
        wechsel (#F7931A) sich ueberall auswirkt, ohne jede Datei zu edit-
-       ieren. Bestandscode nutzt orange-primary, orange-light, green-* und purple-accent.
+       ieren. Bestandscode nutzt orange-primary und orange-light; die
+       Aliase green-success, purple-accent und green-nostr sind mit P3/D15
+       (2026-11-24) gegangen, kein Bauteil las sie mehr.
        ===================================================================== */
     --color-orange-primary: var(--color-orange-500);  /* war #FF5C00 → jetzt Marke */
     --color-orange-light:   var(--color-orange-400);  /* Hover-Aufhellung */
-    --color-green-success:  var(--color-success);
-    --color-purple-accent:  #7c3aed;                  /* Nostr-Fill/Badge (nicht Text!) */
-    --color-green-nostr:    #4a7c59;                  /* Relay/Verbindungs-Marker */
 
     /* =====================================================================
        NUR einundzwanzig-verein — Feature-/Protokoll-Farben, DEMOTED unter
