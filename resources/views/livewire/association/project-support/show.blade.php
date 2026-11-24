@@ -575,7 +575,7 @@ new class extends Component
 }
 ?>
 
-<div>
+<div class="mx-auto w-full max-w-5xl pb-32">
     @php
         $threshold = App\Models\ProjectProposal::boardVoteThreshold();
         $approvals = $this->boardVotes->where('value', true);
@@ -586,9 +586,9 @@ new class extends Component
         $filled = min($leading === 'rejected' ? $rejections->count() : $approvals->count(), $threshold);
     @endphp
 
-    <div class="w-full max-w-[1600px] mx-auto">
+    <div>
         <div class="mb-6">
-            <flux:button :href="route('association.projectSupport')" variant="ghost" size="sm" icon="chevron-left">
+            <flux:button :href="route('association.projectSupport')" variant="ghost" icon="chevron-left" class="min-h-11 -ml-3">
                 Zurück zur Übersicht
             </flux:button>
         </div>
@@ -605,53 +605,51 @@ new class extends Component
              Seitenspalte) — die order-Klassen sind ersatzlos weg. Damit stimmen
              Lese-, Tab- und DOM-Reihenfolge auf dem Telefon wieder ueberein.
              Der Zweispalter ab `lg` bleibt unveraendert. --}}
-        <div class="flex flex-col lg:flex-row lg:gap-8 xl:gap-12">
+        <div class="flex flex-col lg:flex-row lg:gap-8">
             {{-- Hauptspalte --}}
             <div class="flex-1 min-w-0">
-                <span class="status-chip status-chip--{{ $this->status->value }}">
-                    <flux:icon :name="$this->status->icon()" variant="micro" aria-hidden="true"/>
-                    {{ $this->status->label() }}
-                </span>
-
-                <h1 class="mt-3 mb-4 max-w-[68ch] text-2xl md:text-[28px] font-bold tracking-tight leading-[1.15] text-text-primary">
-                    {{ $projectProposal->name }}
-                </h1>
+                <x-page-header :title="$projectProposal->name" class="mb-6">
+                    {{-- State in word and icon; the colour comes from the enum (P3/D9). --}}
+                    <div class="mt-4">
+                        <flux:badge :color="$this->status->color()" :icon="$this->status->icon()">{{ $this->status->label() }}</flux:badge>
+                    </div>
+                </x-page-header>
 
                 {{-- Eckdaten --}}
-                <div class="mb-6 rounded-xl border border-border-subtle bg-bg-surface p-5">
+                <div class="mb-6 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-6">
                     <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
                         <div>
-                            <dt class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">Fördersumme</dt>
-                            <dd class="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-orange-500">
+                            <dt class="text-sm text-text-tertiary">Fördersumme</dt>
+                            <dd class="mt-1 text-base font-semibold tabular-nums text-text-primary">
                                 {{ number_format($projectProposal->support_in_sats, 0, ',', '.') }} Sats
                             </dd>
                         </div>
                         <div>
-                            <dt class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">Eingereicht am</dt>
-                            <dd class="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-text-secondary">
+                            <dt class="text-sm text-text-tertiary">Eingereicht am</dt>
+                            <dd class="mt-1 text-base text-text-secondary">
                                 {{ $projectProposal->created_at->translatedFormat('d.m.Y') }}
                             </dd>
                         </div>
                         <div>
-                            <dt class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">Eingereicht von</dt>
-                            <dd class="mt-1 flex items-center gap-2 text-sm">
+                            <dt class="text-sm text-text-tertiary">Eingereicht von</dt>
+                            <dd class="mt-1 flex items-center gap-2 text-base">
                                 <img class="size-6 rounded-full shrink-0"
                                      src="{{ $projectProposal->einundzwanzigPleb->profile?->picture }}"
                                      onerror="this.src='{{ asset('einundzwanzig-alpha.jpg') }}'"
                                      alt="" width="24" height="24" loading="lazy">
                                 <a href="https://njump.me/{{ $projectProposal->einundzwanzigPleb->npub }}"
                                    target="_blank" rel="noopener"
-                                   class="truncate text-text-secondary hover:text-orange-500 transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
+                                   class="flex min-h-11 min-w-0 items-center break-all text-text-secondary hover:text-orange-500 transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
                                     {{ $projectProposal->einundzwanzigPleb->profile?->name ?? str($projectProposal->einundzwanzigPleb->npub)->limit(24) }}
                                 </a>
                             </dd>
                         </div>
                         @if($projectProposal->website)
                             <div>
-                                <dt class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">Webseite</dt>
-                                <dd class="mt-1 text-sm">
+                                <dt class="text-sm text-text-tertiary">Webseite</dt>
+                                <dd class="mt-1 text-base">
                                     <a href="{{ $projectProposal->website }}" target="_blank" rel="noopener"
-                                       class="break-all text-text-secondary hover:text-orange-500 transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
+                                       class="inline-flex min-h-11 items-center break-all text-text-secondary hover:text-orange-500 transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
                                         {{ str($projectProposal->website)->replaceFirst('https://', '')->limit(40) }}
                                     </a>
                                 </dd>
@@ -671,7 +669,7 @@ new class extends Component
                          alt="" width="448" height="448" loading="lazy" decoding="async">
                 </figure>
 
-                <div class="prose max-w-[68ch] break-words [&_code]:break-all [&_a]:break-all">
+                <div class="prose max-w-prose break-words [&_code]:break-all [&_a]:break-all">
                     {{-- safeDescription(), NIE description: die Spalte trägt vom
                          Antragsteller geschriebenes HTML, und {!! !!} escapt nicht.
                          Begründung am Accessor. --}}
@@ -681,7 +679,7 @@ new class extends Component
                 {{-- Board takedown for uploaded images. The markup hangs on the
                      server-side gate alone: non-board viewers never get it. --}}
                 @if($this->canRemoveDescriptionImages && $this->descriptionImages->isNotEmpty())
-                    <section class="mt-8 max-w-[68ch] rounded-lg border border-border-subtle p-4">
+                    <section class="mt-8 max-w-prose rounded-lg border border-border-default p-4">
                         <flux:heading size="sm">Bilder in der Beschreibung</flux:heading>
                         <flux:text class="mt-1 text-sm">Nur für den Vorstand sichtbar.</flux:text>
                         <ul class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -785,7 +783,7 @@ new class extends Component
                          auch auf dem Telefon nichts weg und startet offen. --}}
                     @php($chatBandInitiallyOpen = $projectProposal->hasNostrGroup() ? "window.matchMedia('(min-width: 48rem)').matches" : 'true')
 
-                    {{-- Kartensprache der Spalte (rounded-xl, border-border-subtle,
+                    {{-- Kartensprache der Spalte (rounded-lg, border-border-default,
                          bg-bg-surface) — aber OHNE die orange 2px-Rail des alten
                          Bands: In dieser Spalte ist Orange am Rahmen bereits
                          vergeben. Das Vorstands-Panel traegt es als „hier gilt
@@ -796,7 +794,7 @@ new class extends Component
                          die Kopfzeile selbst: die einzige Karte der Spalte, die
                          ein Bedienelement IST statt eine Anzeige.
 
-                         Die Polsterung ist bewusst px-5 wie bei den Nachbarn
+                         Die Polsterung ist bewusst px-4 sm:px-6 wie bei den Nachbarn
                          (nicht px-4): In einer 320px-Spalte stehen die Karten
                          direkt uebereinander, unterschiedliche Textkanten faellt
                          dort sofort auf.
@@ -806,7 +804,7 @@ new class extends Component
                          Aktionsleiste absolut ueber den Verlauf; ein clippender
                          Vorfahr schnitte sie ab. Stattdessen rundet die
                          Kopfzeile sich selbst. --}}
-                    <div class="order-first rounded-xl border border-border-subtle bg-bg-surface"
+                    <div class="order-first rounded-lg border border-border-default bg-bg-surface"
                          x-data="{ open: {{ $chatBandInitiallyOpen }} }">
 
                         {{-- Die ganze Kopfzeile ist der Schalter: ein 44px hohes Ziel
@@ -825,7 +823,7 @@ new class extends Component
                              das Panel offen dasteht. Die Kinder morpht Livewire weiter
                              (`childrenOnly`), sie sind rein serverseitig. --}}
                         <button type="button" wire:ignore.self
-                                class="group flex w-full min-h-11 items-center gap-3 rounded-xl aria-expanded:rounded-b-none px-5 py-3 text-left transition-colors duration-150 hover:bg-bg-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 motion-reduce:transition-none"
+                                class="group flex w-full min-h-11 items-center gap-3 rounded-lg aria-expanded:rounded-b-none px-4 sm:px-6 py-3 text-left transition-colors duration-150 hover:bg-bg-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 motion-reduce:transition-none"
                                 x-on:click="open = ! open"
                                 aria-expanded="false"
                                 :aria-expanded="open ? 'true' : 'false'"
@@ -871,7 +869,7 @@ new class extends Component
                              Preis: Bis Alpine laeuft, ist das Panel auf JEDEM Viewport
                              zu. Sein Inhalt haengt ohnehin an Alpine. --}}
                         <div id="chat-band-panel" x-show="open" style="display: none"
-                             class="border-t border-border-subtle px-5 pb-5">
+                             class="border-t border-border-default px-4 sm:px-6 pb-5">
 
                             @if($projectProposal->hasNostrGroup())
                                 {{-- Nur noch das Anlegedatum in der Meta-Zeile: Wer
@@ -966,7 +964,7 @@ new class extends Component
                                      allein am serverseitigen Gate. Wer nicht im
                                      Vorstand ist, bekommt es gar nicht erst. --}}
                                 @if($this->canResetChatRoom)
-                                    <div class="mt-4 border-t border-border-subtle pt-3">
+                                    <div class="mt-4 border-t border-border-default pt-3">
                                         <flux:modal.trigger name="confirm-reset-chat-room">
                                             <flux:button class="min-h-11 w-full"
                                                          size="sm"
@@ -1017,7 +1015,7 @@ new class extends Component
                                        x-text="progress"></p>
 
                                     <p x-show="error" x-cloak
-                                       class="mt-2 text-sm text-red-400"
+                                       class="mt-2 text-sm text-danger"
                                        x-text="error"></p>
                                 </div>
                             @else
@@ -1038,10 +1036,10 @@ new class extends Component
                      Vorstand und Einreicher haben den Chat davor — und fuer die
                      beiden ist der Antragsraum der Grund zu kommen. --}}
                 @if($this->isVoter)
-                    <div class="order-1 rounded-xl border border-border-subtle bg-bg-surface p-5">
-                        <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary mb-1">
+                    <div class="order-1 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-6">
+                        <h2 class="text-base font-semibold text-text-primary mb-1">
                             Deine Stimme
-                        </div>
+                        </h2>
                         {{-- Beide dürfen abstimmen, nur mit anderem Gewicht — das
                              muss dranstehen, sonst hält ein Mitglied seine Stimme
                              für bindend oder gibt sie gar nicht erst ab. --}}
@@ -1058,8 +1056,8 @@ new class extends Component
                                  WIE abgestimmt wurde, statt nur DASS abgestimmt wurde. --}}
                             <p @class([
                                 'flex items-center gap-2 text-sm',
-                                'text-green-500' => (bool) $this->ownVote->value,
-                                'text-red-400' => ! (bool) $this->ownVote->value,
+                                'text-success' => (bool) $this->ownVote->value,
+                                'text-danger' => ! (bool) $this->ownVote->value,
                             ])>
                                 <flux:icon :name="$this->ownVote->value ? 'check-circle' : 'x-circle'"
                                            variant="micro" aria-hidden="true"/>
@@ -1112,10 +1110,10 @@ new class extends Component
                          seine Identitaet ueber alle Anmeldezustaende hinweg; eine
                          eigene Ueberschrift wie „Anmeldung noetig" waere eine zweite
                          Vokabel fuer dieselbe Sache. --}}
-                    <div class="order-1 rounded-xl border border-border-subtle bg-bg-surface p-5">
-                        <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary mb-1">
+                    <div class="order-1 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-6">
+                        <h2 class="text-base font-semibold text-text-primary mb-1">
                             Deine Stimme
-                        </div>
+                        </h2>
 
                         @if(NostrAuth::check())
                             {{-- Angemeldet, aber ohne Mitgliedseintrag. Selten, aber
@@ -1140,7 +1138,7 @@ new class extends Component
                                  schickte den Betrachter also einer Bedingung
                                  hinterher, die es fuer diese Karte nicht gibt. --}}
                             <div class="flex items-start gap-2">
-                                <flux:icon name="exclamation-triangle" variant="micro" class="mt-1 shrink-0 text-yellow-400" aria-hidden="true"/>
+                                <flux:icon name="exclamation-triangle" variant="micro" class="mt-1 shrink-0 text-warning" aria-hidden="true"/>
                                 <div>
                                     <p class="text-sm text-text-primary">
                                         Zu deinem Schlüssel ist kein Mitgliedseintrag hinterlegt.
@@ -1192,7 +1190,7 @@ new class extends Component
                                  Bewusst UNTER dem Knopf und in Tertiaerfarbe — wer
                                  einen Signer im Browser hat, braucht ihn nicht, und
                                  der Dialog zeigt den QR-Code ohnehin selbst. --}}
-                            <p class="mt-3 border-t border-border-subtle pt-3 text-sm text-text-tertiary">
+                            <p class="mt-3 border-t border-border-default pt-3 text-sm text-text-tertiary">
                                 Auf dem Handy gibt es meist keine Browser-Erweiterung. Der Anmelde-Dialog
                                 nimmt dort auch einen bunker://-Link entgegen oder zeigt einen QR-Code
                                 zum Scannen mit deiner Signer-App.
@@ -1212,18 +1210,18 @@ new class extends Component
                      der Stand, dann der Griff zum Geld. Auf `lg` steht es wie bisher
                      an zweiter Stelle; dort kostet die Reihenfolge keinen Scroll. --}}
                 @if($this->canManage)
-                    <div class="order-4 lg:order-2 rounded-xl border border-orange-700 bg-bg-surface overflow-hidden">
-                        <div class="flex items-center gap-2 border-b border-orange-700 bg-orange-500/10 px-5 py-3">
+                    <div class="order-4 lg:order-2 rounded-lg border border-orange-700 bg-bg-surface overflow-hidden">
+                        <div class="flex items-center gap-2 border-b border-orange-700 bg-orange-500/10 px-4 sm:px-6 py-3">
                             <flux:icon name="shield-check" variant="micro" class="text-orange-500" aria-hidden="true"/>
-                            <span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-orange-500">Vorstand</span>
+                            <span class="text-sm font-semibold text-orange-500">Vorstand</span>
                         </div>
 
-                        <div class="divide-y divide-border-subtle">
+                        <div class="divide-y divide-border-default">
                             {{-- (1) Stand --}}
-                            <div class="p-5">
+                            <div class="p-4 sm:p-6">
                                 <div class="flex items-center justify-between gap-2 mb-2">
-                                    <span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">Quorum</span>
-                                    <span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-primary">
+                                    <span class="text-sm font-semibold text-text-tertiary">Quorum</span>
+                                    <span class="text-sm font-semibold text-text-primary">
                                         {{ $filled }}/{{ $threshold }}
                                     </span>
                                 </div>
@@ -1232,7 +1230,7 @@ new class extends Component
                                      aria-label="{{ $filled }} von {{ $threshold }} nötigen Vorstandsstimmen {{ $leading === 'rejected' ? 'gegen' : 'für' }} das Projekt">
                                     <div @class([
                                             'h-full rounded-full',
-                                            'bg-red-400' => $leading === 'rejected',
+                                            'bg-danger' => $leading === 'rejected',
                                             'bg-orange-500' => $leading !== 'rejected',
                                          ])
                                          style="width: {{ $threshold > 0 ? round($filled / $threshold * 100) : 0 }}%"></div>
@@ -1255,13 +1253,13 @@ new class extends Component
 
                             {{-- (3) Abschliessen --}}
                             @if($this->canManage)
-                                <div class="p-5">
-                                    <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary mb-3">
+                                <div class="p-4 sm:p-6">
+                                    <div class="text-sm font-semibold text-text-tertiary mb-3">
                                         Auszahlung
                                     </div>
 
                                     @if($projectProposal->sats_paid > 0)
-                                        <p class="flex items-center gap-2 text-sm text-green-500">
+                                        <p class="flex items-center gap-2 text-sm text-success">
                                             <flux:icon name="check-circle" variant="micro" aria-hidden="true"/>
                                             {{ number_format($projectProposal->sats_paid, 0, ',', '.') }} Sats erfasst.
                                         </p>
@@ -1301,12 +1299,12 @@ new class extends Component
                 @endif
 
                 {{-- Vorstandsentscheidung: die Stimmen, die zur Mehrheit zählen --}}
-                <div class="order-2 lg:order-3 rounded-xl border border-border-subtle bg-bg-surface p-5">
+                <div class="order-2 lg:order-3 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-6">
                     <div class="flex items-baseline justify-between gap-2 mb-3">
-                        <span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+                        <h2 class="text-base font-semibold text-text-primary">
                             Vorstandsentscheidung
-                        </span>
-                        <span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+                        </h2>
+                        <span class="text-sm font-semibold text-text-tertiary">
                             {{ $filled }}/{{ $threshold }}
                         </span>
                     </div>
@@ -1321,12 +1319,12 @@ new class extends Component
                 {{-- Stimmungsbild: bewusst IMMER sichtbar, auch ohne Stimmen. Vorher
                      hing der Block an otherVotes->isNotEmpty() und verschwand
                      komplett — das las sich, als könnten Mitglieder nicht abstimmen. --}}
-                <div class="order-3 lg:order-4 rounded-xl border border-border-subtle bg-bg-surface p-5">
+                <div class="order-3 lg:order-4 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-6">
                     <div class="flex items-baseline justify-between gap-2 mb-1">
-                        <span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+                        <h2 class="text-base font-semibold text-text-primary">
                             Stimmungsbild der Mitglieder
-                        </span>
-                        <span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+                        </h2>
+                        <span class="text-sm font-semibold text-text-tertiary">
                             {{ $this->otherVotes->count() }}
                         </span>
                     </div>
@@ -1347,20 +1345,16 @@ new class extends Component
                 {{-- Kontakt: nur Vorstand und Einreicher. Letzte Karte auf jedem
                      Viewport — Nachschlagewerk, keine Handlung. --}}
                 @if($this->canSeeContact)
-                    <div class="order-5 rounded-xl border border-border-subtle bg-bg-surface p-5">
-                        <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary mb-3">
+                    <div class="order-5 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-6">
+                        <h2 class="text-base font-semibold text-text-primary mb-3">
                             Kontakt zum Einreicher
-                        </div>
+                        </h2>
                         @if($projectProposal->contact_via_nostr_dm)
                             <div class="flex items-start gap-2">
                                 <flux:icon name="envelope" variant="micro" class="mt-1 shrink-0 text-text-tertiary" aria-hidden="true"/>
                                 <div class="min-w-0 flex-1">
                                     <p class="text-sm text-text-secondary">Nostr-DM erwünscht</p>
-                                    <x-copy-value
-                                        class="mt-1"
-                                        :value="$projectProposal->einundzwanzigPleb->npub"
-                                        label="npub"
-                                    />
+                                    <x-copy-field class="mt-2" :value="$projectProposal->einundzwanzigPleb->npub" label="npub" />
                                 </div>
                             </div>
                         @elseif($projectProposal->contact_alternative)
@@ -1368,16 +1362,12 @@ new class extends Component
                                 <flux:icon name="envelope" variant="micro" class="mt-1 shrink-0 text-text-tertiary" aria-hidden="true"/>
                                 <div class="min-w-0 flex-1">
                                     <p class="text-sm text-text-secondary">Bevorzugter Kanal</p>
-                                    <x-copy-value
-                                        class="mt-1"
-                                        :value="$projectProposal->contact_alternative"
-                                        label="Kontaktangabe"
-                                    />
+                                    <x-copy-field class="mt-2" :value="$projectProposal->contact_alternative" label="Kontaktangabe" />
                                 </div>
                             </div>
                         @else
                             <div class="flex items-start gap-2">
-                                <flux:icon name="exclamation-triangle" variant="micro" class="mt-1 shrink-0 text-yellow-400" aria-hidden="true"/>
+                                <flux:icon name="exclamation-triangle" variant="micro" class="mt-1 shrink-0 text-warning" aria-hidden="true"/>
                                 <div>
                                     <p class="text-sm text-text-primary">Kein Kontaktweg hinterlegt.</p>
                                     <p class="mt-1 text-sm text-text-secondary">
