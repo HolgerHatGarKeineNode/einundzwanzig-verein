@@ -1047,7 +1047,6 @@ class extends Component
 
 {{-- pb-32: the floating "Connect with Nostr" button of window.nostr.js sits
      at the bottom of the viewport; the last line must scroll clear of it. --}}
-{{-- election-ui: the accessibility floor of the election pages (2px orange focus ring, 3:1 field borders, 44px modal close), resources/css/components/flux-overrides.css. --}}
 <div class="election-ui relative mx-auto w-full max-w-5xl pb-32">
     @if ($isGuest)
         <div class="max-w-2xl">

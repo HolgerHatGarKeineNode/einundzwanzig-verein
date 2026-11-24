@@ -131,9 +131,11 @@
 }
 
 /*
- * Accessibility floor for Flux controls on the election pages (member page,
- * board page, share view, minutes; scoped by `.election-ui` so legacy pages and the group
- * package keep their look until they are measured themselves).
+ * Accessibility floor for Flux controls, app-wide since P3/D2 (2026-11-24).
+ * It started on the election pages (scoped by `.election-ui`) and is now the
+ * house rule for every page, the group package's chat partials included.
+ * The `.election-ui` class stays in the election markup only as the root the
+ * e2e specs search in (tests/e2e/election-layout.spec.js).
  *
  * Deliberately outside @layer: Flux sets these values with utilities
  * (`dark:border-white/10`, `size="sm"` → `h-8 w-8`), and a rule inside
@@ -144,20 +146,20 @@
    3.74:1 on bg-page #0A0A0B and 3.56:1 on bg-surface #111113 (white/10 was
    1.15–1.32:1). Checked, invalid and disabled keep Flux' own colour; a
    focused field turns brand orange next to its ring. */
-.election-ui :is(input, textarea, select)[data-flux-control]:not([data-invalid], :disabled),
-.election-ui [data-flux-radio-cards]:not([data-checked], [disabled]) {
+:is(input, textarea, select)[data-flux-control]:not([data-invalid], :disabled),
+[data-flux-radio-cards]:not([data-checked], [disabled]) {
     border-color: var(--color-neutral-500);
 }
 
 /* The 18px radio and checkbox marks also sit on the lighter card fill of
    radio cards, where neutral-500 drops to 2.73:1 — they take neutral-400
    (#8B8B90, 5.84:1 on bg-page). */
-.election-ui ui-radio:not([data-checked], [disabled]) [data-flux-radio-indicator],
-.election-ui ui-checkbox:not([data-checked], [data-indeterminate], [disabled]) [data-flux-checkbox-indicator] {
+ui-radio:not([data-checked], [disabled]) [data-flux-radio-indicator],
+ui-checkbox:not([data-checked], [data-indeterminate], [disabled]) [data-flux-checkbox-indicator] {
     border-color: var(--color-neutral-400);
 }
 
-.election-ui :is(input, textarea, select)[data-flux-control]:not([data-invalid], :disabled):focus {
+:is(input, textarea, select)[data-flux-control]:not([data-invalid], :disabled):focus {
     border-color: var(--color-orange-500);
 }
 
@@ -167,34 +169,34 @@
    1px ring and a Flux input only turns its 1px border orange. The ballot's
    own radios sit on the light paper sheet and keep their 3px ink ring
    (election-ballot-mark). Pinned in tests/e2e/election-layout.spec.js. */
-.election-ui :is([data-flux-button], [data-flux-checkbox], a[href], :is(input, textarea, select)[data-flux-control]):focus-visible {
+:is([data-flux-button], [data-flux-checkbox], a[href], :is(input, textarea, select)[data-flux-control]):focus-visible {
     outline: 2px solid var(--color-orange-500);
     outline-offset: 2px;
 }
 
 /* Target size — the modal's close button is `size="sm"` (32×32). 44×44
    (Apple HIG) instead; WCAG 2.5.8 alone would accept 24. */
-.election-ui [data-flux-modal-close] [data-flux-button] {
+[data-flux-modal-close] [data-flux-button] {
     min-width: 2.75rem;
     min-height: 2.75rem;
 }
 
 /* The close button sits 16px from the dialog's corner and is now 44px wide:
    the heading keeps clear of it (24px dialog padding + 40px = 64px ≥ 60px). */
-.election-ui dialog[data-modal] [data-flux-heading] {
+dialog[data-modal] [data-flux-heading] {
     padding-inline-end: 2.5rem;
 }
 
 /* WCAG 2.3.3 / checklist Q20 — with reduced motion asked for, nothing on an
-   election page moves: no spinner (Flux keeps an `animate-spin` svg running
+   page moves: no spinner (Flux keeps an `animate-spin` svg running
    inside every hidden `data-flux-loading-indicator`), no dialog scale-in, no
    chevron turn. State still shows through the static icon and the words.
-   The whole document of an election page, not only its main area: the app
-   shell's logout button carries a spinning loading svg of its own. */
+   The whole document, not only the main area: the app shell's logout button
+   carries a spinning loading svg of its own. */
 @media (prefers-reduced-motion: reduce) {
-    :root:has(.election-ui) *,
-    :root:has(.election-ui) *::before,
-    :root:has(.election-ui) *::after {
+    :root *,
+    :root *::before,
+    :root *::after {
         animation: none !important;
         transition-duration: 0s !important;
         transition-delay: 0s !important;
