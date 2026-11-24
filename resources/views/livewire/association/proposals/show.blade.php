@@ -280,13 +280,13 @@ new class extends Component
                 </article>
 
                 <div class="min-w-0 space-y-6 lg:col-start-2 lg:row-span-2 lg:row-start-1">
-                    <section aria-labelledby="mood-heading" class="rounded-xl border border-border-default bg-bg-surface p-5 lg:sticky lg:top-6">
+                    <section aria-labelledby="mood-heading" class="rounded-lg border border-border-default bg-bg-surface p-4 sm:p-6 lg:sticky lg:top-6">
                         <h2 id="mood-heading" class="text-lg font-semibold text-text-primary">{{ __('Stimmungsbild') }}</h2>
 
                         <x-proposal-mood :up="$proposal->up_votes_count" :down="$proposal->down_votes_count" size="lg" class="mt-4" />
 
                         @if ($this->canVote)
-                            <div class="mt-5 grid grid-cols-2 gap-2">
+                            <div class="mt-6 grid grid-cols-2 gap-2">
                                 @foreach ([
                                     ['up', __('Dafür'), 'hand-thumb-up'],
                                     ['down', __('Dagegen'), 'hand-thumb-down'],
@@ -326,7 +326,7 @@ new class extends Component
                     </section>
 
                     @if ($this->canModerate)
-                        <section aria-labelledby="board-heading" data-test="board-panel" class="rounded-xl border border-border-default bg-bg-elevated p-5 space-y-4">
+                        <section aria-labelledby="board-heading" data-test="board-panel" class="rounded-lg border border-border-default bg-bg-elevated p-4 sm:p-6 space-y-4">
                             <div>
                                 <h2 id="board-heading" class="text-lg font-semibold text-text-primary">{{ __('Vorstand') }}</h2>
                                 <p class="mt-1 text-sm text-text-secondary">{{ __('Nur für den Vorstand sichtbar.') }}</p>
