@@ -440,10 +440,12 @@ new class extends Component
 };
 ?>
 
-<div>
+<div class="mx-auto w-full max-w-5xl pb-32">
+    <x-page-header title="Mitglieder" />
+
     @if($isAllowed)
-        <div class="overflow-hidden rounded-xl border border-border-subtle bg-bg-surface">
-            <div class="flex gap-2 border-b border-border-subtle p-4 sm:px-6">
+        <div class="overflow-hidden rounded-lg border border-border-default bg-bg-surface">
+            <div class="flex flex-col gap-2 border-b border-border-default p-4 sm:flex-row sm:px-6">
                 <flux:input
                         wire:model.live.debounce.300ms="search"
                     placeholder="Suche nach Name oder Npub..."
@@ -454,6 +456,7 @@ new class extends Component
                     wire:click="togglePaidFilter"
                     :variant="$showPaidOnly ? 'primary' : 'ghost'"
                     icon="check"
+                    class="min-h-11"
                 >
                     {{ $showPaidOnly ? 'Alle anzeigen' : 'Nur Bezahlt' }}
                 </flux:button>
@@ -461,6 +464,7 @@ new class extends Component
                     wire:click="exportCsv"
                     variant="ghost"
                     icon="arrow-down-tray"
+                    class="min-h-11"
                 >
                     CSV Export
                 </flux:button>
@@ -513,7 +517,7 @@ new class extends Component
                                 <a
                                     target="_blank"
                                     href="https://nostrudel.ninja/u/{{ $pleb->npub }}"
-                                    class="text-xs text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                                    class="inline-flex min-h-6 items-center text-sm text-text-tertiary underline underline-offset-4 hover:text-text-primary"
                                 >
                                     Nostr Profile
                                 </a>
@@ -541,15 +545,15 @@ new class extends Component
                                 <flux:button
                                     wire:click="openPaymentModal({{ $pleb->id }})"
                                     variant="ghost"
-                                    size="sm"
                                     icon="banknotes"
+                                    class="min-h-11"
                                 >
-                                        <span class="text-green-500">
+                                        <span class="text-success">
                                             {{ number_format($pleb->paymentEvents->first()->amount, 0, ',', '.') }}
                                         </span>
                                 </flux:button>
                             @else
-                                <flux:text class="text-zinc-500">keine Zahlung vorhanden</flux:text>
+                                <flux:text class="text-text-tertiary">keine Zahlung vorhanden</flux:text>
                             @endif
                         </flux:table.cell>
 
@@ -566,19 +570,19 @@ new class extends Component
                                 <flux:button
                                     wire:click="delete({{ $pleb->id }})"
                                     variant="ghost"
-                                    size="sm"
                                     icon="trash"
-                                    inset="top bottom"
-                                ></flux:button>
+                                    class="min-h-11 min-w-11"
+                                    :aria-label="__('Mitglied :name löschen', ['name' => $pleb->profile?->name ?: ($pleb->profile?->display_name ?: __('dieses Mitglied'))])"
+                                />
 
                                 @if($pleb->application_for)
                                     <flux:button
                                         wire:click="accept({{ $pleb->id }})"
                                         variant="ghost"
-                                        size="sm"
                                         icon="check"
-                                        inset="top bottom"
-                                    ></flux:button>
+                                        class="min-h-11 min-w-11"
+                                        :aria-label="__('Mitglied :name akzeptieren', ['name' => $pleb->profile?->name ?: ($pleb->profile?->display_name ?: __('dieses Mitglied'))])"
+                                    />
                                 @endif
                             </div>
                         </flux:table.cell>
@@ -588,13 +592,13 @@ new class extends Component
             </flux:table>
         </div>
     @else
-        <div class="px-4 sm:px-6 lg:px-8 py-8 w-full mx-auto">
+        <div>
             <flux:callout variant="warning" icon="exclamation-circle">
                 <flux:heading>Mitglieder können nicht bearbeitet werden</flux:heading>
                 <p>
                     Zugriff auf die Mitgliederverwaltung ist nur für spezielle autorisierte Benutzer möglich.
                 </p>
-                <p class="mt-3">
+                <p class="mt-4">
                     @if(!NostrAuth::check())
                         Bitte melde dich zunächst mit Nostr an.
                     @else
