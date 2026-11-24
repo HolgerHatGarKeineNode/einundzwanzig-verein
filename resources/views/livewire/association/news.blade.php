@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\NewsCategory;
+use App\Livewire\Traits\GuardsActingPleb;
 use App\Models\Notification;
 use App\Support\NostrAuth;
 use Illuminate\Support\Collection;
@@ -15,7 +16,9 @@ use Livewire\WithFileUploads;
 new
 #[Layout('layouts.app')]
 #[Title('News')]
-class extends Component {
+class extends Component
+{
+    use GuardsActingPleb;
     use WithFileUploads;
 
     #[Locked]
@@ -97,6 +100,7 @@ class extends Component {
     public function save(): void
     {
         $this->ensureCanEdit();
+        $author = $this->actingPleb();
 
         $this->validate([
             'file' => 'required|file|mimes:pdf',
@@ -109,7 +113,7 @@ class extends Component {
         $news->name = $this->form['name'];
         $news->description = $this->form['description'] ?? null;
         $news->category = $this->form['category'];
-        $news->einundzwanzig_pleb_id = $this->currentPleb->id;
+        $news->einundzwanzig_pleb_id = $author->id;
         $news->save();
 
         if ($this->file) {

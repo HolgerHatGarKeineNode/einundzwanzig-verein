@@ -1,5 +1,6 @@
 <?php
 
+use App\Livewire\Traits\GuardsActingPleb;
 use App\Models\EinundzwanzigPleb;
 use App\Support\NostrAuth;
 use App\Traits\NostrFetcherTrait;
@@ -9,6 +10,7 @@ use Livewire\Component;
 
 new class extends Component
 {
+    use GuardsActingPleb;
     use NostrFetcherTrait;
 
     #[Locked]
@@ -97,7 +99,7 @@ new class extends Component
 
         $nip05Handle = strtolower($this->nip05Handle);
 
-        $this->currentPleb->update([
+        $this->actingPleb()->update([
             'nip05_handle' => $nip05Handle,
         ]);
         Flux::toast('NIP-05 Handle gespeichert.');

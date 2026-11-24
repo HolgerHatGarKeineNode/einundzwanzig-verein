@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\ProjectProposalStatus;
+use App\Livewire\Traits\GuardsActingPleb;
 use App\Livewire\Traits\WithNostrAuth;
 use App\Models\EinundzwanzigPleb;
 use App\Models\ProjectProposal;
@@ -19,6 +20,7 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
 new class extends Component
 {
+    use GuardsActingPleb;
     use WithNostrAuth;
 
     #[Locked]
@@ -371,6 +373,8 @@ new class extends Component
 
         Gate::forUser($nostrUser)->authorize('create', [Vote::class, $this->projectProposal]);
 
+        $voter = $this->actingPleb();
+
         $executed = RateLimiter::attempt(
             'voting:'.request()->ip(),
             10,
@@ -383,7 +387,7 @@ new class extends Component
 
         Vote::query()->updateOrCreate([
             'project_proposal_id' => $this->projectProposal->id,
-            'einundzwanzig_pleb_id' => $this->currentPleb->id,
+            'einundzwanzig_pleb_id' => $voter->id,
         ], [
             'value' => true,
         ]);
@@ -404,6 +408,8 @@ new class extends Component
 
         Gate::forUser($nostrUser)->authorize('create', [Vote::class, $this->projectProposal]);
 
+        $voter = $this->actingPleb();
+
         $executed = RateLimiter::attempt(
             'voting:'.request()->ip(),
             10,
@@ -416,7 +422,7 @@ new class extends Component
 
         Vote::query()->updateOrCreate([
             'project_proposal_id' => $this->projectProposal->id,
-            'einundzwanzig_pleb_id' => $this->currentPleb->id,
+            'einundzwanzig_pleb_id' => $voter->id,
         ], [
             'value' => false,
         ]);

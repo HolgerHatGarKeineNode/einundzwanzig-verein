@@ -2,6 +2,7 @@
 
 use App\Livewire\Forms\ApplicationForm;
 use App\Livewire\Forms\ProfileForm;
+use App\Livewire\Traits\GuardsActingPleb;
 use App\Models\EinundzwanzigPleb;
 use App\Models\PaymentEvent;
 use App\Services\BtcPayClient;
@@ -22,7 +23,9 @@ use swentel\nostr\Relay\RelaySet;
 use swentel\nostr\Request\Request;
 use swentel\nostr\Subscription\Subscription;
 
-new class extends Component {
+new class extends Component
+{
+    use GuardsActingPleb;
     use NostrFetcherTrait;
 
     public ApplicationForm $form;
@@ -106,19 +109,19 @@ new class extends Component {
 
     public function mount(): void
     {
-        if (!NostrAuth::check()) {
+        if (! NostrAuth::check()) {
             return;
         }
 
         $this->currentPubkey = NostrAuth::pubkey();
         $this->currentPleb = EinundzwanzigPleb::query()
             ->with([
-                'paymentEvents' => fn($query) => $query->where('year', date('Y')),
+                'paymentEvents' => fn ($query) => $query->where('year', date('Y')),
                 'profile',
             ])
             ->where('pubkey', $this->currentPubkey)->first();
 
-        if (!$this->currentPleb) {
+        if (! $this->currentPleb) {
             return;
         }
 
@@ -132,13 +135,13 @@ new class extends Component {
                 $this->nip05Verified = true;
                 $this->nip05VerifiedHandle = $this->nip05VerifiedHandles[0];
 
-                if (!in_array($this->profileForm->nip05Handle, $this->nip05VerifiedHandles, true)) {
+                if (! in_array($this->profileForm->nip05Handle, $this->nip05VerifiedHandles, true)) {
                     $this->nip05HandleMismatch = true;
                 }
             }
         }
         $this->no = $this->currentPleb->no_email;
-        $this->showEmail = !$this->no;
+        $this->showEmail = ! $this->no;
         $this->amountToPay = $this->membership()->fee();
         $this->resolveCurrentPaymentEvent();
         $this->loadEvents();
@@ -147,8 +150,10 @@ new class extends Component {
 
     public function updatedNo(): void
     {
-        $this->showEmail = !$this->no;
-        $this->currentPleb->update([
+        $member = $this->actingPleb();
+
+        $this->showEmail = ! $this->no;
+        $member->update([
             'no_email' => $this->no,
         ]);
     }
@@ -179,19 +184,19 @@ new class extends Component {
         $this->currentPubkey = $pubkey;
         $this->currentPleb = EinundzwanzigPleb::query()
             ->with([
-                'paymentEvents' => fn($query) => $query->where('year', date('Y')),
+                'paymentEvents' => fn ($query) => $query->where('year', date('Y')),
                 'profile',
             ])
             ->where('pubkey', $pubkey)->first();
 
-        if (!$this->currentPleb) {
+        if (! $this->currentPleb) {
             return;
         }
 
         $this->profileForm->setPleb($this->currentPleb);
         $this->form->setPleb($this->currentPleb);
         $this->no = $this->currentPleb->no_email;
-        $this->showEmail = !$this->no;
+        $this->showEmail = ! $this->no;
 
         if ($this->currentPleb->nip05_handle) {
             $this->nip05VerifiedHandles = $this->getNip05HandlesForPubkey($this->currentPubkey);
@@ -200,7 +205,7 @@ new class extends Component {
                 $this->nip05Verified = true;
                 $this->nip05VerifiedHandle = $this->nip05VerifiedHandles[0];
 
-                if (!in_array($this->profileForm->nip05Handle, $this->nip05VerifiedHandles, true)) {
+                if (! in_array($this->profileForm->nip05Handle, $this->nip05VerifiedHandles, true)) {
                     $this->nip05HandleMismatch = true;
                 }
             }
@@ -249,11 +254,13 @@ new class extends Component {
 
     public function saveEmail(): void
     {
+        $this->profileForm->currentPleb = $this->actingPleb();
         $this->profileForm->saveEmail();
     }
 
     public function saveNip05Handle(): void
     {
+        $this->profileForm->currentPleb = $this->actingPleb();
         $this->profileForm->saveNip05Handle();
 
         // Refresh NIP-05 verification status after saving
@@ -264,7 +271,7 @@ new class extends Component {
                 $this->nip05Verified = true;
                 $this->nip05VerifiedHandle = $this->nip05VerifiedHandles[0];
 
-                if (!in_array($this->profileForm->nip05Handle, $this->nip05VerifiedHandles, true)) {
+                if (! in_array($this->profileForm->nip05Handle, $this->nip05VerifiedHandles, true)) {
                     $this->nip05HandleMismatch = true;
                 } else {
                     $this->nip05HandleMismatch = false;
@@ -275,9 +282,11 @@ new class extends Component {
 
     public function pay($comment): mixed
     {
-        if (!$this->currentPleb) {
+        if (! $this->currentPleb) {
             return redirect()->route('association.profile');
         }
+
+        $member = $this->actingPleb();
 
         $paymentEvent = $this->resolveCurrentPaymentEvent();
         $this->resetInvoiceMeta();
@@ -285,7 +294,7 @@ new class extends Component {
 
         try {
             $result = $this->membership()->createInvoice(
-                $this->currentPleb,
+                $member,
                 (int) date('Y'),
                 (string) $comment,
                 // Back here after the checkout, still with the way to the election.
@@ -311,7 +320,7 @@ new class extends Component {
 
     public function listenForPayment(): void
     {
-        if (!$this->currentPleb) {
+        if (! $this->currentPleb) {
             return;
         }
 
@@ -346,7 +355,7 @@ new class extends Component {
 
     protected function syncPaymentEventStatus(PaymentEvent $paymentEvent): PaymentEvent
     {
-        if (!$paymentEvent->btc_pay_invoice) {
+        if (! $paymentEvent->btc_pay_invoice) {
             $this->invoiceStatusVariant = 'info';
             $this->invoiceStatusMessage = 'Noch keine Rechnung gestartet. Klicke auf „Sats bezahlen“, um eine neue Rechnung zu erstellen.';
             $this->invoiceStatus = null;
@@ -426,7 +435,7 @@ new class extends Component {
         }
 
         $this->currentPleb->load([
-            'paymentEvents' => fn($query) => $query->where('year', date('Y')),
+            'paymentEvents' => fn ($query) => $query->where('year', date('Y')),
         ]);
 
         return $paymentEvent->refresh();
@@ -453,7 +462,7 @@ new class extends Component {
 
     protected function formatExpiration(?string $timestamp): array
     {
-        if (!$timestamp) {
+        if (! $timestamp) {
             return [null, null];
         }
 
@@ -511,12 +520,14 @@ new class extends Component {
      */
     public function save(): void
     {
+        $this->form->currentPleb = $this->actingPleb();
+
         try {
             $this->form->apply();
             $this->currentPleb = $this->currentPleb?->fresh() ?? $this->currentPleb;
             Flux::toast('Antrag erfasst — Mitglied wirst du mit der Zahlung des Jahresbeitrags.', variant: 'success');
         } catch (\Illuminate\Validation\ValidationException $e) {
-            if (!$this->form->check) {
+            if (! $this->form->check) {
                 $this->js('alert("Du musst den Statuten zustimmen.")');
             }
             throw $e;
@@ -531,7 +542,7 @@ new class extends Component {
      */
     public function createPaymentEvent(): PaymentEvent
     {
-        return $this->membership()->resolvePaymentEvent($this->currentPleb, (int) date('Y'));
+        return $this->membership()->resolvePaymentEvent($this->actingPleb(), (int) date('Y'));
     }
 
     public function loadEvents(): void
@@ -539,6 +550,7 @@ new class extends Component {
         $relayUrl = config('services.relay');
         if (! $relayUrl) {
             $this->events = [];
+
             return;
         }
 
@@ -563,7 +575,7 @@ new class extends Component {
 
         $this->events = collect($response[$relayUrl] ?? [])
             ->map(function ($event) {
-                if (!isset($event->event)) {
+                if (! isset($event->event)) {
                     return false;
                 }
 
