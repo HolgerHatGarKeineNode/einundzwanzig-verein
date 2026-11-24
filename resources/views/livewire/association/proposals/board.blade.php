@@ -2,7 +2,7 @@
 
 use App\Enums\MemberProposalState;
 use App\Livewire\Traits\ModeratesMemberProposals;
-use App\Livewire\Traits\WithMemberProposalAccess;
+use App\Livewire\Traits\WithViewer;
 use App\Models\MemberProposal;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
@@ -20,7 +20,7 @@ use Livewire\Component;
 new class extends Component
 {
     use ModeratesMemberProposals;
-    use WithMemberProposalAccess;
+    use WithViewer;
 
     private const TOP_SUPPORTED = 10;
 
@@ -29,7 +29,7 @@ new class extends Component
 
     public function mount(): void
     {
-        $this->isAllowed = $this->viewerCan('moderate');
+        $this->isAllowed = $this->viewerCan('moderate', MemberProposal::class);
     }
 
     /**
@@ -40,7 +40,7 @@ new class extends Component
     #[Computed]
     public function scheduled(): Collection
     {
-        $this->authorizeViewer('moderate');
+        $this->authorizeViewer('moderate', MemberProposal::class);
 
         return $this->listQuery()
             ->inStates([MemberProposalState::Scheduled])
@@ -57,7 +57,7 @@ new class extends Component
     #[Computed]
     public function topSupported(): Collection
     {
-        $this->authorizeViewer('moderate');
+        $this->authorizeViewer('moderate', MemberProposal::class);
 
         return $this->listQuery()
             ->inStates([MemberProposalState::Open])

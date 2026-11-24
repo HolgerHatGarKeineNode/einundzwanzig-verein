@@ -4,6 +4,7 @@ use App\Enums\DmAudience;
 use App\Enums\DmDeliveryStatus;
 use App\Enums\DmMessageType;
 use App\Jobs\Dm\DispatchBulkDirectMessages;
+use App\Livewire\Traits\WithViewer;
 use App\Models\DmDelivery;
 use App\Models\DmRun;
 use App\Models\DmSchedule;
@@ -53,6 +54,8 @@ new
 #[Title('Nachrichten an Mitglieder')]
 class extends Component
 {
+    use WithViewer;
+
     private const TABS = ['history', 'compose', 'schedule'];
 
     private const HISTORY_LIMIT = 30;
@@ -120,7 +123,7 @@ class extends Component
             return;
         }
 
-        $this->actor();
+        $this->boardActor();
 
         if (! in_array($this->tab, self::TABS, true)) {
             $this->tab = 'history';
@@ -137,14 +140,14 @@ class extends Component
 
     public function showTab(string $tab): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $this->tab = in_array($tab, self::TABS, true) ? $tab : 'history';
     }
 
     public function updatedTab(): void
     {
-        $this->actor();
+        $this->boardActor();
 
         if (! in_array($this->tab, self::TABS, true)) {
             $this->tab = 'history';
@@ -153,7 +156,7 @@ class extends Component
 
     public function toggleRun(int $runId): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $this->openRunId = $this->openRunId === $runId ? null : DmRun::query()->findOrFail($runId)->id;
         unset($this->openRun);
@@ -168,7 +171,7 @@ class extends Component
      */
     public function resendFailed(int $runId, DirectMessagePause $pause): void
     {
-        $this->actor();
+        $this->boardActor();
         $run = DmRun::query()->findOrFail($runId);
 
         if ($pause->isPaused()) {
@@ -193,7 +196,7 @@ class extends Component
 
     public function updatedType(): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $type = DmMessageType::tryFrom($this->type) ?? DmMessageType::Individual;
         $this->type = $type->value;
@@ -209,7 +212,7 @@ class extends Component
 
     public function updatedAudience(): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $this->audience = (DmAudience::tryFrom($this->audience) ?? DmAudience::Members)->value;
         $this->forgetDraft();
@@ -217,7 +220,7 @@ class extends Component
 
     public function updatedElectionId(): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $election = $this->composeElection;
         $this->electionId = $election?->id;
@@ -227,19 +230,19 @@ class extends Component
 
     public function updatedText(): void
     {
-        $this->actor();
+        $this->boardActor();
         $this->forgetDraft();
     }
 
     public function updatedVariables(): void
     {
-        $this->actor();
+        $this->boardActor();
         $this->forgetDraft();
     }
 
     public function restoreDefaultText(): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $this->text = $this->composeType()->defaultText();
         $this->forgetDraft();
@@ -250,7 +253,7 @@ class extends Component
      */
     public function runDryRun(DirectMessageDryRun $dryRun): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $result = $dryRun->handle(
             $this->composeType(),
@@ -291,7 +294,7 @@ class extends Component
      */
     public function sendTestToSelf(ComposeDirectMessage $compose, StartDirectMessageRun $start, DirectMessagePause $pause): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
 
         if ($pause->isPaused()) {
             Flux::toast(__('Der Versand ist pausiert. Setze ihn im Zeitplan fort, dann geht auch der Test raus.'), variant: 'danger');
@@ -332,7 +335,7 @@ class extends Component
      */
     public function confirmSend(ComposeDirectMessage $compose, StartDirectMessageRun $start, DirectMessagePause $pause): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
 
         if ($this->dryRun === null || $this->dryRun['signature'] !== $this->draftSignature()) {
             Flux::modal('confirm-send')->close();
@@ -417,7 +420,7 @@ class extends Component
 
     public function updatedScheduleElectionId(): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $this->scheduleElectionId = $this->scheduleElection?->id;
         $this->resetErrorBag();
@@ -426,7 +429,7 @@ class extends Component
 
     public function updatedNewType(): void
     {
-        $this->actor();
+        $this->boardActor();
 
         if (! in_array(DmMessageType::tryFrom($this->newType), self::SCHEDULE_TYPES, true)) {
             $this->newType = DmMessageType::ElectionAnnouncement->value;
@@ -438,7 +441,7 @@ class extends Component
 
     public function addSchedule(ScheduleDirectMessage $schedule): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
         $election = $this->scheduleElection ?? abort(404);
 
         $type = DmMessageType::tryFrom($this->newType);
@@ -486,7 +489,7 @@ class extends Component
      */
     public function removeSchedule(int $scheduleId): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $row = DmSchedule::query()->with('message')->findOrFail($scheduleId);
 
@@ -511,7 +514,7 @@ class extends Component
 
     public function updatedPaused(DirectMessagePause $pause): void
     {
-        $this->actor();
+        $this->boardActor();
 
         if ($this->paused) {
             $pause->pause();
@@ -531,7 +534,7 @@ class extends Component
     #[Computed]
     public function elections(): EloquentCollection
     {
-        $this->actor();
+        $this->boardActor();
 
         return Election::query()->with('rounds:id,election_event_id,title,position')->orderByDesc('id')->get();
     }
@@ -539,7 +542,7 @@ class extends Component
     #[Computed]
     public function composeElection(): ?Election
     {
-        $this->actor();
+        $this->boardActor();
 
         return $this->electionId === null ? null : $this->elections->firstWhere('id', $this->electionId);
     }
@@ -547,7 +550,7 @@ class extends Component
     #[Computed]
     public function scheduleElection(): ?Election
     {
-        $this->actor();
+        $this->boardActor();
 
         return $this->scheduleElectionId === null ? null : $this->elections->firstWhere('id', $this->scheduleElectionId);
     }
@@ -555,7 +558,7 @@ class extends Component
     #[Computed]
     public function pausedAt(): ?CarbonInterface
     {
-        $this->actor();
+        $this->boardActor();
 
         return app(DirectMessagePause::class)->pausedAt();
     }
@@ -568,7 +571,7 @@ class extends Component
     #[Computed]
     public function runs(): EloquentCollection
     {
-        $this->actor();
+        $this->boardActor();
 
         return DmRun::query()
             ->with(['message.author.profile', 'election'])
@@ -591,7 +594,7 @@ class extends Component
     #[Computed]
     public function upcoming(): EloquentCollection
     {
-        $this->actor();
+        $this->boardActor();
 
         return DmSchedule::query()
             ->with(['message', 'election'])
@@ -604,7 +607,7 @@ class extends Component
     #[Computed]
     public function openRun(): ?DmRun
     {
-        $this->actor();
+        $this->boardActor();
 
         return $this->openRunId === null ? null : DmRun::query()
             ->with(['deliveries' => fn ($query) => $query->with(['recipient.profile', 'relays'])->orderBy('id')])
@@ -620,7 +623,7 @@ class extends Component
     #[Computed]
     public function senderKeyUsable(): bool
     {
-        $this->actor();
+        $this->boardActor();
 
         return app(NotificationKey::class)->isUsable();
     }
@@ -631,7 +634,7 @@ class extends Component
     #[Computed]
     public function audienceSentence(): ?string
     {
-        $this->actor();
+        $this->boardActor();
 
         $audience = $this->composeAudience();
 
@@ -645,7 +648,7 @@ class extends Component
     #[Computed]
     public function audienceCount(): int
     {
-        $this->actor();
+        $this->boardActor();
 
         $audience = $this->composeAudience();
 
@@ -665,7 +668,7 @@ class extends Component
     #[Computed]
     public function draftProblems(): array
     {
-        $this->actor();
+        $this->boardActor();
 
         return $this->problemsOf($this->composeType(), $this->text, $this->messageVariables());
     }
@@ -678,7 +681,7 @@ class extends Component
     #[Computed]
     public function previews(): array
     {
-        $this->actor();
+        $this->boardActor();
 
         $audience = $this->composeAudience();
 
@@ -714,7 +717,7 @@ class extends Component
     #[Computed]
     public function scheduleRows(): EloquentCollection
     {
-        $this->actor();
+        $this->boardActor();
 
         return $this->scheduleElectionId === null ? new EloquentCollection : DmSchedule::query()
             ->with(['message', 'election', 'run'])
@@ -898,18 +901,6 @@ class extends Component
         return $out;
     }
 
-    /**
-     * The board member behind the session, or 403. Asked on every request,
-     * never remembered on the component.
-     */
-    protected function actor(): EinundzwanzigPleb
-    {
-        $pleb = NostrAuth::user()?->getPleb();
-
-        abort_unless($pleb instanceof EinundzwanzigPleb && ! $pleb->isErased() && $pleb->isBoardMember(), 403);
-
-        return $pleb;
-    }
 
     protected function composeType(): DmMessageType
     {

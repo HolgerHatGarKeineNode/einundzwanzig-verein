@@ -59,7 +59,7 @@ class NostrUser implements Authenticatable
         return $this->pubkey;
     }
 
-    public function getPleb(): ?object
+    public function getPleb(): ?EinundzwanzigPleb
     {
         return $this->pleb;
     }

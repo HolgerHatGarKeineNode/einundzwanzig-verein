@@ -1,10 +1,9 @@
 <?php
 
 use App\Enums\DmDeliveryStatus;
-use App\Models\EinundzwanzigPleb;
+use App\Livewire\Traits\WithViewer;
 use App\Services\Dm\DirectMessageInbox;
 use App\Support\DisplayTime;
-use App\Support\NostrAuth;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
@@ -15,19 +14,11 @@ new
 #[Title('Nachrichten vom Verein')]
 class extends Component
 {
+    use WithViewer;
+
     /** The delivery shown in full; one at a time. */
     public ?int $openId = null;
 
-    /**
-     * The member behind the session, or null. Resolved on every request,
-     * never stored on the component.
-     */
-    protected function viewer(): ?EinundzwanzigPleb
-    {
-        $pleb = NostrAuth::user()?->getPleb();
-
-        return $pleb instanceof EinundzwanzigPleb && ! $pleb->isErased() ? $pleb : null;
-    }
 
     #[Computed]
     public function isMember(): bool

@@ -2,11 +2,11 @@
 
 use App\Enums\AssociationStatus;
 use App\Exceptions\MemberStatusLockedException;
+use App\Livewire\Traits\WithViewer;
 use App\Models\DmDelivery;
 use App\Models\EinundzwanzigPleb;
 use App\Models\PaymentEvent;
 use App\Services\MembershipService;
-use App\Support\Board;
 use App\Support\NostrAuth;
 use Flux\Flux;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -21,6 +21,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 new class extends Component
 {
     use WithPagination;
+    use WithViewer;
 
     /**
      * Columns the table may be sorted by, mapped to a fully-qualified
@@ -102,25 +103,22 @@ new class extends Component
     }
 
     /**
-     * Managing members is a board task, so the board list in
-     * `config/einundzwanzig.config.current_board` is the single source —
-     * the same one `EinundzwanzigPleb::isBoardMember()` and the proposal
-     * policies use. `App\Support\Board` resolves the configured
-     * npubs to hex pubkeys, because a Nostr session only ever carries the
-     * hex form. Authorization is re-checked server-side on every sensitive
-     * action — gating the view on $isAllowed is cosmetic only, because
-     * Livewire exposes every public method as a directly callable endpoint
-     * regardless of what the view renders.
+     * Managing members is a board task (`WithViewer::boardActor()`: logged
+     * in, not erased, on the board list in
+     * `config/einundzwanzig.config.current_board`). Authorization is
+     * re-checked server-side on every sensitive action — gating the view on
+     * $isAllowed is cosmetic only, because Livewire exposes every public
+     * method as a directly callable endpoint regardless of what the view
+     * renders.
      */
     private function isAuthorized(): bool
     {
-        return NostrAuth::check()
-            && Board::containsPubkey(NostrAuth::pubkey());
+        return $this->viewerIsBoard();
     }
 
     private function ensureAuthorized(): void
     {
-        abort_unless($this->isAuthorized(), 403);
+        $this->boardActor();
     }
 
     private function refreshAccess(): void

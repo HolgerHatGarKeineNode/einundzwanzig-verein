@@ -1,6 +1,6 @@
 <?php
 
-use App\Livewire\Traits\GuardsActingPleb;
+use App\Livewire\Traits\WithViewer;
 use App\Models\EinundzwanzigPleb;
 use App\Support\NostrAuth;
 use App\Traits\NostrFetcherTrait;
@@ -10,8 +10,8 @@ use Livewire\Component;
 
 new class extends Component
 {
-    use GuardsActingPleb;
     use NostrFetcherTrait;
+    use WithViewer;
 
     #[Locked]
     public ?EinundzwanzigPleb $currentPleb = null;

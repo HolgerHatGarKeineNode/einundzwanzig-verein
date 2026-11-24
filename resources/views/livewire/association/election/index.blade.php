@@ -10,6 +10,7 @@ use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionBallotRefusedException;
 use App\Exceptions\ElectionBallotWriteException;
 use App\Exceptions\ElectionRoundStateException;
+use App\Livewire\Traits\WithViewer;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
@@ -32,7 +33,6 @@ use Flux\Flux;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Url;
@@ -40,6 +40,8 @@ use Livewire\Component;
 
 new class extends Component
 {
+    use WithViewer;
+
     private const STATEMENT_MAX = 2000;
 
     /**
@@ -71,21 +73,7 @@ new class extends Component
 
     public string $statement = '';
 
-    /**
-     * The member behind the session, or null. Resolved on every request,
-     * never stored on the component.
-     */
-    protected function viewer(): ?EinundzwanzigPleb
-    {
-        $pleb = NostrAuth::user()?->getPleb();
 
-        return $pleb instanceof EinundzwanzigPleb && ! $pleb->isErased() ? $pleb : null;
-    }
-
-    protected function can(string $ability, mixed $subject): bool
-    {
-        return Gate::forUser(NostrAuth::user())->allows($ability, $subject);
-    }
 
     /**
      * The member's own pubkey, for the signer check in the browser.
@@ -127,7 +115,7 @@ new class extends Component
             })
             ->orderByDesc('id')
             ->get()
-            ->filter(fn (Election $election): bool => $this->can('view', $election))
+            ->filter(fn (Election $election): bool => $this->viewerCan('view', $election))
             ->values();
     }
 
@@ -259,7 +247,7 @@ new class extends Component
             return collect();
         }
 
-        return $this->rounds->filter(fn (ElectionRound $round): bool => $this->can('submitCandidacy', $round))->values();
+        return $this->rounds->filter(fn (ElectionRound $round): bool => $this->viewerCan('submitCandidacy', $round))->values();
     }
 
     /**
@@ -294,7 +282,7 @@ new class extends Component
     public function withdrawableIds(): array
     {
         return $this->ownCandidacies
-            ->filter(fn (ElectionCandidate $candidate): bool => $this->can('withdrawOwnCandidacy', $candidate))
+            ->filter(fn (ElectionCandidate $candidate): bool => $this->viewerCan('withdrawOwnCandidacy', $candidate))
             ->map(fn (ElectionCandidate $candidate): int => (int) $candidate->getKey())
             ->values()
             ->all();

@@ -1,7 +1,7 @@
 <?php
 
 use App\Enums\NewsCategory;
-use App\Livewire\Traits\GuardsActingPleb;
+use App\Livewire\Traits\WithViewer;
 use App\Models\Notification;
 use App\Support\NostrAuth;
 use Illuminate\Support\Collection;
@@ -18,8 +18,8 @@ new
 #[Title('News')]
 class extends Component
 {
-    use GuardsActingPleb;
     use WithFileUploads;
+    use WithViewer;
 
     #[Url(as: 'kategorie')]
     public ?int $selectedCategory = null;
@@ -46,7 +46,7 @@ class extends Component
 
     public function mount(): void
     {
-        $this->currentPleb = NostrAuth::user()?->getPleb();
+        $this->currentPleb = $this->viewer();
 
         if (! $this->currentPleb) {
             return;
@@ -155,14 +155,9 @@ class extends Component
         $this->file = null;
     }
 
-    private function canEditNews(): bool
-    {
-        return NostrAuth::user()?->isBoardMember() ?? false;
-    }
-
     private function ensureCanEdit(): void
     {
-        abort_unless($this->canEditNews(), 403);
+        $this->boardActor();
     }
 };
 ?>

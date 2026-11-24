@@ -4,13 +4,12 @@ use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionOutcome;
 use App\Enums\ElectionRoundState;
 use App\Enums\ElectionTieKind;
-use App\Models\EinundzwanzigPleb;
+use App\Livewire\Traits\WithViewer;
 use App\Models\Election;
 use App\Models\ElectionRound;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\RoundReport;
 use App\Support\ElectionTieText;
-use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
@@ -30,6 +29,8 @@ use Livewire\Component;
  */
 new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class extends Component
 {
+    use WithViewer;
+
     #[Locked]
     public int $electionId;
 
@@ -40,7 +41,7 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
      */
     public function mount(int|string $election): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $this->electionId = (int) Election::query()->findOrFail((int) $election)->id;
     }
@@ -53,7 +54,7 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
     #[Computed]
     public function election(): ?Election
     {
-        $this->actor();
+        $this->boardActor();
 
         return Election::query()->find($this->electionId);
     }
@@ -81,7 +82,7 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
     #[Computed]
     public function current(): ?array
     {
-        $this->actor();
+        $this->boardActor();
 
         if ($this->election === null) {
             return null;
@@ -126,14 +127,6 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
         return ($moment ?? now())->copy()->setTimezone(config('app.display_timezone'))->format('H:i');
     }
 
-    protected function actor(): EinundzwanzigPleb
-    {
-        $pleb = NostrAuth::user()?->getPleb();
-
-        abort_unless($pleb instanceof EinundzwanzigPleb && ! $pleb->isErased() && $pleb->isBoardMember(), 403);
-
-        return $pleb;
-    }
 };
 ?>
 

@@ -1,7 +1,7 @@
 <?php
 
 use App\Enums\MemberProposalState;
-use App\Livewire\Traits\WithMemberProposalAccess;
+use App\Livewire\Traits\WithViewer;
 use App\Models\MemberProposal;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -13,8 +13,8 @@ use Livewire\WithPagination;
 
 new class extends Component
 {
-    use WithMemberProposalAccess;
     use WithPagination;
+    use WithViewer;
 
     /**
      * The sort orders on offer. A whitelist, so nothing a client sends ever
@@ -59,19 +59,19 @@ new class extends Component
     #[Computed]
     public function canView(): bool
     {
-        return $this->viewerCan('viewAny');
+        return $this->viewerCan('viewAny', MemberProposal::class);
     }
 
     #[Computed]
     public function canCreate(): bool
     {
-        return $this->viewerCan('create');
+        return $this->viewerCan('create', MemberProposal::class);
     }
 
     #[Computed]
     public function canModerate(): bool
     {
-        return $this->viewerCan('moderate');
+        return $this->viewerCan('moderate', MemberProposal::class);
     }
 
     /**
@@ -92,7 +92,7 @@ new class extends Component
     #[Computed]
     public function proposals(): LengthAwarePaginator
     {
-        $this->authorizeViewer('viewAny');
+        $this->authorizeViewer('viewAny', MemberProposal::class);
 
         $selected = MemberProposalState::tryFrom($this->stateFilter);
 

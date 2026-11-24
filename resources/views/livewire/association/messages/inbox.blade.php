@@ -1,6 +1,7 @@
 <?php
 
 use App\Jobs\Dm\SendInboxReply;
+use App\Livewire\Traits\WithViewer;
 use App\Models\DmInboxMessage;
 use App\Models\EinundzwanzigPleb;
 use App\Models\MemberProposal;
@@ -26,6 +27,8 @@ new
 #[Title('Posteingang des Vorstands')]
 class extends Component
 {
+    use WithViewer;
+
     private const MAX_REPLY_CHARS = 4000;
 
     private const CONVERSATIONS_SHOWN = 100;
@@ -63,7 +66,7 @@ class extends Component
             return;
         }
 
-        $this->actor();
+        $this->boardActor();
 
         if ($this->contact !== null) {
             $this->open($this->contact);
@@ -72,7 +75,7 @@ class extends Component
 
     public function open(string $contact): void
     {
-        $this->actor();
+        $this->boardActor();
 
         if (! DmInboxMessage::query()->where('counterparty_pubkey', $contact)->exists()) {
             $this->contact = null;
@@ -93,14 +96,14 @@ class extends Component
 
     public function close(): void
     {
-        $this->actor();
+        $this->boardActor();
         $this->contact = null;
         $this->reply = '';
     }
 
     public function send(): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
 
         $this->validate(
             ['reply' => ['required', 'string', 'min:2', 'max:'.self::MAX_REPLY_CHARS]],
@@ -292,14 +295,6 @@ class extends Component
         };
     }
 
-    protected function actor(): EinundzwanzigPleb
-    {
-        $pleb = NostrAuth::user()?->getPleb();
-
-        abort_unless($pleb instanceof EinundzwanzigPleb && ! $pleb->isErased() && $pleb->isBoardMember(), 403);
-
-        return $pleb;
-    }
 };
 ?>
 

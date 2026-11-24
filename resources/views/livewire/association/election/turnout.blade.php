@@ -1,9 +1,8 @@
 <?php
 
 use App\Enums\ElectionRoundState;
-use App\Models\EinundzwanzigPleb;
+use App\Livewire\Traits\WithViewer;
 use App\Models\ElectionRound;
-use App\Support\NostrAuth;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
@@ -18,12 +17,14 @@ use Livewire\Component;
  */
 new class extends Component
 {
+    use WithViewer;
+
     #[Locked]
     public int $roundId;
 
     public function mount(int $roundId): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $this->roundId = $roundId;
     }
@@ -34,7 +35,7 @@ new class extends Component
     #[Computed]
     public function turnout(): array
     {
-        $this->actor();
+        $this->boardActor();
 
         $round = ElectionRound::query()->findOrFail($this->roundId);
 
@@ -52,14 +53,6 @@ new class extends Component
         }
     }
 
-    protected function actor(): EinundzwanzigPleb
-    {
-        $pleb = NostrAuth::user()?->getPleb();
-
-        abort_unless($pleb instanceof EinundzwanzigPleb && ! $pleb->isErased() && $pleb->isBoardMember(), 403);
-
-        return $pleb;
-    }
 };
 ?>
 

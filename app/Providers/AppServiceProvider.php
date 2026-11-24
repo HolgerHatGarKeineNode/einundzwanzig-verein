@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Auth\NostrUser;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
@@ -67,6 +68,12 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Election::class, ElectionPolicy::class);
         Gate::policy(ElectionRound::class, ElectionPolicy::class);
         Gate::policy(ElectionCandidate::class, ElectionPolicy::class);
+
+        // The one board check, asked by the policies and by WithViewer: on the
+        // board list and not erased.
+        Gate::define('board', fn (NostrUser $user): bool => ($pleb = $user->getPleb()) !== null
+            && ! $pleb->isErased()
+            && $pleb->isBoardMember());
 
         RateLimiter::for('api', function (Request $request) {
             return Limit::perMinute(60)->by($request->ip());

@@ -10,6 +10,7 @@ use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
 use App\Models\ElectionRound;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * Who may do what in an election. Registered for `Election`,
@@ -167,7 +168,7 @@ class ElectionPolicy
 
     protected function isBoard(NostrUser $user): bool
     {
-        return $this->pleb($user)?->isBoardMember() === true;
+        return Gate::forUser($user)->allows('board');
     }
 
     /**

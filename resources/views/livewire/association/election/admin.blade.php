@@ -13,6 +13,7 @@ use App\Enums\ElectionTieKind;
 use App\Exceptions\ElectionActionRefusedException;
 use App\Exceptions\ElectionCandidateBlockedException;
 use App\Exceptions\ElectionRoundStateException;
+use App\Livewire\Traits\WithViewer;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionCandidate;
@@ -58,6 +59,8 @@ use Livewire\Component;
  */
 new class extends Component
 {
+    use WithViewer;
+
     private const SECTIONS = ['settings', 'candidacies', 'roll', 'live'];
 
     private const DEFAULT_CLOSE_REASON = 'Abstimmung in der Sitzung beendet.';
@@ -131,7 +134,7 @@ new class extends Component
             return;
         }
 
-        $this->actor();
+        $this->boardActor();
 
         $first = $this->elections->first();
 
@@ -142,7 +145,7 @@ new class extends Component
 
     public function startCreate(): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $this->resetErrorBag();
         $this->creating = true;
@@ -151,7 +154,7 @@ new class extends Component
 
     public function cancelCreate(): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $this->resetErrorBag();
         $this->creating = false;
@@ -161,7 +164,7 @@ new class extends Component
 
     public function selectElection(int $electionId): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $this->creating = false;
         $this->select(Election::query()->findOrFail($electionId));
@@ -169,14 +172,14 @@ new class extends Component
 
     public function showSection(string $section): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $this->section = in_array($section, self::SECTIONS, true) ? $section : 'settings';
     }
 
     public function addRound(): void
     {
-        $this->actor();
+        $this->boardActor();
 
         if (count($this->form['rounds'] ?? []) >= self::MAX_ROUNDS) {
             return;
@@ -187,7 +190,7 @@ new class extends Component
 
     public function removeRound(int $index): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $rounds = $this->form['rounds'] ?? [];
         unset($rounds[$index]);
@@ -196,7 +199,7 @@ new class extends Component
 
     public function save(ElectionSetup $setup): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
 
         $data = $this->validate($this->formRules(), $this->formMessages())['form'];
 
@@ -253,7 +256,7 @@ new class extends Component
 
     public function announce(ElectionStewardship $stewardship): void
     {
-        $election = $stewardship->announce($this->requireSelected(), $this->actor());
+        $election = $stewardship->announce($this->requireSelected(), $this->boardActor());
 
         Flux::modal('announce-election')->close();
         $this->refreshElection($election);
@@ -263,7 +266,7 @@ new class extends Component
     public function deleteElection(ElectionStewardship $stewardship): void
     {
         $election = $this->requireSelected();
-        $stewardship->delete($election, $this->actor());
+        $stewardship->delete($election, $this->boardActor());
 
         Flux::modal('delete-election')->close();
         $this->selectedElectionId = null;
@@ -281,7 +284,7 @@ new class extends Component
 
     public function approve(int $candidateId, Candidacies $candidacies): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
         $candidate = ElectionCandidate::query()->with('pleb.profile')->findOrFail($candidateId);
 
         try {
@@ -306,7 +309,7 @@ new class extends Component
 
     public function startDecision(int $candidateId, string $kind): void
     {
-        $this->actor();
+        $this->boardActor();
 
         ElectionCandidate::query()->findOrFail($candidateId);
 
@@ -320,7 +323,7 @@ new class extends Component
 
     public function confirmDecision(Candidacies $candidacies): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
 
         $this->validate(
             ['decisionReason' => ['required', 'string', 'min:3', 'max:1000']],
@@ -357,7 +360,7 @@ new class extends Component
 
     public function enrol(EnrolByHand $enrolByHand): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
 
         $this->validate(
             [
@@ -401,7 +404,7 @@ new class extends Component
      */
     public function entitle(EnrolByHand $enrolByHand): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
 
         $this->validate(
             [
@@ -446,7 +449,7 @@ new class extends Component
      */
     public function saveMeeting(ElectionSetup $setup): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
 
         $rules = array_intersect_key($this->formRules(), array_flip(['form.meeting_date', 'form.meeting_time', 'form.call_url']));
         $data = $this->validate($rules, $this->formMessages())['form'];
@@ -463,7 +466,7 @@ new class extends Component
      */
     public function startRoundAction(int $roundId, string $kind): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $round = ElectionRound::query()->findOrFail($roundId);
 
@@ -482,7 +485,7 @@ new class extends Component
 
     public function confirmRoundAction(ElectionStewardship $stewardship): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
 
         $round = ElectionRound::query()->findOrFail($this->pendingRoundId ?? abort(404));
         $action = $this->pendingRoundAction ?? 'open';
@@ -542,7 +545,7 @@ new class extends Component
      */
     public function sealRound(int $roundId, ElectionStewardship $stewardship): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
         $round = ElectionRound::query()->findOrFail($roundId);
 
         try {
@@ -564,7 +567,7 @@ new class extends Component
      */
     public function startCastingVote(int $roundId): void
     {
-        $this->actor();
+        $this->boardActor();
         $round = $this->tieRound($roundId);
 
         if ($round === null) {
@@ -584,7 +587,7 @@ new class extends Component
 
     public function recordCastingVote(RecordCastingVote $castingVotes, TallyRound $tally): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
         $round = ElectionRound::query()->findOrFail($this->tieRoundId ?? abort(404));
 
         // The tally refuses a round annulled while the dialog was open, so it
@@ -656,7 +659,7 @@ new class extends Component
      */
     public function startTieRunOff(int $roundId): void
     {
-        $this->actor();
+        $this->boardActor();
         $round = $this->tieRound($roundId);
 
         if ($round === null) {
@@ -673,7 +676,7 @@ new class extends Component
 
     public function confirmTieRunOff(CreateRunOff $runOffs): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
         $round = ElectionRound::query()->findOrFail($this->tieRoundId ?? abort(404));
 
         $this->validate(
@@ -701,7 +704,7 @@ new class extends Component
 
     public function createRunOff(int $roundId, CreateRunOff $runOffs): void
     {
-        $actor = $this->actor();
+        $actor = $this->boardActor();
         $round = ElectionRound::query()->findOrFail($roundId);
 
         try {
@@ -726,7 +729,7 @@ new class extends Component
      */
     public function purgeTestElection(PurgeTestElection $purge): void
     {
-        $this->actor();
+        $this->boardActor();
         $election = $this->requireSelected();
 
         try {
@@ -757,7 +760,7 @@ new class extends Component
     #[On('election-round-changed')]
     public function refreshRounds(): void
     {
-        $this->actor();
+        $this->boardActor();
 
         unset($this->elections, $this->selectedElection, $this->roundReports, $this->openedRounds, $this->rollRound);
     }
@@ -770,7 +773,7 @@ new class extends Component
     #[Computed]
     public function roundReports(): Collection
     {
-        $this->actor();
+        $this->boardActor();
 
         $election = $this->selectedElection;
 
@@ -779,7 +782,7 @@ new class extends Component
 
     public function updatedSection(): void
     {
-        $this->actor();
+        $this->boardActor();
 
         if (! in_array($this->section, self::SECTIONS, true)) {
             $this->section = 'settings';
@@ -794,7 +797,7 @@ new class extends Component
     #[Computed]
     public function elections(): EloquentCollection
     {
-        $this->actor();
+        $this->boardActor();
 
         return Election::query()
             ->with(['rounds' => fn ($rounds) => $rounds->with('candidates:id,election_round_id,status')->withCount('rollEntries')])
@@ -805,7 +808,7 @@ new class extends Component
     #[Computed]
     public function selectedElection(): ?Election
     {
-        $this->actor();
+        $this->boardActor();
 
         return $this->selectedElectionId === null
             ? null
@@ -821,7 +824,7 @@ new class extends Component
     #[Computed]
     public function candidaciesByRound(): Collection
     {
-        $this->actor();
+        $this->boardActor();
 
         $election = $this->selectedElection;
 
@@ -861,7 +864,7 @@ new class extends Component
     #[Computed]
     public function rollPreview(): Collection
     {
-        $this->actor();
+        $this->boardActor();
 
         $election = $this->selectedElection;
 
@@ -896,7 +899,7 @@ new class extends Component
     #[Computed]
     public function openedRounds(): Collection
     {
-        $this->actor();
+        $this->boardActor();
 
         return $this->selectedElection?->rounds->whereNotNull('opened_at')->values() ?? collect();
     }
@@ -904,7 +907,7 @@ new class extends Component
     #[Computed]
     public function rollRound(): ?ElectionRound
     {
-        $this->actor();
+        $this->boardActor();
 
         return $this->openedRounds->firstWhere('id', $this->rollRoundId) ?? $this->openedRounds->last();
     }
@@ -915,7 +918,7 @@ new class extends Component
     #[Computed]
     public function rollEntries(): Collection
     {
-        $this->actor();
+        $this->boardActor();
 
         $round = $this->rollRound;
         $election = $this->selectedElection;
@@ -948,7 +951,7 @@ new class extends Component
     #[Computed]
     public function enrolCandidates(): Collection
     {
-        $this->actor();
+        $this->boardActor();
 
         $round = $this->rollRound;
 
@@ -976,7 +979,7 @@ new class extends Component
     #[Computed]
     public function entitleCandidates(): Collection
     {
-        $this->actor();
+        $this->boardActor();
 
         $election = $this->selectedElection;
 
@@ -1470,7 +1473,7 @@ new class extends Component
     #[Computed]
     public function tie(): ?array
     {
-        $this->actor();
+        $this->boardActor();
 
         $round = $this->tieRoundId === null ? null : ElectionRound::query()->with('candidates.pleb.profile')->find($this->tieRoundId);
 
@@ -1513,18 +1516,6 @@ new class extends Component
             : null;
     }
 
-    /**
-     * The board member behind the session, or 403. Asked on every request,
-     * never remembered on the component.
-     */
-    protected function actor(): EinundzwanzigPleb
-    {
-        $pleb = NostrAuth::user()?->getPleb();
-
-        abort_unless($pleb instanceof EinundzwanzigPleb && ! $pleb->isErased() && $pleb->isBoardMember(), 403);
-
-        return $pleb;
-    }
 
     protected function requireSelected(): Election
     {

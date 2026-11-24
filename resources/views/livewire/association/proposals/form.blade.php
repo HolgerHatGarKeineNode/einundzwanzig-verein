@@ -1,6 +1,6 @@
 <?php
 
-use App\Livewire\Traits\WithMemberProposalAccess;
+use App\Livewire\Traits\WithViewer;
 use App\Models\MemberProposal;
 use App\Support\MarkdownRenderer;
 use Illuminate\Support\Facades\RateLimiter;
@@ -10,7 +10,8 @@ use Livewire\Component;
 
 new class extends Component
 {
-    use WithMemberProposalAccess;
+    use WithViewer;
+
 
     /**
      * The proposal being edited, or null while submitting a new one. Locked:
@@ -31,14 +32,14 @@ new class extends Component
     public function mount(?MemberProposal $memberProposal = null): void
     {
         if ($memberProposal === null || ! $memberProposal->exists) {
-            $this->isAllowed = $this->viewerCan('create');
+            $this->isAllowed = $this->viewerCan('create', MemberProposal::class);
 
             return;
         }
 
         // Somebody who may not even read the proposal learns nothing about
         // it here — not that it exists and not that it is somebody else's.
-        if (! $this->viewerCan('viewAny')) {
+        if (! $this->viewerCan('viewAny', MemberProposal::class)) {
             return;
         }
 
@@ -77,7 +78,7 @@ new class extends Component
             : MemberProposal::query()->findOrFail($this->proposalId);
 
         $proposal === null
-            ? $this->authorizeViewer('create')
+            ? $this->authorizeViewer('create', MemberProposal::class)
             : $this->authorizeViewer('update', $proposal);
 
         if (! RateLimiter::attempt('member-proposal-save:'.$this->viewer()->id, 10, function () {})) {

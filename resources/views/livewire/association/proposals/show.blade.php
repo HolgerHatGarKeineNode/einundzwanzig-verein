@@ -2,7 +2,7 @@
 
 use App\Enums\MemberProposalState;
 use App\Livewire\Traits\ModeratesMemberProposals;
-use App\Livewire\Traits\WithMemberProposalAccess;
+use App\Livewire\Traits\WithViewer;
 use App\Models\MemberProposal;
 use App\Models\MemberProposalComment;
 use App\Models\MemberProposalVote;
@@ -15,7 +15,7 @@ use Livewire\Component;
 new class extends Component
 {
     use ModeratesMemberProposals;
-    use WithMemberProposalAccess;
+    use WithViewer;
 
     /**
      * Only the id is kept on the component. The proposal, the two vote
@@ -34,7 +34,7 @@ new class extends Component
 
         // A viewer outside the membership gets the "members only" notice for
         // every id alike; whether this one exists is not theirs to learn.
-        if (! $this->viewerCan('viewAny')) {
+        if (! $this->viewerCan('viewAny', MemberProposal::class)) {
             return;
         }
 
@@ -44,7 +44,7 @@ new class extends Component
     #[Computed]
     public function canView(): bool
     {
-        return $this->viewerCan('viewAny');
+        return $this->viewerCan('viewAny', MemberProposal::class);
     }
 
     #[Computed]
@@ -109,7 +109,7 @@ new class extends Component
     #[Computed]
     public function canModerate(): bool
     {
-        return $this->viewerCan('moderate');
+        return $this->viewerCan('moderate', MemberProposal::class);
     }
 
     public function vote(string $value): void

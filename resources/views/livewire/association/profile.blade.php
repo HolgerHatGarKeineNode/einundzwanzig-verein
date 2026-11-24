@@ -2,7 +2,7 @@
 
 use App\Livewire\Forms\ApplicationForm;
 use App\Livewire\Forms\ProfileForm;
-use App\Livewire\Traits\GuardsActingPleb;
+use App\Livewire\Traits\WithViewer;
 use App\Models\EinundzwanzigPleb;
 use App\Models\PaymentEvent;
 use App\Services\BtcPayClient;
@@ -21,8 +21,8 @@ use Livewire\Component;
 
 new class extends Component
 {
-    use GuardsActingPleb;
     use NostrFetcherTrait;
+    use WithViewer;
 
     public ApplicationForm $form;
 

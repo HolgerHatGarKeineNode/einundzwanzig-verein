@@ -5,6 +5,7 @@ use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionOutcome;
 use App\Enums\ElectionRoundState;
 use App\Enums\ElectionTieKind;
+use App\Livewire\Traits\WithViewer;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionAuditEntry;
@@ -13,7 +14,6 @@ use App\Models\MemberProposal;
 use App\Services\Election\ElectionAuditLog;
 use App\Services\Election\RoundReport;
 use App\Support\ElectionTieText;
-use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
@@ -32,12 +32,14 @@ use Livewire\Component;
  */
 new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Component
 {
+    use WithViewer;
+
     #[Locked]
     public int $electionId;
 
     public function mount(Election $election): void
     {
-        $this->actor();
+        $this->boardActor();
 
         $this->electionId = (int) $election->id;
     }
@@ -45,7 +47,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
     #[Computed]
     public function election(): Election
     {
-        $this->actor();
+        $this->boardActor();
 
         return Election::query()->findOrFail($this->electionId);
     }
@@ -56,7 +58,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
     #[Computed]
     public function reports(): Collection
     {
-        $this->actor();
+        $this->boardActor();
 
         return app(RoundReport::class)->forElection($this->election);
     }
@@ -67,7 +69,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
     #[Computed]
     public function chain(): array
     {
-        $this->actor();
+        $this->boardActor();
 
         $audit = app(ElectionAuditLog::class);
 
@@ -84,7 +86,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
     #[Computed]
     public function auditLines(): Collection
     {
-        $this->actor();
+        $this->boardActor();
 
         $entries = ElectionAuditEntry::query()->where('election_event_id', $this->electionId)->orderBy('sequence')->get();
         $people = EinundzwanzigPleb::query()
@@ -365,14 +367,6 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
         };
     }
 
-    protected function actor(): EinundzwanzigPleb
-    {
-        $pleb = NostrAuth::user()?->getPleb();
-
-        abort_unless($pleb instanceof EinundzwanzigPleb && ! $pleb->isErased() && $pleb->isBoardMember(), 403);
-
-        return $pleb;
-    }
 };
 ?>
 

@@ -1,8 +1,8 @@
 <?php
 
 use App\Enums\ProjectProposalStatus;
-use App\Livewire\Traits\GuardsActingPleb;
 use App\Livewire\Traits\WithNostrAuth;
+use App\Livewire\Traits\WithViewer;
 use App\Models\EinundzwanzigPleb;
 use App\Models\ProjectProposal;
 use App\Models\Vote;
@@ -20,8 +20,8 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
 new class extends Component
 {
-    use GuardsActingPleb;
     use WithNostrAuth;
+    use WithViewer;
 
     #[Locked]
     public ProjectProposal $projectProposal;
