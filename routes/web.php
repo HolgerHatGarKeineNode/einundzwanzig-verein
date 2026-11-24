@@ -1,71 +1,24 @@
 <?php
 
 use App\Http\Controllers\BtcPayWebhookController;
+use App\Http\Controllers\LogoutController;
+use App\Http\Controllers\MediaController;
 use App\Http\Controllers\Nostr\GetProfiles;
 use App\Http\Controllers\Nostr\ProfileCard;
-use App\Models\EinundzwanzigPleb;
-use App\Support\NostrAuth;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\Session;
-use Illuminate\Support\Facades\Storage;
-use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
 Route::redirect('/', '/association/profile');
 
-Route::get('dl/{media}', function (Media $media, Request $request) {
-    return Storage::disk($media->disk)->download(
-        $media->getPathRelativeToRoot(),
-        $media->file_name
-    );
-})
+Route::get('dl/{media}', [MediaController::class, 'download'])
     ->whereNumber('media')
     ->name('dl')
     ->middleware('signed');
 
-/*
- * Images embedded in project descriptions. Public and without a signature,
- * because the URL is written into the Markdown and has to outlive any expiry.
- * The collection only ever holds WebP files re-encoded on upload.
- */
-Route::get('description-images/{uuid}', function (string $uuid) {
-    $media = Media::query()
-        ->where('uuid', $uuid)
-        ->where('collection_name', EinundzwanzigPleb::DESCRIPTION_IMAGES)
-        ->where('mime_type', 'image/webp')
-        ->firstOrFail();
-
-    return Storage::disk($media->disk)->response(
-        $media->getPathRelativeToRoot(),
-        null,
-        [
-            'Content-Type' => 'image/webp',
-            'Cache-Control' => 'public, max-age=31536000, immutable',
-            'X-Content-Type-Options' => 'nosniff',
-        ]
-    );
-})
+Route::get('description-images/{uuid}', [MediaController::class, 'descriptionImage'])
     ->whereUuid('uuid')
     ->name('description-image');
 
-Route::get('media/{media}', function (Media $media, Request $request) {
-    $conversion = $request->query('conversion');
-
-    if ($conversion && $media->hasGeneratedConversion($conversion)) {
-        $path = $media->getPathRelativeToRoot($conversion);
-    } else {
-        $path = $media->getPathRelativeToRoot();
-    }
-
-    return Storage::disk($media->disk)->response(
-        $path,
-        $media->file_name,
-        [
-            'Content-Type' => $media->mime_type,
-            'Cache-Control' => 'private, max-age=3600',
-        ]
-    );
-})
+Route::get('media/{media}', [MediaController::class, 'show'])
     ->whereNumber('media')
     ->name('media.signed')
     ->middleware('signed');
@@ -95,12 +48,7 @@ Route::get('association/nostr-profile/{pubkey}', ProfileCard::class)
     ->middleware('throttle:nostr-profiles')
     ->name('nostr.profile-card');
 
-Route::post('logout', function () {
-    NostrAuth::logout();
-    Session::flush();
-
-    return redirect('/');
-})->name('logout');
+Route::post('logout', LogoutController::class)->name('logout');
 
 // Association Routes
 Route::livewire('/association/profile', 'association.profile')->name('association.profile');

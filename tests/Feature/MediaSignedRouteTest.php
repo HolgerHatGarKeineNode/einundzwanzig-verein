@@ -117,3 +117,21 @@ it('keeps the signed url the same within its window, so the browser can cache th
 
     $this->get($next)->assertOk();
 });
+
+it('downloads the original file under its name via the signed dl route', function () {
+    Storage::fake('private');
+
+    $project = ProjectProposal::factory()->create();
+
+    $project->addMedia(
+        UploadedFile::fake()->image('report.jpg', 100, 100)
+    )->toMediaCollection('main');
+
+    $media = $project->getFirstMedia('main');
+
+    $this->get(url()->temporarySignedRoute('dl', now()->addMinutes(5), ['media' => $media]))
+        ->assertSuccessful()
+        ->assertDownload('report.jpg');
+
+    $this->get(route('dl', ['media' => $media]))->assertForbidden();
+});
