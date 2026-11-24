@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\ElectionPhase;
 use App\Models\Election;
 use App\Models\ElectionRound;
 use App\Support\NostrAuth;
@@ -8,27 +9,14 @@ use Livewire\Livewire;
 require_once __DIR__.'/../Services/Election/helpers.php';
 
 /*
- * The phase of an election as the members' page and the board's page read
- * it. Characterisation first: both pages carried their own rule, and these
- * cases pin what each of them answered.
+ * The phase of an election. The members' page and the board's page each
+ * carried their own rule until 2026-11-24; they disagreed on two cases,
+ * marked below. One rule now: "result" needs an opened round (the board's
+ * reading), an announced election without an office is "announced" (the
+ * members' reading, pinned in IndexTest). The members' page reads the
+ * rounds alone, so the board can rehearse an unannounced test election
+ * there; the board's run sheet calls such an election a draft.
  */
-
-/**
- * @return array{member: string, board: int}
- */
-function phasesOnBothPages(Election $election): array
-{
-    [$board] = electionBoard(1);
-    NostrAuth::login($board->pubkey);
-
-    $call = function (string $component) use ($election): mixed {
-        $instance = Livewire::test($component)->instance();
-
-        return (new ReflectionMethod($instance, 'phaseOf'))->invoke($instance, $election->fresh());
-    };
-
-    return ['member' => $call('association.election.index'), 'board' => $call('association.election.admin')];
-}
 
 /**
  * @param  array<string, mixed>  $state
@@ -41,54 +29,87 @@ function roundIn(Election $election, array $state = [], ?int $parent = null): El
     return $round;
 }
 
-it('answers per page as before', function (Closure $build, string $member, int $board) {
-    expect(phasesOnBothPages($build()))->toBe(['member' => $member, 'board' => $board]);
-})->with([
-    'not announced, no round' => [fn () => Election::factory()->test()->create(), 'announced', 0],
+dataset('election phases', [
+    'not announced, no round' => [fn () => Election::factory()->test()->create(), ElectionPhase::Announced, ElectionPhase::Draft],
     'not announced, a draft round' => [function () {
         $election = Election::factory()->test()->create();
         roundIn($election);
 
         return $election;
-    }, 'candidacy', 0],
-    // The two cases the pages disagree on: this one and the last.
-    'announced, no round' => [fn () => Election::factory()->announced()->create(), 'announced', 2],
+    }, ElectionPhase::Candidacy, ElectionPhase::Draft],
+    'not announced, a round opened' => [function () {
+        $election = Election::factory()->test()->create();
+        roundIn($election, ['opened_at' => now()]);
+
+        return $election;
+    }, ElectionPhase::Meeting, ElectionPhase::Meeting],
+    // Was: board "candidacy".
+    'announced, no round' => [fn () => Election::factory()->announced()->create(), ElectionPhase::Announced, ElectionPhase::Announced],
     'announced, a draft round' => [function () {
         $election = Election::factory()->announced()->create();
         roundIn($election);
 
         return $election;
-    }, 'candidacy', 2],
+    }, ElectionPhase::Candidacy, ElectionPhase::Candidacy],
     'announced, a round opened' => [function () {
         $election = Election::factory()->announced()->create();
         roundIn($election, ['opened_at' => now()]);
         roundIn($election);
 
         return $election;
-    }, 'meeting', 3],
+    }, ElectionPhase::Meeting, ElectionPhase::Meeting],
     'announced, every round closed' => [function () {
         $election = Election::factory()->announced()->create();
         roundIn($election, ['opened_at' => now()->subHour(), 'closed_at' => now()]);
 
         return $election;
-    }, 'result', 4],
+    }, ElectionPhase::Result, ElectionPhase::Result],
     'announced, one round closed and one struck' => [function () {
         $election = Election::factory()->announced()->create();
         roundIn($election, ['opened_at' => now()->subHour(), 'closed_at' => now()]);
         roundIn($election, ['annulled_at' => now()]);
 
         return $election;
-    }, 'result', 4],
+    }, ElectionPhase::Result, ElectionPhase::Result],
     'announced, the only round annulled after opening' => [function () {
         $election = Election::factory()->announced()->create();
         roundIn($election, ['opened_at' => now()->subHour(), 'annulled_at' => now()]);
 
         return $election;
-    }, 'result', 4],
+    }, ElectionPhase::Result, ElectionPhase::Result],
+    // Was: members "result".
     'announced, the only round struck before the meeting' => [function () {
         $election = Election::factory()->announced()->create();
         roundIn($election, ['annulled_at' => now()]);
 
         return $election;
-    }, 'result', 2],
+    }, ElectionPhase::Candidacy, ElectionPhase::Candidacy],
 ]);
+
+it('derives one phase from the rounds and the announcement', function (Closure $build, ElectionPhase $byRounds, ElectionPhase $runSheet) {
+    $election = $build()->fresh();
+
+    expect($election->phaseOfRounds())->toBe($byRounds)
+        ->and($election->phase())->toBe($runSheet);
+})->with('election phases');
+
+it('reads the same phase with the rounds loaded or not', function (Closure $build, ElectionPhase $byRounds, ElectionPhase $runSheet) {
+    $election = $build()->fresh()->load('rounds');
+
+    expect($election->phaseOfRounds())->toBe($byRounds)
+        ->and($election->phase())->toBe($runSheet);
+})->with('election phases');
+
+it('shows members the phase by rounds and the board its run sheet', function (Closure $build, ElectionPhase $byRounds, ElectionPhase $runSheet) {
+    $election = $build();
+    [$board] = electionBoard(1);
+    NostrAuth::login($board->pubkey);
+
+    $member = Livewire::test('association.election.index', ['electionId' => $election->id]);
+    $stations = Livewire::test('association.election.admin')->instance();
+    $current = collect((new ReflectionMethod($stations, 'stationsOf'))->invoke($stations, $election->fresh()))
+        ->search(fn (array $station): bool => $station['state'] === 'current');
+
+    expect($member->instance()->phase)->toBe($byRounds->value)
+        ->and($current)->toBe($runSheet->step());
+})->with('election phases');

@@ -5,6 +5,7 @@ use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionFeeRule;
 use App\Enums\ElectionOutcome;
+use App\Enums\ElectionPhase;
 use App\Enums\ElectionRollReason;
 use App\Enums\ElectionRollSource;
 use App\Enums\ElectionRoundState;
@@ -1010,7 +1011,7 @@ new class extends Component
      */
     protected function stationsOf(Election $election): array
     {
-        $phase = $this->phaseOf($election);
+        $phase = $election->phase()->step();
         $labels = [
             [__('Entwurf'), __('angelegt :date', ['date' => $this->shortDate($election->created_at)])],
             [__('Angekündigt'), $election->announced_at === null ? __('noch nicht') : $this->shortDate($election->announced_at)],
@@ -1047,9 +1048,9 @@ new class extends Component
     {
         // A struck round is void: it holds no step.
         $rounds = $election->rounds->whereNull('parent_round_id')->whereNull('annulled_at');
-        $phase = $this->phaseOf($election);
+        $phase = $election->phase();
 
-        if ($phase === 0) {
+        if ($phase === ElectionPhase::Draft) {
             if ($rounds->isEmpty()) {
                 return $this->step(__('Lege mindestens einen Wahlgang an.'), __('Ohne Wahlgang lässt sich die Wahl nicht ankündigen.'), action: 'settings', label: __('Wahlgang anlegen'));
             }
@@ -1068,7 +1069,7 @@ new class extends Component
             );
         }
 
-        if ($phase === 2) {
+        if ($phase === ElectionPhase::Candidacy) {
             $pending = $rounds->sum(fn (ElectionRound $round): int => $round->candidates->where('status', ElectionCandidateStatus::Pending)->count());
 
             if ($pending > 0) {
@@ -1576,17 +1577,6 @@ new class extends Component
         return app(ElectionStewardship::class)->awaitsRepeat($round);
     }
 
-    protected function phaseOf(Election $election): int
-    {
-        $rounds = $election->rounds;
-
-        if ($rounds->whereNotNull('opened_at')->isNotEmpty()) {
-            return $rounds->every(fn (ElectionRound $round): bool => $round->closed_at !== null || $round->annulled_at !== null) ? 4 : 3;
-        }
-
-        return $election->announced_at === null ? 0 : 2;
-    }
-
     protected function signedInSinceAnnouncement(Election $election, EinundzwanzigPleb $pleb): ?CarbonInterface
     {
         return $election->announced_at !== null && $pleb->last_login_at !== null && $pleb->last_login_at->gte($election->announced_at)
@@ -1623,7 +1613,7 @@ new class extends Component
         $step = $this->nextStepOf($current);
         $this->section = match (true) {
             $step['action'] === 'candidacies' => 'candidacies',
-            $step['click'] !== null || $this->phaseOf($current) >= 3 => 'live',
+            $step['click'] !== null || $current->phase()->step() >= ElectionPhase::Meeting->step() => 'live',
             default => 'settings',
         };
     }

@@ -3,11 +3,13 @@
 namespace App\Models;
 
 use App\Enums\ElectionFeeRule;
+use App\Enums\ElectionPhase;
 use App\Exceptions\ElectionRoundStateException;
 use Database\Factories\ElectionFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Collection;
 
 /**
  * An election of the association and the fee rule of its electoral roll.
@@ -116,6 +118,45 @@ class Election extends Model
             ->whereHas('rounds', fn ($rounds) => $rounds->whereNull('closed_at')->whereNull('annulled_at'))
             ->orderByDesc('announced_at')
             ->first();
+    }
+
+    /**
+     * Where the election stands, as the board's run sheet reads it: a draft
+     * until announced, unless a round has already been opened.
+     */
+    public function phase(): ElectionPhase
+    {
+        $phase = $this->phaseOfRounds();
+
+        return $this->announced_at === null && $phase->step() < ElectionPhase::Meeting->step()
+            ? ElectionPhase::Draft
+            : $phase;
+    }
+
+    /**
+     * Where the election stands by its rounds alone, the announcement left
+     * aside — what the members' page shows, and what the board sees there
+     * when it rehearses a test election before announcing it.
+     *
+     * "Result" needs an opened round: an election whose rounds were all
+     * struck before the meeting never ran and stays in its candidacy phase.
+     */
+    public function phaseOfRounds(): ElectionPhase
+    {
+        /** @var Collection<int, ElectionRound> $rounds */
+        $rounds = $this->relationLoaded('rounds') ? $this->rounds : $this->rounds()->get();
+
+        if ($rounds->isEmpty()) {
+            return ElectionPhase::Announced;
+        }
+
+        if ($rounds->contains(fn (ElectionRound $round): bool => $round->opened_at !== null)) {
+            return $rounds->every(fn (ElectionRound $round): bool => $round->closed_at !== null || $round->annulled_at !== null)
+                ? ElectionPhase::Result
+                : ElectionPhase::Meeting;
+        }
+
+        return ElectionPhase::Candidacy;
     }
 
     /**

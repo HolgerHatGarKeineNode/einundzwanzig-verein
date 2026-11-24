@@ -5,6 +5,7 @@ use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionCountingRule;
 use App\Enums\ElectionFeeRule;
 use App\Enums\ElectionOutcome;
+use App\Enums\ElectionPhase;
 use App\Enums\ElectionRoundState;
 use App\Exceptions\ElectionBallotRefusedException;
 use App\Exceptions\ElectionBallotWriteException;
@@ -144,9 +145,9 @@ new class extends Component
         $real = $elections->reject(fn (Election $election): bool => $election->is_test);
 
         return $elections->firstWhere('id', $this->electionId)
-            ?? $real->first(fn (Election $election): bool => $this->phaseOf($election) !== 'result')
+            ?? $real->first(fn (Election $election): bool => $election->phaseOfRounds() !== ElectionPhase::Result)
             ?? $real->first()
-            ?? $elections->first(fn (Election $election): bool => $this->phaseOf($election) !== 'result')
+            ?? $elections->first(fn (Election $election): bool => $election->phaseOfRounds() !== ElectionPhase::Result)
             ?? $elections->first();
     }
 
@@ -172,32 +173,10 @@ new class extends Component
             ->get();
     }
 
-    protected function phaseOf(Election $election): string
-    {
-        $rounds = $election->rounds()->get();
-        $now = now();
-
-        if ($rounds->isEmpty()) {
-            return 'announced';
-        }
-
-        if ($rounds->every(fn (ElectionRound $round): bool => $round->closed_at !== null || $round->annulled_at !== null)) {
-            return 'result';
-        }
-
-        if ($rounds->contains(fn (ElectionRound $round): bool => $round->opened_at !== null)) {
-            return 'meeting';
-        }
-
-        return $rounds->contains(fn (ElectionRound $round): bool => $round->parent_round_id === null && $round->stateAt($now) === ElectionRoundState::Draft)
-            ? 'candidacy'
-            : 'announced';
-    }
-
     #[Computed]
     public function phase(): string
     {
-        return $this->election === null ? 'none' : $this->phaseOf($this->election);
+        return $this->election?->phaseOfRounds()->value ?? 'none';
     }
 
     /**
