@@ -86,7 +86,7 @@ it('answers 403 on every public method to a member who is not, or no longer, on 
         ['electionId' => $election->id, 'candidateId' => $candidate->id, 'roundId' => $round->id, 'section' => 'roll', 'kind' => 'reject'],
     );
 
-    // The round actions live in admin-live and are checked in AdminLiveControlTest.
+    // The round actions live in admin-live and are checked in AdminLiveTest.
     expect($methods)->toContain('announce', 'electionCreated', 'deleteElection', 'elections', 'purgeTestElection', 'selectElection', 'showSection', 'refreshRounds');
 
     expect($candidate->fresh()->status)->toBe(ElectionCandidateStatus::Pending)
