@@ -80,10 +80,13 @@ it('shows each entitled member with the reason and who signed in since the annou
         ->assertSee('Ja, '.now()->subDay()->setTimezone(config('app.display_timezone'))->format('d.m.Y'))
         ->assertSee('Beitrag '.now()->year.' fehlt');
 
-    // The page shows the same roll in its tab.
+    // The page keeps the roll mounted on every tab and shows it on its own
+    // (in the browser: election-board.spec.js, the cash payer on the roll tab).
     Livewire::test('association.election.admin')
-        ->call('showSection', 'roll')
-        ->assertSee('3 von 4 Aktiv- und Ehrenmitgliedern sind wahlberechtigt.');
+        ->assertSeeLivewire('association.election.admin-roll')
+        ->assertDontSee('3 von 4 Aktiv- und Ehrenmitgliedern sind wahlberechtigt.');
+    Livewire::test('association.election.admin-roll', ['electionId' => $election->id, 'visible' => false])
+        ->assertDontSee('3 von 4 Aktiv- und Ehrenmitgliedern sind wahlberechtigt.');
 });
 
 it('enrols a member by hand in an open round with a reason and tells the page', function () {

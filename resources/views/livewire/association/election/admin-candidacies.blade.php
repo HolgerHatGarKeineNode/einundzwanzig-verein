@@ -14,6 +14,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
+use Livewire\Attributes\Reactive;
 use Livewire\Component;
 
 /**
@@ -39,6 +40,14 @@ new class extends Component
     public ?string $decisionKind = null;
 
     public string $decisionReason = '';
+
+    /**
+     * Whether the tab is open. The page keeps this tab mounted while another
+     * one is open, so a reason being written survives a look at another tab, as it did when
+     * the state lived on the page; hidden, it renders nothing.
+     */
+    #[Reactive]
+    public bool $visible = true;
 
     public function mount(int $electionId): void
     {
@@ -182,6 +191,8 @@ new class extends Component
 };
 ?>
 
+<div>
+@if ($visible)
 @php
     $election = $this->election;
     $statusWords = [
@@ -303,4 +314,6 @@ new class extends Component
             </div>
         </form>
     </flux:modal>
+</div>
+@endif
 </div>

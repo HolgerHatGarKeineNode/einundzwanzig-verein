@@ -357,17 +357,16 @@ new class extends Component
                         </nav>
 
                         <div class="pt-8" data-test="work-area">
-                            @if ($section === 'settings')
-                                @if ($creating)
+                            {{-- The tabs stay mounted, hidden, so what is being typed into one outlives a tab switch. --}}
+                            @if ($creating)
+                                @if ($section === 'settings')
                                     <p class="text-base text-text-secondary">{{ __('Speichert zuerst die neue Wahl oder brecht sie ab.') }}</p>
-                                @else
-                                    <livewire:association.election.admin-form :election-id="$item->id" :key="'settings-'.$item->id.($item->announced_at === null ? '' : '-announced')" />
                                 @endif
-                            @elseif ($section === 'candidacies')
-                                <livewire:association.election.admin-candidacies :election-id="$item->id" :key="'candidacies-'.$item->id" />
-                            @elseif ($section === 'roll')
-                                <livewire:association.election.admin-roll :election-id="$item->id" :key="'roll-'.$item->id" />
+                            @else
+                                <livewire:association.election.admin-form :election-id="$item->id" :visible="$section === 'settings'" :key="'settings-'.$item->id.($item->announced_at === null ? '' : '-announced')" />
                             @endif
+                            <livewire:association.election.admin-candidacies :election-id="$item->id" :visible="$section === 'candidacies'" :key="'candidacies-'.$item->id" />
+                            <livewire:association.election.admin-roll :election-id="$item->id" :visible="$section === 'roll'" :key="'roll-'.$item->id" />
                             {{-- On every tab: the run sheet takes its round steps through its dialogs. --}}
                             <livewire:association.election.admin-live :election-id="$item->id" :visible="$section === 'live'" :key="'live-'.$item->id" />
                         </div>

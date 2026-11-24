@@ -19,6 +19,7 @@ use Flux\Flux;
 use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
+use Livewire\Attributes\Reactive;
 use Livewire\Component;
 
 /**
@@ -47,6 +48,14 @@ new class extends Component
     public ?int $entitleMemberId = null;
 
     public string $entitleReason = '';
+
+    /**
+     * Whether the tab is open. The page keeps this tab mounted while another
+     * one is open, so a half-filled entry survives a look at another tab, as it did when
+     * the state lived on the page; hidden, it renders nothing.
+     */
+    #[Reactive]
+    public bool $visible = true;
 
     public function mount(int $electionId): void
     {
@@ -308,6 +317,8 @@ new class extends Component
 };
 ?>
 
+<div>
+@if ($visible)
 @php
     $election = $this->election;
     $opened = $this->openedRounds;
@@ -452,4 +463,6 @@ new class extends Component
             <flux:button type="submit" class="min-h-11 w-full sm:w-auto" data-test="entitle-submit">{{ __('Als wahlberechtigt eintragen') }}</flux:button>
         </form>
     @endif
+</div>
+@endif
 </div>

@@ -15,6 +15,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
+use Livewire\Attributes\Reactive;
 use Livewire\Component;
 
 /**
@@ -40,6 +41,14 @@ new class extends Component
      * @var array{name: string, meeting_date: string, meeting_time: string, call_url: string, fee_rule: string, fee_year: int|string|null, honorary_without_fee: bool, is_test: bool, rounds: list<array{id: int|null, title: string, seats: int|string, counting_rule: string}>}|array{}
      */
     public array $form = [];
+
+    /**
+     * Whether the tab is open. The page keeps this tab mounted while another
+     * one is open, so an unsaved edit survives a look at another tab, as it did when
+     * the state lived on the page; hidden, it renders nothing.
+     */
+    #[Reactive]
+    public bool $visible = true;
 
     public function mount(?int $electionId = null): void
     {
@@ -276,6 +285,8 @@ new class extends Component
 };
 ?>
 
+<div>
+@if ($visible)
 @php
     $isNew = $electionId === null;
     $editedElection = $this->election;
@@ -434,3 +445,5 @@ new class extends Component
         </div>
     @endif
 </form>
+@endif
+</div>
