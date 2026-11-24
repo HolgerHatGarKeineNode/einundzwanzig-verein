@@ -81,13 +81,13 @@ class extends Component
     }
 
     #[Computed]
-    public function filteredNews(): Collection|array
+    public function filteredNews(): Collection
     {
         if ($this->selectedCategory === null) {
             return $this->news;
         }
 
-        return collect($this->news)->filter(
+        return $this->news->filter(
             fn ($item) => $item->category->value === $this->selectedCategory
         );
     }
