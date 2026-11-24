@@ -2,8 +2,12 @@
 
 use App\Enums\AssociationStatus;
 use App\Models\EinundzwanzigPleb;
+use App\Services\Nostr\Nip05Directory;
+use App\Services\Nostr\Nip05Status;
 use App\Support\NostrAuth;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
 
 it('shows the locked state with all services for guests', function () {
@@ -116,6 +120,7 @@ it('refuses the reserved NIP-05 name on the benefits screen', function () {
 });
 
 it('saves a well-formed handle on the benefits screen', function () {
+    Http::fake(['einundzwanzig.space/.well-known/*' => Http::response(['names' => []])]);
     $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create();
     NostrAuth::login($pleb->pubkey);
 
@@ -125,6 +130,26 @@ it('saves a well-formed handle on the benefits screen', function () {
         ->assertHasNoErrors();
 
     expect($pleb->fresh()->nip05_handle)->toBe('alice_bob');
+});
+
+it('reads the directory past its cache right after a handle was saved', function () {
+    $pleb = EinundzwanzigPleb::factory()->active()->withPaidCurrentYear()->create(['nip05_handle' => 'alice']);
+    NostrAuth::login($pleb->pubkey);
+    // Mount reads the published directory; after the save the rebuilt one lists the new handle too.
+    Http::fakeSequence('einundzwanzig.space/.well-known/*')
+        ->push(['names' => ['alice' => $pleb->pubkey]])
+        ->push(['names' => ['alice' => $pleb->pubkey, 'alice_new' => $pleb->pubkey]]);
+
+    $component = Livewire::test('association.benefits');
+
+    expect($component->get('nip05')->handles)->toBe(['alice']);
+
+    $component->set('nip05Handle', 'alice_new')->call('saveNip05Handle')->assertHasNoErrors();
+
+    expect($component->get('nip05'))->toEqual(Nip05Status::of('alice_new', ['alice', 'alice_new']))
+        ->and(Cache::get(Nip05Directory::CACHE_KEY))->toHaveKey('alice_new');
+    $component->assertSee('Du hast 2 aktive Handles für deinen Pubkey.');
+    Http::assertSentCount(2);
 });
 
 /*

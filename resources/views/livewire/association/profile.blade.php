@@ -7,9 +7,10 @@ use App\Models\EinundzwanzigPleb;
 use App\Models\PaymentEvent;
 use App\Services\BtcPayClient;
 use App\Services\MembershipService;
+use App\Services\Nostr\Nip05Directory;
+use App\Services\Nostr\Nip05Status;
 use App\Services\Nostr\RelayTransport;
 use App\Support\NostrAuth;
-use App\Traits\NostrFetcherTrait;
 use Carbon\Carbon;
 use Flux\Flux;
 use Illuminate\Support\Facades\Artisan;
@@ -21,7 +22,6 @@ use Livewire\Component;
 
 new class extends Component
 {
-    use NostrFetcherTrait;
     use WithViewer;
 
     public ApplicationForm $form;
@@ -35,16 +35,7 @@ new class extends Component
     public string $fax = '';
 
     #[Locked]
-    public bool $nip05Verified = false;
-
-    #[Locked]
-    public ?string $nip05VerifiedHandle = null;
-
-    #[Locked]
-    public bool $nip05HandleMismatch = false;
-
-    #[Locked]
-    public array $nip05VerifiedHandles = [];
+    public Nip05Status $nip05;
 
     #[Locked]
     public array $yearsPaid = [];
@@ -102,8 +93,10 @@ new class extends Component
         'nostrLoggedOut' => 'handleNostrLoggedOut',
     ];
 
-    public function mount(): void
+    public function mount(Nip05Directory $nip05Directory): void
     {
+        $this->nip05 = Nip05Status::none();
+
         if (! NostrAuth::check()) {
             return;
         }
@@ -123,18 +116,7 @@ new class extends Component
         $this->profileForm->setPleb($this->currentPleb);
         $this->form->setPleb($this->currentPleb);
 
-        if ($this->currentPleb->nip05_handle) {
-            $this->nip05VerifiedHandles = $this->getNip05HandlesForPubkey($this->currentPubkey);
-
-            if (count($this->nip05VerifiedHandles) > 0) {
-                $this->nip05Verified = true;
-                $this->nip05VerifiedHandle = $this->nip05VerifiedHandles[0];
-
-                if (! in_array($this->profileForm->nip05Handle, $this->nip05VerifiedHandles, true)) {
-                    $this->nip05HandleMismatch = true;
-                }
-            }
-        }
+        $this->nip05 = $nip05Directory->statusFor($this->currentPubkey, $this->currentPleb->nip05_handle);
         $this->no = $this->currentPleb->no_email;
         $this->showEmail = ! $this->no;
         $this->amountToPay = $this->membership()->fee();
@@ -213,26 +195,13 @@ new class extends Component
         $this->profileForm->saveEmail();
     }
 
-    public function saveNip05Handle(): void
+    public function saveNip05Handle(Nip05Directory $nip05Directory): void
     {
         $this->profileForm->currentPleb = $this->actingPleb();
         $this->profileForm->saveNip05Handle();
 
-        // Refresh NIP-05 verification status after saving
-        if ($this->currentPleb->nip05_handle) {
-            $this->nip05VerifiedHandles = $this->getNip05HandlesForPubkey($this->currentPubkey);
-
-            if (count($this->nip05VerifiedHandles) > 0) {
-                $this->nip05Verified = true;
-                $this->nip05VerifiedHandle = $this->nip05VerifiedHandles[0];
-
-                if (! in_array($this->profileForm->nip05Handle, $this->nip05VerifiedHandles, true)) {
-                    $this->nip05HandleMismatch = true;
-                } else {
-                    $this->nip05HandleMismatch = false;
-                }
-            }
-        }
+        // The page's pleb is the one from mount; the form holds the handle just stored.
+        $this->nip05 = $nip05Directory->statusFor($this->currentPubkey, $this->profileForm->nip05Handle, fresh: true);
     }
 
     public function pay($comment): mixed

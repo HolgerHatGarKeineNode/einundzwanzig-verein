@@ -146,9 +146,10 @@ pest()->tia()
 | swentel\nostr\Relay\Relay opens its own WebSocket and never touches this
 | facade, which is why phpunit.xml blanks the relay URLs instead. The second is
 | a call site that swallows the exception — StrayRequestException is a
-| RuntimeException, so the catch(Throwable) in ReconcileBtcPayInvoices and the
-| catch(\Exception) in NostrFetcherTrait turn a refused request back into the
-| empty result they return for a failed one, and the test stays green. That is
+| RuntimeException, so the catch(Throwable) in ReconcileBtcPayInvoices (and the
+| catch(\Exception) the NIP-05 lookup had before Nip05Directory, which catches
+| only ConnectionException) turn a refused request back into the empty result
+| they return for a failed one, and the test stays green. That is
 | not theoretical: three profile tests were fetching the association's
 | nostr.json for real, and the guard alone would not have exposed a single one
 | of them (see the beforeEach in

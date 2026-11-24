@@ -2,15 +2,15 @@
 
 use App\Livewire\Traits\WithViewer;
 use App\Models\EinundzwanzigPleb;
+use App\Services\Nostr\Nip05Directory;
+use App\Services\Nostr\Nip05Status;
 use App\Support\NostrAuth;
-use App\Traits\NostrFetcherTrait;
 use Flux\Flux;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
 
 new class extends Component
 {
-    use NostrFetcherTrait;
     use WithViewer;
 
     #[Locked]
@@ -25,23 +25,16 @@ new class extends Component
     public ?string $nip05Handle = '';
 
     #[Locked]
-    public bool $nip05Verified = false;
-
-    #[Locked]
-    public ?string $nip05VerifiedHandle = null;
-
-    #[Locked]
-    public bool $nip05HandleMismatch = false;
-
-    #[Locked]
-    public array $nip05VerifiedHandles = [];
+    public Nip05Status $nip05;
 
     protected $listeners = [
         'nostrLoggedOut' => 'handleNostrLoggedOut',
     ];
 
-    public function mount(): void
+    public function mount(Nip05Directory $nip05Directory): void
     {
+        $this->nip05 = Nip05Status::none();
+
         if (NostrAuth::check()) {
             $this->currentPubkey = NostrAuth::pubkey();
             $this->currentPleb = EinundzwanzigPleb::query()
@@ -50,19 +43,7 @@ new class extends Component
             if ($this->currentPleb) {
                 if ($this->currentPleb->nip05_handle) {
                     $this->nip05Handle = $this->currentPleb->nip05_handle;
-
-                    // Get all NIP-05 handles for current pubkey
-                    $this->nip05VerifiedHandles = $this->getNip05HandlesForPubkey($this->currentPubkey);
-
-                    if (count($this->nip05VerifiedHandles) > 0) {
-                        $this->nip05Verified = true;
-                        $this->nip05VerifiedHandle = $this->nip05VerifiedHandles[0];
-
-                        // Check if verified handle differs from database handle
-                        if (! in_array($this->nip05Handle, $this->nip05VerifiedHandles, true)) {
-                            $this->nip05HandleMismatch = true;
-                        }
-                    }
+                    $this->nip05 = $nip05Directory->statusFor($this->currentPubkey, $this->nip05Handle);
                 }
 
                 // Every paying member: Passiv, Aktiv or Ehrenmitglied with this year's fee paid.
@@ -76,7 +57,7 @@ new class extends Component
         $this->nip05Handle = strtolower($this->nip05Handle);
     }
 
-    public function saveNip05Handle(): void
+    public function saveNip05Handle(Nip05Directory $nip05Directory): void
     {
         /*
          * Regeln aus dem Model, damit dieser Weg, ProfileForm und die API
@@ -95,13 +76,10 @@ new class extends Component
         $this->actingPleb()->update([
             'nip05_handle' => $nip05Handle,
         ]);
+        $this->nip05Handle = $nip05Handle;
+        $this->nip05 = $nip05Directory->statusFor($this->currentPubkey, $nip05Handle, fresh: true);
         Flux::toast('NIP-05 Handle gespeichert.');
     }
-
-
-
-
-
 
     public function handleNostrLoggedOut(): void
     {
@@ -109,10 +87,7 @@ new class extends Component
         $this->currentPubkey = null;
         $this->currentYearIsPaid = false;
         $this->nip05Handle = '';
-        $this->nip05Verified = false;
-        $this->nip05VerifiedHandle = null;
-        $this->nip05HandleMismatch = false;
-        $this->nip05VerifiedHandles = [];
+        $this->nip05 = Nip05Status::none();
     }
 }
 ?>
@@ -177,14 +152,14 @@ new class extends Component
         <x-benefit-item icon="check-badge" title="NIP-05 Verifizierung" :active="$isPayingMember"
                         description="Verifiziere deine Identität mit einem menschenlesbaren Nostr-Namen.">
             @if($isPayingMember)
-                @php($nip05DisplayHandle = $nip05VerifiedHandle ?: $nip05Handle)
+                @php($nip05DisplayHandle = $nip05->verifiedHandle ?: $nip05Handle)
                 <p class="flex flex-wrap items-center gap-2 text-base text-text-primary">
                     <span class="break-all">
                         @if($nip05DisplayHandle){{ $nip05DisplayHandle }}@einundzwanzig.space
                         @else Noch kein Handle – unten einrichten
                         @endif
                     </span>
-                    @if($nip05Verified)
+                    @if($nip05->verified)
                         <flux:badge color="green" size="sm" icon="check">OK</flux:badge>
                     @elseif($nip05Handle)
                         <flux:badge color="amber" size="sm" icon="clock">Wartet</flux:badge>
@@ -206,11 +181,11 @@ new class extends Component
                         Speichern
                     </flux:button>
 
-                    @if($nip05Verified)
+                    @if($nip05->verified)
                         <flux:callout variant="success" icon="check-circle">
                             <flux:callout.text>
-                                Du hast {{ count($nip05VerifiedHandles) }} aktive Handles für deinen Pubkey.
-                                @if($nip05HandleMismatch)
+                                Du hast {{ count($nip05->handles) }} aktive Handles für deinen Pubkey.
+                                @if($nip05->mismatch)
                                     Die Synchronisation zu
                                     <strong class="break-all">{{ $nip05Handle }}@einundzwanzig.space</strong>
                                     läuft automatisch im Hintergrund.
@@ -221,7 +196,7 @@ new class extends Component
                         <div class="rounded-lg border border-border-default p-4">
                             <p class="mb-2 text-sm font-semibold text-text-secondary">Deine aktivierten Handles:</p>
                             <ul class="space-y-2">
-                                @foreach($nip05VerifiedHandles as $handle)
+                                @foreach($nip05->handles as $handle)
                                     <li class="flex items-center gap-2 text-base" wire:key="handle-{{ $handle }}">
                                         <span class="break-all text-text-primary">{{ $handle }}@einundzwanzig.space</span>
                                         <flux:badge color="green" size="sm">OK</flux:badge>

@@ -10,10 +10,10 @@ use swentel\nostr\Key\Key;
 use Tests\Support\FakeRelayTransport;
 
 /*
- * The association's own nostr.json, which this screen fetches whenever a save
- * leaves the member with a NIP-05 handle set
- * (`NostrFetcherTrait::getNip05HandlesForPubkey()`, called from three places in
- * profile.blade.php).
+ * The association's own nostr.json, which this screen reads on mount and after
+ * a save whenever the member has a NIP-05 handle set (`Nip05Directory`, called
+ * from profile.blade.php; until P4 `NostrFetcherTrait::getNip05HandlesForPubkey()`
+ * from three places).
  *
  * It is faked here rather than in the three tests that trigger it, because
  * nothing about those tests announces the request: it is fired from the
@@ -25,7 +25,7 @@ use Tests\Support\FakeRelayTransport;
  * handle` and `it still allows an underscore inside a handle on the profile
  * screen` (measured across the full suite via the HTTP client's
  * RequestSending/ResponseReceived events). It stayed invisible because the
- * fetcher wraps the call in `catch (\Exception) { return []; }` — the same
+ * fetcher wrapped the call in `catch (\Exception) { return []; }` — the same
  * catch that would swallow the StrayRequestException, so the guard alone would
  * never have made these tests red either.
  *
