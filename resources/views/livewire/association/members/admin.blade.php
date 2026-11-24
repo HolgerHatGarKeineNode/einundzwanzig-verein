@@ -1,10 +1,11 @@
 <?php
 
 use App\Enums\AssociationStatus;
+use App\Exceptions\MemberStatusLockedException;
 use App\Models\DmDelivery;
 use App\Models\EinundzwanzigPleb;
-use App\Models\Election;
 use App\Models\PaymentEvent;
+use App\Services\MembershipService;
 use App\Support\Board;
 use App\Support\NostrAuth;
 use Flux\Flux;
@@ -251,23 +252,10 @@ new class extends Component
     }
 
     /**
-     * The board path PASSIVE → ACTIVE/HONORARY. It never grants the
-     * membership itself — that follows from the paid annual fee.
-     *
-     * Two guards, both load-bearing:
-     * - `application_for` may be null (no application pending, or one that was
-     *   already handled). `AssociationStatus::from(null)` is fatal, so nothing
-     *   happens at all in that case.
-     * - The target status is never allowed to fall below the current one. A
-     *   stale application row must not demote an honorary member back to
-     *   passive; a demotion is a deliberate act, not a side effect of
-     *   confirming an application.
-     *
-     * Refused while a real election is announced and not finished
-     * (`Election::lockingMemberStatus()`): its roll rests on the categories,
-     * so the Wahlleitung enters a voter there, with a reason in the audit log.
+     * Accepting and rejecting are `MembershipService::acceptApplication()` and
+     * `rejectApplication()`; this component only authorizes and reports.
      */
-    public function acceptPleb(): void
+    public function acceptPleb(MembershipService $membership): void
     {
         $this->ensureAuthorized();
 
@@ -275,48 +263,22 @@ new class extends Component
             return;
         }
 
-        $election = Election::lockingMemberStatus();
-
-        if ($election !== null) {
-            $this->confirmAcceptId = null;
-            Flux::modal('confirm-accept-pleb')->close();
-            Flux::toast(__('Die Wahl „:name“ ist angekündigt und noch nicht abgeschlossen. Bis dahin ändert ihr hier keinen Mitgliedsstatus, denn das Wählerverzeichnis hängt daran. Den Antrag nehmt ihr nach der Wahl an. Hat ein Aktiv- oder Ehrenmitglied bar bezahlt, tragt ihr es auf der Wahlseite unter „Wählerverzeichnis“ mit Grund als wahlberechtigt ein.', ['name' => $election->name]), variant: 'danger');
-
-            return;
+        try {
+            $membership->acceptApplication(EinundzwanzigPleb::query()->findOrFail($this->confirmAcceptId));
+        } catch (MemberStatusLockedException $locked) {
+            Flux::toast(__('Die Wahl „:name“ ist angekündigt und noch nicht abgeschlossen. Bis dahin ändert ihr hier keinen Mitgliedsstatus, denn das Wählerverzeichnis hängt daran. Den Antrag nehmt ihr nach der Wahl an. Hat ein Aktiv- oder Ehrenmitglied bar bezahlt, tragt ihr es auf der Wahlseite unter „Wählerverzeichnis“ mit Grund als wahlberechtigt ein.', ['name' => $locked->election->name]), variant: 'danger');
         }
-
-        $pleb = EinundzwanzigPleb::query()->findOrFail($this->confirmAcceptId);
-        $target = AssociationStatus::tryFrom((int) $pleb->application_for);
-
-        if ($pleb->application_for === null || $target === null) {
-            $this->confirmAcceptId = null;
-            Flux::modal('confirm-accept-pleb')->close();
-
-            return;
-        }
-
-        if ($target->value > $pleb->association_status->value) {
-            $pleb->association_status = $target;
-        }
-
-        $pleb->archived_application_text = $pleb->application_text;
-        $pleb->application_for = null;
-        $pleb->application_text = null;
-        $pleb->save();
 
         $this->confirmAcceptId = null;
         Flux::modal('confirm-accept-pleb')->close();
     }
 
-    public function deletePleb(): void
+    public function deletePleb(MembershipService $membership): void
     {
         $this->ensureAuthorized();
 
         if ($this->confirmDeleteId) {
-            $pleb = EinundzwanzigPleb::query()->findOrFail($this->confirmDeleteId);
-            $pleb->application_for = null;
-            $pleb->application_text = null;
-            $pleb->save();
+            $membership->rejectApplication(EinundzwanzigPleb::query()->findOrFail($this->confirmDeleteId));
 
             $this->confirmDeleteId = null;
             Flux::modal('confirm-delete-pleb')->close();

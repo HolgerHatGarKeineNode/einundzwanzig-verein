@@ -6,11 +6,13 @@ use App\Enums\AssociationStatus;
 use App\Enums\MembershipStatus;
 use App\Enums\PaymentReviewReason;
 use App\Exceptions\MembershipUnavailableException;
+use App\Exceptions\MemberStatusLockedException;
 use App\Jobs\PublishPaymentEventToNostr;
 use App\Models\DmDelivery;
 use App\Models\DmDeliveryRelay;
 use App\Models\DmInboxMessage;
 use App\Models\EinundzwanzigPleb;
+use App\Models\Election;
 use App\Models\MemberProposalVote;
 use App\Models\MembershipGrant;
 use App\Models\PaymentEvent;
@@ -164,6 +166,63 @@ class MembershipService
         ]);
 
         return $pleb;
+    }
+
+    /**
+     * The board accepts a pending application: PASSIVE → ACTIVE/HONORARY. It
+     * never grants the membership itself — that follows from the paid annual
+     * fee.
+     *
+     * Two guards, both load-bearing:
+     * - `application_for` may be null (no application pending, or one that was
+     *   already handled) or name a status that does not exist. Nothing happens
+     *   at all in that case, and `false` is returned.
+     * - The target status is never allowed to fall below the current one. A
+     *   stale application row must not demote an honorary member back to
+     *   passive; a demotion is a deliberate act, not a side effect of
+     *   confirming an application.
+     *
+     * Refused while a real election is announced and not finished
+     * (`Election::lockingMemberStatus()`): its roll rests on the categories,
+     * so the Wahlleitung enters a voter there, with a reason in the audit log.
+     *
+     * @throws MemberStatusLockedException
+     */
+    public function acceptApplication(EinundzwanzigPleb $pleb): bool
+    {
+        $election = Election::lockingMemberStatus();
+
+        if ($election !== null) {
+            throw new MemberStatusLockedException($election);
+        }
+
+        $target = AssociationStatus::tryFrom((int) $pleb->application_for);
+
+        if ($pleb->application_for === null || $target === null) {
+            return false;
+        }
+
+        if ($target->value > $pleb->association_status->value) {
+            $pleb->association_status = $target;
+        }
+
+        $pleb->archived_application_text = $pleb->application_text;
+        $pleb->application_for = null;
+        $pleb->application_text = null;
+        $pleb->save();
+
+        return true;
+    }
+
+    /**
+     * The board rejects a pending application: the request and its text are
+     * dropped, the status stays as it is.
+     */
+    public function rejectApplication(EinundzwanzigPleb $pleb): void
+    {
+        $pleb->application_for = null;
+        $pleb->application_text = null;
+        $pleb->save();
     }
 
     /**
