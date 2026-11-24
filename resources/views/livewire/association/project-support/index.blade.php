@@ -267,24 +267,19 @@ new class extends Component
 ?>
 
 
-<div>
-    <div class="w-full max-w-[1600px] mx-auto">
+<div class="mx-auto w-full max-w-5xl pb-32">
 
-        {{-- Kopf --}}
-        <div class="mb-5">
-            <h1 class="text-2xl sm:text-[28px] font-bold text-text-primary tracking-tight leading-[1.15]">
-                Projektunterstützungen
-            </h1>
-            <p class="mt-1 text-sm text-text-secondary">
+        <x-page-header title="Projektunterstützungen">
+            <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                 Anträge des Vereins auf Förderung — {{ $this->statusCounts['all'] }}
                 {{ $this->statusCounts['all'] === 1 ? 'Antrag' : 'Anträge' }},
                 {{ $this->statusCounts['new'] }} warten auf den Vorstand.
             </p>
-        </div>
+        </x-page-header>
 
         {{-- Ein Kasten, eine Aufgabe: Suche, Sortierung, Einreichen, Status --}}
-        <div class="rounded-xl border border-border-subtle bg-bg-surface divide-y divide-border-subtle mb-5">
-            <div class="flex flex-col sm:flex-row gap-3 p-3">
+        <div class="mb-6 divide-y divide-border-default rounded-lg border border-border-default bg-bg-surface">
+            <div class="flex flex-col gap-4 p-4 sm:flex-row">
                 <flux:input
                     class="flex-1"
                     type="search"
@@ -299,13 +294,13 @@ new class extends Component
                     <flux:select.option value="supporters">Meiste Unterstützer</flux:select.option>
                 </flux:select>
                 @if(Gate::forUser(NostrAuth::user())->allows('create', App\Models\ProjectProposal::class))
-                    <flux:button :href="route('association.projectSupport.create')" icon="plus" variant="primary">
+                    <flux:button :href="route('association.projectSupport.create')" icon="plus" variant="primary" class="min-h-11">
                         Projekt einreichen
                     </flux:button>
                 @endif
             </div>
 
-            <div class="p-3">
+            <div class="p-4">
                 {{-- Mobile: Select statt Chip-Reihe, damit nichts abgeschnitten wird --}}
                 <div class="sm:hidden">
                     <flux:select wire:model.live="activeFilter">
@@ -323,35 +318,21 @@ new class extends Component
                     </flux:select>
                 </div>
 
-                <div class="hidden sm:flex sm:flex-wrap sm:items-center gap-2">
-                    <button type="button"
-                            wire:click="setFilter('all')"
-                            aria-pressed="{{ $activeFilter === 'all' ? 'true' : 'false' }}"
-                            @class([
-                                'inline-flex min-h-11 items-center gap-2 rounded-full border px-4 text-[13px] font-semibold transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500',
-                                'border-orange-500 bg-orange-500 text-[#17120A]' => $activeFilter === 'all',
-                                'border-border-default bg-bg-elevated text-text-secondary hover:border-neutral-400 hover:text-text-primary' => $activeFilter !== 'all',
-                            ])>
+                <div class="hidden gap-2 sm:flex sm:flex-wrap sm:items-center" role="group" aria-label="Nach Status filtern">
+                    <x-filter-pill wire:click="setFilter('all')" :active="$activeFilter === 'all'">
                         <span>Alle</span>
                         <span>{{ $this->statusCounts['all'] }}</span>
-                    </button>
+                    </x-filter-pill>
 
                     @foreach(\App\Enums\ProjectProposalStatus::cases() as $status)
                         @php($isActive = $activeFilter === $status->value)
-                        <button type="button"
-                                wire:click="setFilter('{{ $status->value }}')"
-                                aria-pressed="{{ $isActive ? 'true' : 'false' }}"
-                                @class([
-                                    'inline-flex min-h-11 items-center gap-2 rounded-full border px-4 text-[13px] font-semibold transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500',
-                                    'border-orange-500 bg-orange-500 text-[#17120A]' => $isActive,
-                                    'border-border-default bg-bg-elevated text-text-secondary hover:border-neutral-400 hover:text-text-primary' => ! $isActive,
-                                ])>
+                        <x-filter-pill wire:click="setFilter('{{ $status->value }}')" :active="$isActive">
                             <flux:icon :name="$status->icon()" variant="micro" aria-hidden="true"/>
                             <span>{{ $status->label() }}</span>
                             <span @class(['text-text-tertiary' => $this->statusCounts[$status->value] === 0 && ! $isActive])>
                                 {{ $this->statusCounts[$status->value] }}
                             </span>
-                        </button>
+                        </x-filter-pill>
                     @endforeach
 
                     {{-- Arbeitsliste des Vorstands: hier fehlt MEINE Stimme.
@@ -359,25 +340,18 @@ new class extends Component
                          nicht nach Status, sondern nach dem Betrachter. --}}
                     @if($this->isBoardMember)
                         @php($isActive = $activeFilter === 'awaiting_my_vote')
-                        <button type="button"
-                                wire:click="setFilter('awaiting_my_vote')"
-                                aria-pressed="{{ $isActive ? 'true' : 'false' }}"
-                                @class([
-                                    'inline-flex min-h-11 items-center gap-2 rounded-full border px-4 text-[13px] font-semibold transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500',
-                                    'border-orange-500 bg-orange-500 text-[#17120A]' => $isActive,
-                                    'border-orange-500/40 bg-bg-elevated text-orange-300 hover:border-orange-400 hover:text-orange-200' => ! $isActive,
-                                ])>
+                        <x-filter-pill wire:click="setFilter('awaiting_my_vote')" :active="$isActive">
                             <flux:icon name="hand-raised" variant="micro" aria-hidden="true"/>
                             <span>Fehlende Stimme</span>
                             <span @class(['text-text-tertiary' => $this->statusCounts['awaiting_my_vote'] === 0 && ! $isActive])>
                                 {{ $this->statusCounts['awaiting_my_vote'] }}
                             </span>
-                        </button>
+                        </x-filter-pill>
                     @endif
 
                     @if($activeFilter !== 'all' || $search !== '' || $sortBy !== 'newest')
                         <flux:spacer/>
-                        <flux:button wire:click="resetFilters" variant="subtle" icon="x-mark" size="sm">
+                        <flux:button wire:click="resetFilters" variant="subtle" icon="x-mark" class="min-h-11">
                             Filter zurücksetzen
                         </flux:button>
                     @endif
@@ -386,7 +360,7 @@ new class extends Component
         </div>
 
         {{-- Ergebniszeile: sagt die Wahrheit, auch gefiltert --}}
-        <div class="mb-4 text-[11px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+        <p class="mb-4 text-sm text-text-tertiary" aria-live="polite">
             @if($activeFilter === 'all' && $search === '')
                 {{ $this->statusCounts['all'] }} {{ $this->statusCounts['all'] === 1 ? 'Projekt' : 'Projekte' }}
             @else
@@ -401,11 +375,11 @@ new class extends Component
                     · Suche „{{ $search }}"
                 @endif
             @endif
-        </div>
+        </p>
 
         {{-- Liste --}}
         @if($this->projects->isNotEmpty())
-            <div class="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4 2xl:gap-5 mb-6">
+            <div class="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2">
                 @foreach($this->projects as $project)
                     <x-project-card
                         :project="$project"
@@ -422,41 +396,41 @@ new class extends Component
                 <flux:pagination :paginator="$this->projects"/>
             </div>
         @else
-            <div class="rounded-xl border border-border-subtle bg-bg-surface p-8 text-center mb-8">
+            <div class="mb-8 rounded-lg border border-dashed border-border-default px-6 py-10 text-center">
                 @if($search !== '')
-                    <flux:icon name="magnifying-glass" class="mx-auto size-12 text-text-disabled" aria-hidden="true"/>
+                    <flux:icon name="magnifying-glass" class="mx-auto size-8 text-text-tertiary" aria-hidden="true"/>
                     <p class="mt-4 text-base font-semibold text-text-primary">Nichts gefunden für „{{ $search }}".</p>
-                    <p class="mt-1 text-sm text-text-secondary">
+                    <p class="mx-auto mt-2 max-w-prose text-base text-text-secondary">
                         Die Suche prüft Projektname, Beschreibung und Einreicher.
                     </p>
-                    <flux:button wire:click="resetFilters" variant="subtle" class="mt-4">Suche löschen</flux:button>
+                    <flux:button wire:click="resetFilters" variant="subtle" class="mt-4 min-h-11">Suche löschen</flux:button>
                 @elseif($activeFilter === 'awaiting_my_vote')
-                    <flux:icon name="check-circle" class="mx-auto size-12 text-text-disabled" aria-hidden="true"/>
+                    <flux:icon name="check-circle" class="mx-auto size-8 text-text-tertiary" aria-hidden="true"/>
                     <p class="mt-4 text-base font-semibold text-text-primary">
                         Du hast überall abgestimmt.
                     </p>
-                    <p class="mt-1 text-sm text-text-secondary">
+                    <p class="mx-auto mt-2 max-w-prose text-base text-text-secondary">
                         Kein Antrag in Abstimmung wartet noch auf deine Stimme.
                     </p>
-                    <flux:button wire:click="resetFilters" variant="subtle" class="mt-4">Alle Projekte anzeigen</flux:button>
+                    <flux:button wire:click="resetFilters" variant="subtle" class="mt-4 min-h-11">Alle Projekte anzeigen</flux:button>
                 @elseif($activeFilter !== 'all')
                     <flux:icon :name="\App\Enums\ProjectProposalStatus::from($activeFilter)->icon()"
-                               class="mx-auto size-12 text-text-disabled" aria-hidden="true"/>
+                               class="mx-auto size-8 text-text-tertiary" aria-hidden="true"/>
                     <p class="mt-4 text-base font-semibold text-text-primary">
                         Kein Projekt im Zustand „{{ \App\Enums\ProjectProposalStatus::from($activeFilter)->label() }}".
                     </p>
-                    <p class="mt-1 text-sm text-text-secondary">
+                    <p class="mx-auto mt-2 max-w-prose text-base text-text-secondary">
                         Die übrigen Anträge stehen unter einem anderen Filter.
                     </p>
-                    <flux:button wire:click="resetFilters" variant="subtle" class="mt-4">Alle Projekte anzeigen</flux:button>
+                    <flux:button wire:click="resetFilters" variant="subtle" class="mt-4 min-h-11">Alle Projekte anzeigen</flux:button>
                 @else
-                    <flux:icon name="heart" class="mx-auto size-12 text-text-disabled" aria-hidden="true"/>
+                    <flux:icon name="heart" class="mx-auto size-8 text-text-tertiary" aria-hidden="true"/>
                     <p class="mt-4 text-base font-semibold text-text-primary">Noch kein Antrag eingereicht.</p>
-                    <p class="mt-1 text-sm text-text-secondary">
+                    <p class="mx-auto mt-2 max-w-prose text-base text-text-secondary">
                         Aktive Mitglieder können Projekte zur Förderung vorschlagen.
                     </p>
                     @if(Gate::forUser(NostrAuth::user())->allows('create', App\Models\ProjectProposal::class))
-                        <flux:button :href="route('association.projectSupport.create')" variant="primary" icon="plus" class="mt-4">
+                        <flux:button :href="route('association.projectSupport.create')" variant="primary" icon="plus" class="mt-4 min-h-11">
                             Projekt einreichen
                         </flux:button>
                     @endif
@@ -484,4 +458,3 @@ new class extends Component
             </div>
         </flux:modal>
     </div>
-</div>
