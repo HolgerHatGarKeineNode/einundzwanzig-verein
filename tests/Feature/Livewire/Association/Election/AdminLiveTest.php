@@ -955,8 +955,11 @@ it('leads out of a round nobody can stand in any more: names the person, then st
         ->assertHasErrors(['roundReason'])
         ->assertSee('Zieht die Kandidatur von Anna Beispiel hier unter „Kandidaturen“ zurück');
 
-    $page->call('startDecision', $annaBeisitz->id, 'withdraw')->set('decisionReason', 'Schon im Präsidium')->call('confirmDecision')
-        ->call('refreshRounds')
+    Livewire::test('association.election.admin-candidacies', ['electionId' => $election->id])
+        ->call('startDecision', $annaBeisitz->id, 'withdraw')->set('decisionReason', 'Schon im Präsidium')->call('confirmDecision')
+        ->assertDispatched('election-changed');
+
+    $page->dispatch('election-changed')
         ->assertSee('Dieser Wahlgang hat keine freigegebene Kandidatur. Gebt unter „Kandidaturen“ eine frei, oder streicht den Wahlgang');
 
     expect(liveNextStep($page->html()))->not->toContain('„Beisitz“ öffnen')

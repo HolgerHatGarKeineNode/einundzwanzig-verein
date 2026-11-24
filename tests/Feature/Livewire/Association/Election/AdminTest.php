@@ -86,13 +86,13 @@ it('answers 403 on every public method to a member who is not, or no longer, on 
     $member = electionVoter();
 
     $methods = expectEveryMethodBoardOnly(
-        fn () => electionAdmin()->set('decisionReason', 'Grund')->set('enrolReason', 'Grund'),
+        fn () => electionAdmin()->set('enrolReason', 'Grund'),
         $board,
         $member,
         ['electionId' => $election->id, 'candidateId' => $candidate->id, 'roundId' => $round->id, 'section' => 'roll', 'kind' => 'reject'],
     );
 
-    expect($methods)->toContain('announce', 'approve', 'startDecision', 'confirmDecision', 'enrol', 'deleteElection', 'elections', 'startRoundAction', 'confirmRoundAction', 'sealRound', 'createRunOff', 'purgeTestElection', 'roundReports');
+    expect($methods)->toContain('announce', 'electionCreated', 'enrol', 'deleteElection', 'elections', 'startRoundAction', 'confirmRoundAction', 'sealRound', 'createRunOff', 'purgeTestElection', 'roundReports');
 
     expect($candidate->fresh()->status)->toBe(ElectionCandidateStatus::Pending)
         ->and($election->fresh()->announced_at)->toBeNull()
@@ -144,73 +144,6 @@ it('offers no delete for an announced election and refuses it on the wire', func
         ->assertForbidden();
 
     expect(Election::query()->count())->toBe(1);
-});
-
-it('answers a stale tab with a reload hint, not a 403, when a candidacy is already decided', function (string $action) {
-    loggedInBoard();
-    $election = Election::factory()->announced()->create();
-    $round = draftElectionRound(candidates: 0, election: $election);
-    $decided = ElectionCandidate::factory()->create(['election_round_id' => $round->id, 'einundzwanzig_pleb_id' => electionVoter()->id]);
-
-    $page = electionAdmin();
-
-    if ($action === 'approve') {
-        $page->call('approve', $decided->id)->assertOk();
-    } else {
-        $page->call('startDecision', $decided->id, $action)
-            ->set('decisionReason', 'Schon von jemand anderem entschieden')
-            ->call('confirmDecision')
-            ->assertOk()
-            ->assertHasErrors(['decisionReason'])
-            ->assertSee('Lade die Seite neu');
-    }
-
-    expect($decided->fresh()->status)->toBe(ElectionCandidateStatus::Approved)
-        ->and(electionAuditOf($election))->toBe([]);
-})->with(['approve', 'reject']);
-
-it('approves an entitled candidacy and refuses one whose fee is missing', function () {
-    loggedInBoard();
-    $election = Election::factory()->announced()->create();
-    $round = draftElectionRound(candidates: 0, election: $election);
-    $paid = ElectionCandidate::factory()->pending()->create(['election_round_id' => $round->id, 'einundzwanzig_pleb_id' => electionVoter()->id]);
-    $unpaid = ElectionCandidate::factory()->pending()->create(['election_round_id' => $round->id]);
-
-    electionAdmin()
-        ->assertSet('section', 'candidacies')
-        ->assertSee('2 Kandidaturen warten auf Prüfung.')
-        ->assertSee('Freigabe erst nach der Zahlung')
-        ->call('approve', $paid->id)
-        ->call('approve', $unpaid->id);
-
-    expect($paid->fresh()->status)->toBe(ElectionCandidateStatus::Approved)
-        ->and($unpaid->fresh()->status)->toBe(ElectionCandidateStatus::Pending)
-        ->and(electionAuditOf($election))->toBe(['candidacy_approved']);
-});
-
-it('rejects and withdraws a candidacy with a reason that goes into the audit log', function () {
-    loggedInBoard();
-    $election = Election::factory()->announced()->create();
-    $round = draftElectionRound(candidates: 0, election: $election);
-    $pending = ElectionCandidate::factory()->pending()->create(['election_round_id' => $round->id]);
-    $approved = ElectionCandidate::factory()->create(['election_round_id' => $round->id]);
-
-    electionAdmin()
-        ->call('startDecision', $pending->id, 'reject')
-        ->call('confirmDecision')
-        ->assertHasErrors(['decisionReason'])
-        ->set('decisionReason', 'Kandidiert für ein Amt, das nicht zur Wahl steht')
-        ->call('confirmDecision')
-        ->assertHasNoErrors()
-        ->call('startDecision', $approved->id, 'withdraw')
-        ->set('decisionReason', 'Auf eigenen Wunsch')
-        ->call('confirmDecision');
-
-    expect($pending->fresh()->status)->toBe(ElectionCandidateStatus::Rejected)
-        ->and($approved->fresh()->status)->toBe(ElectionCandidateStatus::Withdrawn)
-        ->and(electionAuditOf($election))->toBe(['candidacy_rejected', 'candidacy_withdrawn'])
-        ->and(ElectionAuditEntry::query()->orderBy('sequence')->get()->map(fn ($entry) => $entry->details['reason'])->all())
-        ->toBe(['Kandidiert für ein Amt, das nicht zur Wahl steht', 'Auf eigenen Wunsch']);
 });
 
 it('shows each entitled member with the reason and who signed in since the announcement', function () {
@@ -288,8 +221,10 @@ it('enters a cash payer as entitled from the roll tab, after which the candidacy
     Profile::factory()->create(['pubkey' => $cashPayer->pubkey, 'name' => 'Erik Barzahler']);
     $candidacy = ElectionCandidate::factory()->pending()->create(['election_round_id' => $round->id, 'einundzwanzig_pleb_id' => $cashPayer->id]);
 
+    $candidacies = Livewire::test('association.election.admin-candidacies', ['electionId' => $election->id])
+        ->call('approve', $candidacy->id);
+
     $page = electionAdmin()
-        ->call('approve', $candidacy->id)
         ->call('showSection', 'roll')
         ->assertSeeHtml('data-test="entitle-form"')
         ->call('entitle')
@@ -302,8 +237,9 @@ it('enters a cash payer as entitled from the roll tab, after which the candidacy
     expect(app(ElectoralRoll::class)->reasonFor($election, $cashPayer, now()))->toBe(ElectionRollReason::ConfirmedByBoard)
         ->and(electionAuditOf($election))->toBe(['voter_enrolled_by_hand']);
 
-    $page->call('approve', $candidacy->id)
-        ->call('entitle')
+    $candidacies->call('approve', $candidacy->id);
+
+    $page->call('entitle')
         ->set('entitleMemberId', $cashPayer->id)->set('entitleReason', 'Noch einmal')->call('entitle')
         ->assertHasErrors(['entitleMemberId'])
         ->assertSee('Erik Barzahler ist schon wahlberechtigt.');
@@ -311,17 +247,4 @@ it('enters a cash payer as entitled from the roll tab, after which the candidacy
     expect($candidacy->fresh()->status)->toBe(ElectionCandidateStatus::Approved)
         ->and(electionAuditOf($election))->toBe(['voter_enrolled_by_hand', 'candidacy_approved'])
         ->and(ElectionAuditEntry::query()->where('action', 'voter_enrolled_by_hand')->sole()->actor_pleb_id)->toBe($board->id);
-});
-
-it('points a refused approval to the manual entitlement in the roll', function () {
-    loggedInBoard();
-    $election = Election::factory()->announced()->create();
-    $round = draftElectionRound(['title' => 'Kasse'], candidates: 0, election: $election);
-    $candidacy = ElectionCandidate::factory()->pending()->create(['election_round_id' => $round->id]);
-
-    electionAdmin()->call('approve', $candidacy->id)
-        ->assertDispatched('toast-show', fn (string $event, array $params): bool => ($params['dataset']['variant'] ?? null) === 'danger'
-            && str_contains($params['slots']['text'], 'tragt die Wahlberechtigung unter „Wählerverzeichnis“ von Hand ein.'));
-
-    expect($candidacy->fresh()->status)->toBe(ElectionCandidateStatus::Pending);
 });

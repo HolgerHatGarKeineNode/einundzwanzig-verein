@@ -14,11 +14,9 @@ use App\Exceptions\ElectionRoundStateException;
 use App\Livewire\Traits\WithViewer;
 use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
-use App\Models\ElectionCandidate;
 use App\Models\ElectionRollEntry;
 use App\Models\ElectionRound;
 use App\Models\MemberProposal;
-use App\Services\Election\Candidacies;
 use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionAuditLog;
 use App\Services\Election\ElectionStewardship;
@@ -33,7 +31,6 @@ use App\Services\Election\TallyRound;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Flux\Flux;
-use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
@@ -72,14 +69,6 @@ new class extends Component
     public bool $creating = false;
 
     public string $section = 'settings';
-
-    #[Locked]
-    public ?int $decisionCandidateId = null;
-
-    #[Locked]
-    public ?string $decisionKind = null;
-
-    public string $decisionReason = '';
 
     public ?int $rollRoundId = null;
 
@@ -202,82 +191,6 @@ new class extends Component
         Flux::toast(__('„:name“ ist gelöscht.', ['name' => $election->name]));
     }
 
-    public function approve(int $candidateId, Candidacies $candidacies): void
-    {
-        $actor = $this->boardActor();
-        $candidate = ElectionCandidate::query()->with('pleb.profile')->findOrFail($candidateId);
-
-        try {
-            $candidacies->approve($candidate, $actor);
-        } catch (AuthorizationException) {
-            Flux::toast(__('Über die Kandidatur von :name ist schon entschieden. Lade die Seite neu, vielleicht hat sie schon jemand bearbeitet.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]), variant: 'danger');
-            unset($this->elections, $this->selectedElection, $this->candidaciesByRound);
-
-            return;
-        } catch (ElectionActionRefusedException) {
-            Flux::toast(
-                __(':name ist nach der Beitragsregel dieser Wahl noch nicht wahlberechtigt. Freigeben geht nach der Zahlung. Hat :name bar bezahlt, tragt die Wahlberechtigung unter „Wählerverzeichnis“ von Hand ein.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]),
-                variant: 'danger',
-            );
-
-            return;
-        }
-
-        unset($this->elections, $this->selectedElection, $this->candidaciesByRound);
-        Flux::toast(__(':name ist freigegeben.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]), variant: 'success');
-    }
-
-    public function startDecision(int $candidateId, string $kind): void
-    {
-        $this->boardActor();
-
-        ElectionCandidate::query()->findOrFail($candidateId);
-
-        $this->decisionCandidateId = $candidateId;
-        $this->decisionKind = $kind === 'withdraw' ? 'withdraw' : 'reject';
-        $this->decisionReason = '';
-        $this->resetErrorBag('decisionReason');
-
-        Flux::modal('candidacy-decision')->show();
-    }
-
-    public function confirmDecision(Candidacies $candidacies): void
-    {
-        $actor = $this->boardActor();
-
-        $this->validate(
-            ['decisionReason' => ['required', 'string', 'min:3', 'max:1000']],
-            [
-                'decisionReason.required' => __('Nenne einen Grund. Er steht im Protokoll der Wahl.'),
-                'decisionReason.min' => __('Nenne einen Grund mit mindestens drei Zeichen.'),
-                'decisionReason.max' => __('Der Grund darf höchstens 1000 Zeichen lang sein.'),
-            ],
-        );
-
-        $candidate = ElectionCandidate::query()->with('pleb.profile')->findOrFail($this->decisionCandidateId);
-
-        try {
-            if ($this->decisionKind === 'withdraw') {
-                $candidacies->withdraw($candidate, $actor, trim($this->decisionReason));
-                $message = __('Die Kandidatur von :name ist zurückgezogen.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]);
-            } else {
-                $candidacies->reject($candidate, $actor, trim($this->decisionReason));
-                $message = __('Die Kandidatur von :name ist abgelehnt.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]);
-            }
-        } catch (AuthorizationException) {
-            $this->addError('decisionReason', __('Über die Kandidatur von :name ist schon entschieden. Lade die Seite neu, vielleicht hat sie schon jemand bearbeitet.', ['name' => MemberProposal::authorNameOf($candidate->pleb)]));
-
-            return;
-        }
-
-        Flux::modal('candidacy-decision')->close();
-        $this->decisionCandidateId = null;
-        $this->decisionKind = null;
-        $this->decisionReason = '';
-        unset($this->elections, $this->selectedElection, $this->candidaciesByRound);
-        Flux::toast($message);
-    }
-
     public function enrol(EnrolByHand $enrolByHand): void
     {
         $actor = $this->boardActor();
@@ -359,7 +272,7 @@ new class extends Component
 
         $this->entitleMemberId = null;
         $this->entitleReason = '';
-        unset($this->rollPreview, $this->entitleCandidates, $this->candidaciesByRound, $this->elections, $this->selectedElection);
+        unset($this->rollPreview, $this->entitleCandidates, $this->elections, $this->selectedElection);
         Flux::toast(__(':name ist für „:election“ als wahlberechtigt eingetragen.', ['name' => $name, 'election' => $election->name]), variant: 'success');
     }
 
@@ -719,45 +632,6 @@ new class extends Component
     }
 
     /**
-     * The candidacies of the selected election, per first-level round,
-     * undecided first.
-     *
-     * @return Collection<int, array{round: ElectionRound, candidates: Collection<int, array{candidate: ElectionCandidate, name: string, entitled: bool}>}>
-     */
-    #[Computed]
-    public function candidaciesByRound(): Collection
-    {
-        $this->boardActor();
-
-        $election = $this->selectedElection;
-
-        if ($election === null) {
-            return collect();
-        }
-
-        $entitled = app(ElectoralRoll::class)->entitled($election, now())->pluck('id')->map(fn (mixed $id): int => (int) $id)->all();
-        $order = [ElectionCandidateStatus::Pending->value => 0, ElectionCandidateStatus::Approved->value => 1, ElectionCandidateStatus::Rejected->value => 2, ElectionCandidateStatus::Withdrawn->value => 3];
-
-        return ElectionRound::query()
-            ->where('election_event_id', $election->id)
-            ->whereNull('parent_round_id')
-            ->orderBy('position')
-            ->with('candidates.pleb.profile')
-            ->get()
-            ->map(fn (ElectionRound $round): array => [
-                'round' => $round,
-                'candidates' => $round->candidates
-                    ->sortBy(fn (ElectionCandidate $candidate): string => $order[$candidate->status->value].mb_strtolower(MemberProposal::authorNameOf($candidate->pleb)))
-                    ->values()
-                    ->map(fn (ElectionCandidate $candidate): array => [
-                        'candidate' => $candidate,
-                        'name' => MemberProposal::authorNameOf($candidate->pleb),
-                        'entitled' => in_array((int) $candidate->einundzwanzig_pleb_id, $entitled, true),
-                    ]),
-            ]);
-    }
-
-    /**
      * Before any round is opened: every active and honorary member, whether
      * the fee rule makes them entitled right now and why, and whether they
      * signed in since the announcement.
@@ -1075,7 +949,7 @@ new class extends Component
     {
         $this->resetErrorBag();
         $this->selectedElectionId = (int) $election->id;
-        unset($this->selectedElection, $this->candidaciesByRound, $this->rollPreview, $this->openedRounds, $this->rollRound, $this->rollEntries, $this->enrolCandidates, $this->roundReports);
+        unset($this->selectedElection, $this->rollPreview, $this->openedRounds, $this->rollRound, $this->rollEntries, $this->enrolCandidates, $this->roundReports);
         $this->rollRoundId = null;
         $current = $this->selectedElection ?? $election;
         $step = app(RunSheet::class)->nextStepOf($current);
@@ -1088,7 +962,7 @@ new class extends Component
 
     protected function refreshElection(Election $election): void
     {
-        unset($this->elections, $this->selectedElection, $this->candidaciesByRound, $this->rollPreview, $this->openedRounds, $this->rollRound, $this->rollEntries, $this->roundReports);
+        unset($this->elections, $this->selectedElection, $this->rollPreview, $this->openedRounds, $this->rollRound, $this->rollEntries, $this->roundReports);
     }
 
 };
@@ -1202,7 +1076,7 @@ new class extends Component
                                     <livewire:association.election.admin-form :election-id="$item->id" :key="'settings-'.$item->id.($item->announced_at === null ? '' : '-announced')" />
                                 @endif
                             @elseif ($section === 'candidacies')
-                                @include('livewire.association.election.admin-candidacies', ['election' => $item])
+                                <livewire:association.election.admin-candidacies :election-id="$item->id" :key="'candidacies-'.$item->id" />
                             @elseif ($section === 'live')
                                 @include('livewire.association.election.admin-live', ['election' => $item])
                             @else
@@ -1418,41 +1292,6 @@ new class extends Component
                 </div>
             </flux:modal>
 
-            @php
-                $decisionCandidate = $decisionCandidateId ? \App\Models\ElectionCandidate::query()->with(['pleb.profile', 'round'])->find($decisionCandidateId) : null;
-            @endphp
-            <flux:modal name="candidacy-decision" class="w-full max-w-lg">
-                <form wire:submit="confirmDecision" class="space-y-6">
-                    <div>
-                        <flux:heading size="lg">
-                            @if ($decisionCandidate)
-                                {{ $decisionKind === 'withdraw'
-                                    ? __('Kandidatur von :name zurückziehen?', ['name' => MemberProposal::authorNameOf($decisionCandidate->pleb)])
-                                    : __('Kandidatur von :name ablehnen?', ['name' => MemberProposal::authorNameOf($decisionCandidate->pleb)]) }}
-                            @endif
-                        </flux:heading>
-                        <flux:text class="mt-2">
-                            @if ($decisionCandidate)
-                                {{ __('Wahlgang „:round“. Der Grund steht im Protokoll der Wahl.', ['round' => $decisionCandidate->round?->title]) }}
-                            @endif
-                        </flux:text>
-                    </div>
-                    <flux:field>
-                        <flux:label>{{ __('Grund') }}</flux:label>
-                        <flux:textarea wire:model="decisionReason" rows="3" maxlength="1000" data-test="decision-reason"
-                                       placeholder="{{ $decisionKind === 'withdraw' ? __('z. B. auf eigenen Wunsch, per Nachricht vom 3. März') : __('z. B. Kandidatur für ein Amt, das nicht zur Wahl steht') }}" />
-                        <flux:error name="decisionReason" />
-                    </flux:field>
-                    <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                        <flux:modal.close>
-                            <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto">{{ __('Abbrechen') }}</flux:button>
-                        </flux:modal.close>
-                        <flux:button type="submit" variant="danger" class="min-h-11 w-full sm:w-auto" data-test="confirm-decision">
-                            {{ $decisionKind === 'withdraw' ? __('Zurückziehen') : __('Ablehnen') }}
-                        </flux:button>
-                    </div>
-                </form>
-            </flux:modal>
         @endif
     @endif
 </div>
