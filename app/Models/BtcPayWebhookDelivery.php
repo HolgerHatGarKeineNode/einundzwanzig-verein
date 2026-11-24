@@ -8,7 +8,8 @@ use Illuminate\Database\UniqueConstraintViolationException;
 /**
  * One row per BTCPay webhook delivery that carries a side effect.
  *
- * Only `InvoiceSettled` and `InvoiceInvalid` are recorded. The chatty types
+ * Only `InvoiceSettled` is recorded (`InvoiceInvalid` was too until
+ * 2026-11-24, when a settled fee became final). The chatty types
  * (`InvoiceReceivedPayment`, `InvoiceProcessing`, …) change nothing here, so
  * booking them would grow the table without ever being read.
  *

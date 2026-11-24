@@ -374,6 +374,41 @@ it('does not show stale settled status when invoice check fails', function () {
         'amount' => 21000,
         'event_id' => 'event-fail',
         'btc_pay_invoice' => 'invoice-fail',
+        'paid' => false,
+    ]);
+
+    Http::fake([
+        'https://pay.einundzwanzig.space/*' => Http::response([], 500),
+    ]);
+
+    NostrAuth::login($pleb->pubkey);
+
+    // An open invoice is read from BTCPay on page load; when that fails, the
+    // page says so instead of guessing. The poll reads the database only and
+    // leaves that message standing.
+    Livewire::test('association.profile')
+        ->call('listenForPayment')
+        ->assertSet('invoiceStatus', null)
+        ->assertSet('invoiceStatusLabel', 'Status unbekannt')
+        ->assertSet('invoiceStatusVariant', 'danger')
+        ->assertSet('invoiceStatusMessage', 'Die Rechnung konnte nicht überprüft werden. Bitte versuche es später erneut.')
+        ->assertSet('currentYearIsPaid', false);
+});
+
+it('never asks btcpay about a fee our database has as paid', function () {
+    /*
+     * Owner decision of 2026-11-24, verbatim: "Wenn Webhook meldet, dass
+     * bezahlt, dann ist bezahlt! Lightning Invoices sind nicht rückholbar!
+     * Heißt eine weitere Abfrage auf BTCPay ist nicht mehr notwendig." Until
+     * then a failing BTCPay turned a paid fee into "Status unbekannt".
+     */
+    $pleb = EinundzwanzigPleb::factory()->active()->create();
+
+    $pleb->paymentEvents()->create([
+        'year' => date('Y'),
+        'amount' => 21000,
+        'event_id' => 'event-paid',
+        'btc_pay_invoice' => 'invoice-paid',
         'paid' => true,
     ]);
 
@@ -383,15 +418,61 @@ it('does not show stale settled status when invoice check fails', function () {
 
     NostrAuth::login($pleb->pubkey);
 
-    // With API failure, the component should show error status regardless of previous state
-    // Locked properties prevent client-side tampering, so we verify the API failure handling directly
     Livewire::test('association.profile')
         ->call('listenForPayment')
-        ->assertSet('invoiceStatus', null)
-        ->assertSet('invoiceStatusLabel', 'Status unbekannt')
-        ->assertSet('invoiceStatusVariant', 'danger')
-        ->assertSet('invoiceStatusMessage', 'Die Rechnung konnte nicht überprüft werden. Bitte versuche es später erneut.')
+        ->assertSet('invoiceStatus', 'Settled')
+        ->assertSet('invoiceStatusVariant', 'success')
+        ->assertSet('invoiceStatusMessage', 'Zahlung bestätigt. Danke!')
         ->assertSet('currentYearIsPaid', true);
+
+    Http::assertNothingSent();
+});
+
+it('picks up a fee the webhook booked while the page was open, from the database only', function () {
+    $pleb = EinundzwanzigPleb::factory()->create([
+        'association_status' => AssociationStatus::DEFAULT,
+        'applied_at' => now(),
+    ]);
+
+    $paymentEvent = $pleb->paymentEvents()->create([
+        'year' => date('Y'),
+        'amount' => 21000,
+        'event_id' => 'event-open',
+        'btc_pay_invoice' => 'invoice-open',
+        'paid' => false,
+    ]);
+
+    Http::fake([
+        'https://pay.einundzwanzig.space/*' => Http::response([
+            'id' => 'invoice-open',
+            'status' => 'New',
+            'expirationTime' => now()->addMinutes(30)->toIso8601String(),
+        ], 200),
+    ]);
+
+    NostrAuth::login($pleb->pubkey);
+
+    $component = Livewire::test('association.profile')
+        ->assertSet('invoiceStatus', 'New')
+        ->assertSet('currentYearIsPaid', false);
+
+    // Page load read the open invoice once; the poll must not ask again.
+    Http::assertSentCount(1);
+
+    $component->call('listenForPayment')->assertSet('currentYearIsPaid', false);
+
+    // The webhook books the fee and makes the applicant a member.
+    $paymentEvent->forceFill(['paid' => true, 'paid_at' => now()])->save();
+    $pleb->forceFill(['association_status' => AssociationStatus::PASSIVE])->save();
+
+    $component->call('listenForPayment')
+        ->assertSet('currentYearIsPaid', true)
+        ->assertSet('invoiceStatus', 'Settled')
+        ->assertSet('invoiceStatusVariant', 'success');
+
+    expect($component->get('currentPleb')->association_status)->toBe(AssociationStatus::PASSIVE);
+
+    Http::assertSentCount(1);
 });
 
 it('refuses the reserved NIP-05 name on the profile screen', function () {

@@ -201,6 +201,9 @@ class ReconcileBtcPayInvoices extends Command
      * It runs through `refreshPaymentStatus()`, so a settlement found here is
      * verified and booked on exactly the terms the webhook would have applied.
      * No promotion rule is repeated in this file.
+     *
+     * Unpaid fees only, and it never reverses anything: a settled fee is final
+     * (owner decision of 2026-11-24), so there is nothing to re-check on one.
      */
     private function settlePendingInvoices(MembershipService $membership): void
     {

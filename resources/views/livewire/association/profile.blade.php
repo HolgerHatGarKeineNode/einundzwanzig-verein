@@ -145,7 +145,7 @@ new class extends Component
         $this->amountToPay = $this->membership()->fee();
         $this->resolveCurrentPaymentEvent();
         $this->loadEvents();
-        $this->listenForPayment();
+        $this->loadPaymentStatus();
     }
 
     public function updatedNo(): void
@@ -214,7 +214,7 @@ new class extends Component
         $this->amountToPay = $this->membership()->fee();
         $this->resolveCurrentPaymentEvent();
         $this->loadEvents();
-        $this->listenForPayment();
+        $this->loadPaymentStatus();
     }
 
     /**
@@ -318,6 +318,16 @@ new class extends Component
         }
     }
 
+    /**
+     * The poll. It reads this database only — has the webhook booked the fee
+     * yet? — and never asks BTCPay. Owner decision of 2026-11-24, verbatim:
+     * "Nur Abfragen auf unsere DB ob der Webhook schon paid geschrieben hat."
+     * A webhook that never arrives is the reconciliation command's job, not
+     * every open profile page's.
+     *
+     * The invoice details shown since the page loaded stay as they are until
+     * the fee turns up as paid.
+     */
     public function listenForPayment(): void
     {
         if (! $this->currentPleb) {
@@ -326,15 +336,55 @@ new class extends Component
 
         $paymentEvent = $this->resolveCurrentPaymentEvent();
 
+        if ($paymentEvent->paid && ! $this->currentYearIsPaid) {
+            // The webhook may just have made this person a member.
+            $this->currentPleb->refresh();
+        }
+
+        if ($paymentEvent->paid) {
+            $this->showPaidStatus();
+        }
+
+        $this->currentYearIsPaid = (bool) $paymentEvent->paid;
+        $this->loadPayments();
+    }
+
+    /**
+     * The full status check on page load and login: an open invoice is read
+     * from BTCPay once, so its expiry can be shown and a dead checkout freed.
+     */
+    protected function loadPaymentStatus(): void
+    {
+        $paymentEvent = $this->resolveCurrentPaymentEvent();
+
         $this->resetInvoiceMeta();
 
         $paymentEvent = $this->syncPaymentEventStatus($paymentEvent);
         $this->currentYearIsPaid = (bool) $paymentEvent->paid;
 
+        $this->loadPayments();
+    }
+
+    protected function loadPayments(): void
+    {
         $this->payments = $this->currentPleb
             ->paymentEvents()
             ->where('paid', true)
             ->get();
+    }
+
+    /**
+     * A paid fee is final, so its state comes from this database and BTCPay
+     * is not asked. `Settled` is shown without asking because markPaid() is
+     * the only writer of `paid`, and it writes only on a settled invoice.
+     */
+    protected function showPaidStatus(): void
+    {
+        $this->resetInvoiceMeta();
+        $this->invoiceStatus = 'Settled';
+        $this->invoiceStatusLabel = $this->statusLabel('Settled');
+        $this->invoiceStatusVariant = 'success';
+        $this->invoiceStatusMessage = 'Zahlung bestätigt. Danke!';
     }
 
     protected function resolveCurrentPaymentEvent(): PaymentEvent
@@ -368,6 +418,13 @@ new class extends Component
             return $paymentEvent;
         }
 
+        if ($paymentEvent->paid) {
+            $this->showPaidStatus();
+            $this->currentYearIsPaid = true;
+
+            return $paymentEvent;
+        }
+
         try {
             $invoice = $this->fetchInvoice($paymentEvent->btc_pay_invoice);
 
@@ -377,7 +434,7 @@ new class extends Component
             $this->invoiceStatus = $status;
             $this->invoiceStatusLabel = $this->statusLabel($status);
 
-            if ($this->invoiceIsExpired($status)) {
+            if (in_array($status, MembershipService::DEAD_INVOICE_STATUSES, true)) {
                 $release = $this->membership()->releaseExpiredInvoice($paymentEvent);
                 $paymentEvent = $release['payment_event'];
                 $this->currentYearIsPaid = (bool) $paymentEvent->paid;
@@ -474,11 +531,6 @@ new class extends Component
             $expiresAt->format('d.m.Y H:i'),
             $expiresAt->diffForHumans(null, true, true, 2),
         ];
-    }
-
-    protected function invoiceIsExpired(?string $status): bool
-    {
-        return in_array($status, ['Expired', 'Invalid'], true);
     }
 
     protected function statusLabel(?string $status): ?string

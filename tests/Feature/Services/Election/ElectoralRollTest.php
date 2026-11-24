@@ -9,7 +9,6 @@ use App\Models\Election;
 use App\Models\ElectionRollEntry;
 use App\Models\ElectionRound;
 use App\Models\PaymentEvent;
-use App\Services\BtcPayClient;
 use App\Services\Election\CloseRound;
 use App\Services\Election\ElectoralRoll;
 use App\Services\Election\OpenRound;
@@ -247,18 +246,15 @@ it('does not enrol a member promoted after the opening whose fee was settled bef
     $this->travelTo(now()->addMinutes(10));
     $member->forceFill(['association_status' => AssociationStatus::ACTIVE])->save();
 
-    // The profile page polls the invoice; BTCPay still says Settled.
-    $this->mock(BtcPayClient::class)
-        ->shouldReceive('getInvoice')
-        ->once()
-        ->andReturn([
-            'id' => $paymentEvent->btc_pay_invoice,
-            'status' => 'Settled',
-            'amount' => '21000',
-            'currency' => 'SATS',
-        ]);
-
-    app(MembershipService::class)->refreshPaymentStatus($paymentEvent->fresh());
+    // A second settled delivery for the booked fee. The refresh path no longer
+    // gets here (a paid fee is final and BTCPay is not asked about it), but a
+    // webhook delivery under a new key still runs markPaid() on the paid row.
+    app(MembershipService::class)->markPaid($paymentEvent->fresh(), [
+        'id' => $paymentEvent->btc_pay_invoice,
+        'status' => 'Settled',
+        'amount' => '21000',
+        'currency' => 'SATS',
+    ], source: 'webhook');
 
     expect(electionRollOf($round))->toBe([])
         ->and($paymentEvent->fresh()->paid_at->equalTo($paidAt))->toBeTrue()

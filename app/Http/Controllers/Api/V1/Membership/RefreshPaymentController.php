@@ -27,6 +27,10 @@ use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
  * that never had an invoice all end at the shared `notFound()`, because there
  * is genuinely nothing upstream to ask about.
  *
+ * A FEE ALREADY PAID IS ANSWERED FROM THIS DATABASE ALONE: a settled fee is
+ * final (owner decision of 2026-11-24), so BTCPay is not asked about it, not
+ * even for its `bolt11`.
+ *
  * WHEN BTCPAY IS DOWN the answer is 503 and `paid` is untouched. Fail closed:
  * an unreachable payment provider means the status is UNKNOWN, and the only
  * safe reading of an unknown payment is the one already on record. The catch
@@ -59,14 +63,15 @@ class RefreshPaymentController extends ApiV1Controller
      * capped at a handful of calls per pubkey and day, and spending one of
      * them to re-read a payment request that already exists would be the wrong
      * way round. Null when the invoice has no Lightning method, when the fee
-     * year was just freed, and when BTCPay could not be asked — the checkout
-     * URL is unaffected in every one of those cases.
+     * year was just freed, when the fee is already paid, and when BTCPay could
+     * not be asked — the checkout URL is unaffected in every one of those cases.
      *
      * 404 when there is nothing upstream to ask about: no membership record,
      * no fee recorded for that year, or a fee that never had an invoice. 503
      * when BTCPay is unreachable — the stored payment state is then left
      * exactly as it was, because the only safe reading of an unknown payment
-     * is the one already on record.
+     * is the one already on record. A paid fee never reaches BTCPay, so it
+     * never answers 503.
      */
     public function __invoke(Request $request, string $year): InvoiceResource
     {
@@ -108,9 +113,10 @@ class RefreshPaymentController extends ApiV1Controller
              * endpoint". `lightningInvoiceFor()` is fail-soft: a BTCPay that
              * does not answer costs this field and nothing else. Skipped
              * outright once the fee year has been freed — there is no invoice
-             * left to read a payment request from.
+             * left to read a payment request from — and once the fee is paid,
+             * which is final and needs no further call to BTCPay.
              */
-            'bolt11' => $invoiceId === ''
+            'bolt11' => $invoiceId === '' || $refreshed->paid
                 ? null
                 : $this->membership->lightningInvoiceFor($invoiceId),
             /*
