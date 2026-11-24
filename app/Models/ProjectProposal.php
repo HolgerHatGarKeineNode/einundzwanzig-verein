@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cookie;
 use Illuminate\Support\Facades\DB;
 use Spatie\Image\Enums\Fit;
@@ -487,6 +488,14 @@ class ProjectProposal extends Model implements HasMedia
             ->useFallbackUrl(asset('einundzwanzig-alpha.jpg'));
     }
 
+    /**
+     * A signed URL of the collection's first media. The expiry is rounded up
+     * to the next multiple of `$expireMinutes` since the epoch, so the URL
+     * stays the same for that long and the browser serves the image from
+     * its cache (`media.signed` answers with max-age=3600) instead of loading
+     * it again on every render. It is valid for at least `$expireMinutes`
+     * and less than twice that.
+     */
     public function getSignedMediaUrl(string $collection = 'main', int $expireMinutes = 60, ?string $conversion = null): string
     {
         $media = $this->getFirstMedia($collection);
@@ -500,7 +509,10 @@ class ProjectProposal extends Model implements HasMedia
             $parameters['conversion'] = $conversion;
         }
 
-        return url()->temporarySignedRoute('media.signed', now()->addMinutes($expireMinutes), $parameters);
+        $window = max(1, $expireMinutes) * 60;
+        $expiresAt = (int) ceil(now()->addMinutes($expireMinutes)->getTimestamp() / $window) * $window;
+
+        return url()->temporarySignedRoute('media.signed', Carbon::createFromTimestamp($expiresAt), $parameters);
     }
 
     public function einundzwanzigPleb(): BelongsTo
