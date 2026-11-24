@@ -10,6 +10,7 @@ use App\Models\Election;
 use App\Models\ElectionRound;
 use App\Support\DisplayTime;
 use Carbon\CarbonInterface;
+use Illuminate\Support\Str;
 
 /**
  * The run sheet of an election on the board's page: the five stations from
@@ -292,11 +293,15 @@ class RunSheet
     }
 
     /**
-     * The Livewire call of a round step.
+     * The click of a round step: an event to the meeting component of the
+     * page, which holds the dialogs — `startRoundAction` becomes
+     * `start-round-action`, with the round and the kind as named parameters.
      */
     protected function roundCall(string $method, ElectionRound $round, ?string $kind = null): string
     {
-        return $kind === null ? "{$method}({$round->id})" : "{$method}({$round->id}, '{$kind}')";
+        $parameters = $kind === null ? "roundId: {$round->id}" : "roundId: {$round->id}, kind: '{$kind}'";
+
+        return "\$dispatchTo('association.election.admin-live', '".Str::kebab($method)."', { {$parameters} })";
     }
 
     protected function date(?CarbonInterface $moment): string

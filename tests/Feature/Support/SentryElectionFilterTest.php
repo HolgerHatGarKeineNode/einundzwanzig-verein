@@ -39,6 +39,7 @@ const SENTRY_ELECTION_COMPONENTS = [
     'association.election.admin',
     'association.election.admin-candidacies',
     'association.election.admin-form',
+    'association.election.admin-live',
     'association.election.admin-roll',
     'association.election.index',
     'association.election.protocol',

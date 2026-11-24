@@ -178,3 +178,16 @@ function electionBoard(int $count = 2): array
 
     return $members;
 }
+
+/**
+ * The click of a round step on the run sheet of the board's page, as
+ * RunSheet returns it — unescaped, so pass it to `assertSee`, which escapes:
+ * an event to the meeting component, e.g.
+ * `runSheetClick('start-round-action', 7, 'open')`.
+ */
+function runSheetClick(string $event, int $roundId, ?string $kind = null): string
+{
+    $parameters = $kind === null ? "roundId: {$roundId}" : "roundId: {$roundId}, kind: '{$kind}'";
+
+    return "\$dispatchTo('association.election.admin-live', '{$event}', { {$parameters} })";
+}

@@ -27,12 +27,16 @@ use Livewire\Features\SupportTesting\Testable;
 use Livewire\Livewire;
 
 require_once __DIR__.'/../../../../Feature/Services/Election/helpers.php';
+require_once __DIR__.'/helpers.php';
 
 /*
  * The meeting part of the board's election page: opening, closing and
  * annulling rounds, the turnout as a count, the share view, the result, the
  * run-off, the minutes, the test-election purge and the meeting fields that
  * stay editable. Counts only — no screen names a voter.
+ *
+ * The round actions belong to the meeting component (`liveControl()`); the
+ * run sheet that follows them is read on a fresh page (`livePage()`).
  */
 
 function livePage(): Testable
@@ -89,14 +93,17 @@ it('opens, ends early and annuls rounds through the page, each with its audit li
     $first = draftElectionRound(['position' => 1, 'title' => 'Präsidium'], election: $election);
     $second = draftElectionRound(['position' => 2, 'title' => 'Revisionsstelle'], election: $election);
 
-    $page = livePage()
-        ->assertSet('section', 'live')
-        ->assertSee('„Präsidium“ öffnen')
+    livePage()->assertSet('section', 'live')->assertSee('„Präsidium“ öffnen');
+
+    $page = liveControl($election)
         ->call('startRoundAction', $first->id, 'open')
         ->assertSet('pendingRoundAction', 'open')
         ->call('confirmRoundAction')
         ->assertHasNoErrors()
-        ->assertSee('„Präsidium“ ist offen.');
+        ->assertDispatched('election-changed')
+        ->assertSee('Offen seit');
+
+    livePage()->assertSee('„Präsidium“ ist offen.');
 
     expect($first->fresh()->opened_at)->not->toBeNull();
 
@@ -141,20 +148,20 @@ function liveRefusalScenario(string $kind, EinundzwanzigPleb $board): array
         'open' => (function () use ($election): array {
             $round = draftElectionRound(election: $election);
 
-            return [livePage()->call('startRoundAction', $round->id, 'open'), fn (Testable $page) => $page->call('confirmRoundAction'), fn (): bool => $round->fresh()->opened_at === null];
+            return [liveControl($election)->call('startRoundAction', $round->id, 'open'), fn (Testable $page) => $page->call('confirmRoundAction'), fn (): bool => $round->fresh()->opened_at === null];
         })(),
         'close early', 'annul' => (function () use ($election, $kind): array {
             $round = openElectionRound(election: $election);
             $action = $kind === 'annul' ? 'annul' : 'close';
 
-            return [livePage()->call('startRoundAction', $round->id, $action)->set('roundReason', 'Grund'), fn (Testable $page) => $page->call('confirmRoundAction'),
+            return [liveControl($election)->call('startRoundAction', $round->id, $action)->set('roundReason', 'Grund'), fn (Testable $page) => $page->call('confirmRoundAction'),
                 fn (): bool => $round->fresh()->closed_at === null && $round->fresh()->annulled_at === null];
         })(),
         'seal' => (function () use ($election): array {
             $round = openElectionRound(election: $election);
             Carbon::setTestNow(now()->addMinutes(61));
 
-            return [livePage(), fn (Testable $page) => $page->call('sealRound', $round->id), fn (): bool => $round->fresh()->closed_at === null];
+            return [liveControl($election), fn (Testable $page) => $page->call('sealRound', $round->id), fn (): bool => $round->fresh()->closed_at === null];
         })(),
         'run-off' => (function () use ($election, $board): array {
             $round = openElectionRound(['counting_rule' => ElectionCountingRule::YesNoPerCandidate], election: $election);
@@ -162,7 +169,7 @@ function liveRefusalScenario(string $kind, EinundzwanzigPleb $board): array
             castElectionBallot($round, $board, [$a => 'yes', $b => 'yes']);
             app(ElectionStewardship::class)->closeEarly($round, $board, 'Fertig');
 
-            return [livePage()->call('startTieRunOff', $round->id)->set('runOffResolved', true), fn (Testable $page) => $page->call('confirmTieRunOff'), fn (): bool => ! ElectionRound::query()->where('parent_round_id', $round->id)->exists()];
+            return [liveControl($election)->call('startTieRunOff', $round->id)->set('runOffResolved', true), fn (Testable $page) => $page->call('confirmTieRunOff'), fn (): bool => ! ElectionRound::query()->where('parent_round_id', $round->id)->exists()];
         })(),
         'casting vote' => (function () use ($election, $board): array {
             $round = openElectionRound(['counting_rule' => ElectionCountingRule::YesNoPerCandidate], election: $election);
@@ -170,12 +177,12 @@ function liveRefusalScenario(string $kind, EinundzwanzigPleb $board): array
             castElectionBallot($round, $board, [$a => 'yes', $b => 'yes']);
             app(ElectionStewardship::class)->closeEarly($round, $board, 'Fertig');
 
-            return [livePage()->call('startCastingVote', $round->id)->set('castingCandidates', [$a])->set('castingChair', 'Erika Vorsitz'), fn (Testable $page) => $page->call('recordCastingVote'), fn (): bool => ! ElectionCastingVote::query()->where('election_round_id', $round->id)->exists()];
+            return [liveControl($election)->call('startCastingVote', $round->id)->set('castingCandidates', [$a])->set('castingChair', 'Erika Vorsitz'), fn (Testable $page) => $page->call('recordCastingVote'), fn (): bool => ! ElectionCastingVote::query()->where('election_round_id', $round->id)->exists()];
         })(),
         'repeat' => (function () use ($election, $board): array {
             $round = app(ElectionStewardship::class)->annul(openElectionRound(election: $election), $board, 'Falsche Liste');
 
-            return [livePage()->call('startRoundAction', $round->id, 'repeat'), fn (Testable $page) => $page->call('confirmRoundAction'),
+            return [liveControl($election)->call('startRoundAction', $round->id, 'repeat'), fn (Testable $page) => $page->call('confirmRoundAction'),
                 fn (): bool => ! ElectionRound::query()->where('election_event_id', $election->id)->whereNull('opened_at')->exists()];
         })(),
         'meeting' => (function () use ($election): array {
@@ -211,9 +218,10 @@ it('refuses each live action itself once the session belongs to a member, and wr
 
 it('asks before a round action, and the question itself is board-only', function () {
     [$board] = electionBoard(1);
-    $round = openElectionRound(election: Election::factory()->test()->create());
+    $election = Election::factory()->test()->create();
+    $round = openElectionRound(election: $election);
     NostrAuth::login($board->pubkey);
-    $page = livePage();
+    $page = liveControl($election);
     NostrAuth::login(electionVoter()->pubkey);
 
     $page->call('startRoundAction', $round->id, 'close')->assertForbidden();
@@ -319,11 +327,13 @@ it('sets up the run-off of a tie only on the resolution of the assembly, right a
 
     app(ElectionStewardship::class)->closeEarly($round, $board, 'Fertig');
 
-    $page = livePage()
+    livePage()
         ->assertSee('Gleichstand um einen Sitz.')
         ->assertSee('Die/der Vorsitzende fällt den Stichentscheid.')
         ->assertSee('Stichentscheid eintragen')
-        ->assertSee('Stichwahl anlegen')
+        ->assertSee('Stichwahl anlegen');
+
+    $page = liveControl($election)
         // Without the assembly's resolution there is no run-off of a tie, by either way in.
         ->call('createRunOff', $round->id)
         ->call('startTieRunOff', $round->id)
@@ -346,10 +356,11 @@ it('sets up the run-off of a tie only on the resolution of the assembly, right a
         ->and(liveAudit($election))->toBe(['round_closed_early', 'run_off_created'])
         ->and(ElectionAuditEntry::query()->where('action', 'run_off_created')->sole()->details)->toBe(['resolution' => 'assembly']);
 
-    $page->assertSee('„Stichwahl Vorstand“ öffnen')
+    $page->assertDispatched('election-changed')
         ->assertSee('Die Versammlung hat statt des Stichentscheids eine Stichwahl beschlossen.');
+    livePage()->assertSee('„Stichwahl Vorstand“ öffnen');
 
-    livePage()->call('startTieRunOff', $round->id)->set('runOffResolved', true)->call('confirmTieRunOff')
+    liveControl($election)->call('startTieRunOff', $round->id)->set('runOffResolved', true)->call('confirmTieRunOff')
         ->assertHasErrors(['runOffResolved']);
 
     expect(ElectionRound::query()->where('parent_round_id', $round->id)->count())->toBe(1);
@@ -411,7 +422,8 @@ it('purges a test election with every row, and refuses a real one', function () 
 
     $screen = Livewire::test('association.election.screen', ['election' => $test->id])->assertSeeHtml('wire:poll');
 
-    livePage()->call('selectElection', $test->id)
+    // The newest election is selected on the first render, the only one that shows the children.
+    livePage()->assertSet('selectedElectionId', $test->id)
         ->assertSeeHtml('data-test="live-purge-election"')
         ->call('purgeTestElection')
         ->assertSet('selectedElectionId', $real->id);
@@ -461,8 +473,8 @@ function liveSharedCandidateEvening(): array
 }
 
 /**
- * Open `$round` on the page, cast one ballot per entry of `$ballots` (voter
- * index => candidate id) and close it on the page.
+ * Open `$round` on the meeting component, cast one ballot per entry of
+ * `$ballots` (voter index => candidate id) and close it there.
  *
  * @param  list<EinundzwanzigPleb>  $voters
  * @param  array<int, int>  $ballots
@@ -483,20 +495,21 @@ function liveVoteRound(Testable $page, ElectionRound $round, array $voters, arra
 
 it('opens the next round once a run-off has settled the tie of a candidate who stands in it', function () {
     liveBoard();
-    [, $presidency, $treasury, $voters, $ids] = liveSharedCandidateEvening();
+    [$election, $presidency, $treasury, $voters, $ids] = liveSharedCandidateEvening();
 
-    $page = liveVoteRound(livePage(), $presidency, $voters, [$ids['a'], $ids['a'], $ids['b'], $ids['b']])
-        ->assertSee('„Vorsitz“ endet im Gleichstand.')
-        ->call('startTieRunOff', $presidency->id)->set('runOffResolved', true)->call('confirmTieRunOff');
+    $page = liveVoteRound(liveControl($election), $presidency, $voters, [$ids['a'], $ids['a'], $ids['b'], $ids['b']]);
+    livePage()->assertSee('„Vorsitz“ endet im Gleichstand.');
+    $page->call('startTieRunOff', $presidency->id)->set('runOffResolved', true)->call('confirmTieRunOff');
 
     $runOff = ElectionRound::query()->where('parent_round_id', $presidency->id)->sole();
     $runOffA = (int) $runOff->candidates()
         ->where('einundzwanzig_pleb_id', ElectionCandidate::query()->findOrFail($ids['a'])->einundzwanzig_pleb_id)
         ->value('id');
 
-    liveVoteRound($page, $runOff, $voters, [$runOffA, $runOffA, $runOffA])
-        ->assertSee('„Kasse“ öffnen')
-        ->call('startRoundAction', $treasury->id, 'open')
+    liveVoteRound($page, $runOff, $voters, [$runOffA, $runOffA, $runOffA]);
+    livePage()->assertSee('„Kasse“ öffnen');
+
+    $page->call('startRoundAction', $treasury->id, 'open')
         ->call('confirmRoundAction')
         ->assertHasNoErrors();
 
@@ -508,8 +521,8 @@ it('opens the next round once a run-off has settled the tie of a candidate who s
 
 it('says in German which earlier result keeps the next round shut', function (string $earlier, string $sentence) {
     liveBoard();
-    [, $presidency, $treasury, $voters, $ids] = liveSharedCandidateEvening();
-    $page = livePage();
+    [$election, $presidency, $treasury, $voters, $ids] = liveSharedCandidateEvening();
+    $page = liveControl($election);
 
     match ($earlier) {
         'tie' => liveVoteRound($page, $presidency, $voters, [$ids['a'], $ids['a'], $ids['b'], $ids['b']]),
@@ -539,7 +552,7 @@ it('says in German which later round, opened and not counted, keeps an earlier r
     // The page keeps one round open at a time; past its 60 minutes and not yet counted, the chair still holds the treasury back.
     $this->travel(OpenRound::LIVE_MAX_MINUTES + 1)->minutes();
 
-    livePage()
+    liveControl($election)
         ->call('startRoundAction', $treasury->id, 'open')
         ->call('confirmRoundAction')
         ->assertHasErrors(['roundReason'])
@@ -563,7 +576,7 @@ it('says in German which later round, tied and not decided, keeps an earlier rou
     Profile::factory()->create(['pubkey' => $memberA->pubkey, 'name' => 'Alice Ambrosius']);
     ElectionCandidate::factory()->create(['election_round_id' => $treasury->id, 'einundzwanzig_pleb_id' => $memberA->id]);
 
-    livePage()
+    liveControl($election)
         ->call('startRoundAction', $treasury->id, 'open')
         ->call('confirmRoundAction')
         ->assertHasErrors(['roundReason'])
@@ -578,7 +591,7 @@ it('repeats an annulled round from the page right after it, and then offers open
     $presidency = draftElectionRound(['title' => 'Vorsitz', 'position' => 1], election: $election);
     $treasury = draftElectionRound(['title' => 'Kasse', 'position' => 2], election: $election);
 
-    $page = livePage()
+    $page = liveControl($election)
         ->call('startRoundAction', $presidency->id, 'open')->call('confirmRoundAction')
         ->call('startRoundAction', $presidency->id, 'annul')->set('roundReason', 'Falsche Liste')->call('confirmRoundAction')
         ->assertHasNoErrors()
@@ -589,8 +602,9 @@ it('repeats an annulled round from the page right after it, and then offers open
         ->assertSee('Legt „Vorsitz (Wiederholung)“ als neuen Wahlgang an')
         ->call('confirmRoundAction')
         ->assertHasNoErrors()
-        ->assertSee('„Vorsitz (Wiederholung)“ öffnen')
         ->assertDontSeeHtml('data-test="repeat-round-'.$presidency->id.'"');
+
+    livePage()->assertSee('„Vorsitz (Wiederholung)“ öffnen');
 
     $repeat = ElectionRound::query()->where('title', 'Vorsitz (Wiederholung)')->sole();
 
@@ -620,12 +634,15 @@ it('never calls the evening finished while an annulled round has no repeat', fun
     $election = Election::factory()->announced()->create();
     $round = draftElectionRound(['title' => 'Vorsitz'], election: $election);
 
-    livePage()
+    liveControl($election)
         ->call('startRoundAction', $round->id, 'open')->call('confirmRoundAction')
         ->call('startRoundAction', $round->id, 'annul')->set('roundReason', 'Falsche Liste')->call('confirmRoundAction')
+        ->assertHasNoErrors();
+
+    livePage()
         ->assertSee('„Vorsitz“ ist annulliert und noch nicht wiederholt.')
         ->assertDontSee('Alle Wahlgänge sind abgeschlossen.')
-        ->assertSeeHtml("startRoundAction({$round->id}, &#039;repeat&#039;)");
+        ->assertSee(runSheetClick('start-round-action', $round->id, 'repeat'));
 });
 
 it('keeps every other round shut while one is open, on the page and in the action', function () {
@@ -634,7 +651,7 @@ it('keeps every other round shut while one is open, on the page and in the actio
     $first = draftElectionRound(['title' => 'Vorsitz', 'position' => 1], election: $election);
     $second = draftElectionRound(['title' => 'Kasse', 'position' => 2], election: $election);
 
-    $page = livePage()
+    $page = liveControl($election)
         ->assertSeeHtml('data-test="open-round-'.$second->id.'"')
         ->call('startRoundAction', $first->id, 'open')->call('confirmRoundAction')
         ->assertHasNoErrors()
@@ -673,9 +690,11 @@ it('offers the casting vote first and the resolved run-off second for a tie, and
 
     expect($cardStart)->toBeGreaterThan(0)
         ->and($card)->toContain('„Vorstand“ endet im Gleichstand.')
-        ->and(strpos($card, "startCastingVote({$round->id})"))->toBeLessThan(strpos($card, "startTieRunOff({$round->id})"))
+        ->and($card)->toContain(e(runSheetClick('start-casting-vote', $round->id)))
+        ->and(strpos($card, e(runSheetClick('start-casting-vote', $round->id))))->toBeLessThan(strpos($card, e(runSheetClick('start-tie-run-off', $round->id))))
         ->and($resultCard)->toContain('data-test="casting-vote-'.$round->id.'"')
         ->and($resultCard)->toContain('data-test="tie-run-off-'.$round->id.'"')
+        ->and($html)->not->toContain(e(runSheetClick('create-run-off', $round->id)))
         ->and($html)->not->toContain("createRunOff({$round->id})");
 });
 
@@ -698,14 +717,17 @@ it('treats a run-off annulled along with its round as void on the card, the live
     $chair = app(CloseRound::class)->handle($chair);
     $runOff = app(CreateRunOff::class)->handle($chair, $board, resolvedByAssembly: true);
 
-    $page = livePage()
-        ->assertSee('„'.$runOff->title.'“ öffnen')
+    livePage()->assertSee('„'.$runOff->title.'“ öffnen');
+
+    $page = liveControl($election)
         ->call('startRoundAction', $chair->id, 'annul')->set('roundReason', 'Falsche Liste')->call('confirmRoundAction')
         ->assertHasNoErrors()
-        ->assertSee('„Vorsitz“ ist annulliert und noch nicht wiederholt.')
-        ->assertDontSee('„'.$runOff->title.'“ öffnen')
         ->assertSee('Nicht geöffnet, annulliert.')
         ->assertSee('Grund: Mit „Vorsitz“ annulliert');
+
+    livePage()
+        ->assertSee('„Vorsitz“ ist annulliert und noch nicht wiederholt.')
+        ->assertDontSee('„'.$runOff->title.'“ öffnen');
 
     expect($runOff->fresh()->annulled_at)->not->toBeNull();
 
@@ -713,9 +735,9 @@ it('treats a run-off annulled along with its round as void on the card, the live
         ->assertSee('Nicht geöffnet, annulliert')
         ->assertDontSee('Geöffnet , annulliert');
 
-    $page->call('startRoundAction', $chair->id, 'repeat')->call('confirmRoundAction')
-        ->assertHasNoErrors()
-        ->assertSee('„Vorsitz (Wiederholung)“ öffnen');
+    $page->call('startRoundAction', $chair->id, 'repeat')->call('confirmRoundAction')->assertHasNoErrors();
+
+    livePage()->assertSee('„Vorsitz (Wiederholung)“ öffnen');
 });
 
 /*
@@ -751,10 +773,11 @@ it('names the annulled round, not its run-off, as the last one on the card and t
         }
     });
 
-    livePage()
+    liveControl($election)
         ->call('startRoundAction', $chair->id, 'annul')->set('roundReason', 'Falsche Liste')->call('confirmRoundAction')
-        ->assertHasNoErrors()
-        ->assertSee('„Vorsitz“ ist annulliert. Als Nächstes: „Kasse“.');
+        ->assertHasNoErrors();
+
+    livePage()->assertSee('„Vorsitz“ ist annulliert. Als Nächstes: „Kasse“.');
 
     expect(Livewire::test('association.election.screen', ['election' => $election->id])->instance()->current['report']['round']->title)->toBe('Vorsitz');
 });
@@ -943,11 +966,13 @@ it('leads out of a round nobody can stand in any more: names the person, then st
     $annaBeisitz = ElectionCandidate::factory()->create(['election_round_id' => $beisitz->id, 'einundzwanzig_pleb_id' => $anna->einundzwanzig_pleb_id]);
     ElectionCandidate::factory()->pending()->create(['election_round_id' => $beisitz->id, 'einundzwanzig_pleb_id' => EinundzwanzigPleb::factory()->active()->create()->id]);
 
-    $page = liveVoteRound(livePage(), $presidency, $voters, [(int) $anna->id, (int) $anna->id, (int) $anna->id])
+    $page = liveVoteRound(liveControl($election), $presidency, $voters, [(int) $anna->id, (int) $anna->id, (int) $anna->id]);
+
+    livePage()
         ->assertSee('„Beisitz“ lässt sich nicht öffnen.')
         ->assertSee('Anna Beispiel ist in einem früheren Wahlgang schon gewählt. Zieht die Kandidatur von Anna Beispiel hier unter „Kandidaturen“ zurück')
         ->assertDontSee('„Beisitz“ öffnen')
-        ->assertSeeHtml("startRoundAction({$beisitz->id}, &#039;strike&#039;)");
+        ->assertSee(runSheetClick('start-round-action', $beisitz->id, 'strike'));
 
     // The refusal of the action itself names the person and the tab too.
     $page->call('startRoundAction', $beisitz->id, 'open')
@@ -959,10 +984,9 @@ it('leads out of a round nobody can stand in any more: names the person, then st
         ->call('startDecision', $annaBeisitz->id, 'withdraw')->set('decisionReason', 'Schon im Präsidium')->call('confirmDecision')
         ->assertDispatched('election-changed');
 
-    $page->dispatch('election-changed')
-        ->assertSee('Dieser Wahlgang hat keine freigegebene Kandidatur. Gebt unter „Kandidaturen“ eine frei, oder streicht den Wahlgang');
+    $board = livePage()->assertSee('Dieser Wahlgang hat keine freigegebene Kandidatur. Gebt unter „Kandidaturen“ eine frei, oder streicht den Wahlgang');
 
-    expect(liveNextStep($page->html()))->not->toContain('„Beisitz“ öffnen')
+    expect(liveNextStep($board->html()))->not->toContain('„Beisitz“ öffnen')
         ->toContain('Wahlgang streichen');
 
     $page->call('startRoundAction', $beisitz->id, 'strike')
@@ -972,9 +996,10 @@ it('leads out of a round nobody can stand in any more: names the person, then st
         ->set('roundReason', 'Niemand kann mehr antreten')
         ->call('confirmRoundAction')
         ->assertHasNoErrors()
-        ->assertSee('Alle Wahlgänge sind abgeschlossen.')
         ->assertSee('Nicht geöffnet, annulliert.')
         ->assertSee('Grund: Niemand kann mehr antreten');
+
+    livePage()->assertSee('Alle Wahlgänge sind abgeschlossen.');
 
     expect($beisitz->fresh()->annulled_at)->not->toBeNull()
         ->and($beisitz->fresh()->opened_at)->toBeNull()
@@ -998,8 +1023,8 @@ it('offers opening the first round before the meeting while a later round still 
 
     expect($card)->toContain('Zuerst: „Vorsitz“.')
         ->toContain('„Revision“ hat noch keine freigegebene Kandidatur. Kandidieren geht bis zur Sitzung.')
-        ->toContain("startRoundAction({$chair->id}, &#039;open&#039;)")
-        ->not->toContain("startRoundAction({$empty->id}, &#039;strike&#039;)")
+        ->toContain(e(runSheetClick('start-round-action', $chair->id, 'open')))
+        ->not->toContain(e(runSheetClick('start-round-action', $empty->id, 'strike')))
         ->not->toContain('Wahlgang streichen');
 });
 
@@ -1011,9 +1036,13 @@ it('offers striking the first round before the meeting when it has no candidacy,
 
     livePage()
         ->assertSee('„Revision“ hat noch keine freigegebene Kandidatur.')
-        ->assertSeeHtml("startRoundAction({$empty->id}, &#039;strike&#039;)")
+        ->assertSee(runSheetClick('start-round-action', $empty->id, 'strike'));
+
+    liveControl($election)
         ->call('startRoundAction', $empty->id, 'strike')->set('roundReason', 'Keine Kandidatur')->call('confirmRoundAction')
-        ->assertHasNoErrors()
+        ->assertHasNoErrors();
+
+    livePage()
         ->assertDontSee('„Revision“ hat noch keine freigegebene Kandidatur.')
         ->assertSee('Zuerst: „Vorsitz“.');
 });
@@ -1034,7 +1063,7 @@ it('says that a counted round keeps its void result when annulled, and that an o
     castElectionBallot($counted, $voter, [$counted->candidates()->value('id') => 'for']);
     app(ElectionStewardship::class)->closeEarly($counted, $board, 'Fertig');
 
-    $page = livePage()->call('startRoundAction', $counted->id, 'annul')
+    $page = liveControl($election)->call('startRoundAction', $counted->id, 'annul')
         ->assertSee('Das ausgezählte Ergebnis wird ungültig. Es bleibt im Beschlussprotokoll stehen, markiert als „ungültig“')
         ->assertDontSee('Die abgegebenen Stimmen werden nie ausgezählt')
         ->set('roundReason', 'Falsche Liste')->call('confirmRoundAction')
@@ -1080,10 +1109,11 @@ it('does not call a seat empty when the missed majority leads to a run-off', fun
     [$a, $b, $c] = $round->candidates()->orderBy('id')->pluck('id')->all();
 
     // 3 : 2 : 1 is no majority and no tie: the run-off of the two leaders follows.
-    $page = liveVoteRound(livePage(), $round, $voters, [$a, $a, $a, $b, $b, $c])->assertSee('Niemand hat die nötige Mehrheit.');
+    liveVoteRound(liveControl($election), $round, $voters, [$a, $a, $a, $b, $b, $c])
+        ->assertSee('Niemand hat die nötige Mehrheit.')
+        ->assertDontSeeHtml('data-test="live-seats-open-'.$round->id.'"');
 
-    $page->assertDontSeeHtml('data-test="live-seats-open-'.$round->id.'"');
-    expect(liveNextStep($page->html()))->not->toContain('bleibt ein Sitz frei');
+    expect(liveNextStep(livePage()->html()))->not->toContain('bleibt ein Sitz frei');
 });
 
 /*
@@ -1097,14 +1127,16 @@ it('mentions the pending repeat while the card moves on to the next round', func
     $chair = draftElectionRound(['title' => 'Vorsitz', 'position' => 1], election: $election);
     draftElectionRound(['title' => 'Kasse', 'position' => 2], election: $election);
 
-    livePage()
+    $page = liveControl($election)
         ->call('startRoundAction', $chair->id, 'open')->call('confirmRoundAction')
         ->call('startRoundAction', $chair->id, 'annul')->set('roundReason', 'Falsche Liste')->call('confirmRoundAction')
-        ->assertHasNoErrors()
-        ->assertSee('„Vorsitz“ ist annulliert. Als Nächstes: „Kasse“. „Vorsitz“ wartet noch auf die Wiederholung.')
-        ->call('startRoundAction', $chair->id, 'repeat')->call('confirmRoundAction')
-        ->assertHasNoErrors()
-        ->assertDontSee('wartet noch auf die Wiederholung');
+        ->assertHasNoErrors();
+
+    livePage()->assertSee('„Vorsitz“ ist annulliert. Als Nächstes: „Kasse“. „Vorsitz“ wartet noch auf die Wiederholung.');
+
+    $page->call('startRoundAction', $chair->id, 'repeat')->call('confirmRoundAction')->assertHasNoErrors();
+
+    livePage()->assertDontSee('wartet noch auf die Wiederholung');
 });
 
 /*
@@ -1118,17 +1150,17 @@ it('mentions the pending repeat while the next round cannot open', function () {
     $chair = draftElectionRound(['title' => 'Vorsitz', 'position' => 1], election: $election);
     draftElectionRound(['title' => 'Kasse', 'position' => 2], candidates: 0, election: $election);
 
-    $page = livePage()
+    $page = liveControl($election)
         ->call('startRoundAction', $chair->id, 'open')->call('confirmRoundAction')
         ->call('startRoundAction', $chair->id, 'annul')->set('roundReason', 'Falsche Liste')->call('confirmRoundAction')
         ->assertHasNoErrors();
 
-    expect(liveNextStep($page->html()))->toContain('„Kasse“ lässt sich nicht öffnen. „Vorsitz“ wartet noch auf die Wiederholung.');
+    expect(liveNextStep(livePage()->html()))->toContain('„Kasse“ lässt sich nicht öffnen. „Vorsitz“ wartet noch auf die Wiederholung.');
 
     $page->call('startRoundAction', $chair->id, 'repeat')->call('confirmRoundAction')
         ->assertHasNoErrors();
 
-    expect(liveNextStep($page->html()))->not->toContain('wartet noch auf die Wiederholung');
+    expect(liveNextStep(livePage()->html()))->not->toContain('wartet noch auf die Wiederholung');
 });
 
 /*
@@ -1142,7 +1174,7 @@ it('shows the turnout in the close modal before the board confirms', function ()
     $voters = [electionVoter(), electionVoter(), electionVoter()];
     $round = draftElectionRound(['title' => 'Vorsitz'], election: $election);
 
-    $page = livePage()
+    $page = liveControl($election)
         ->call('startRoundAction', $round->id, 'open')->call('confirmRoundAction')
         ->call('startRoundAction', $round->id, 'close')
         ->assertSee('Noch hat niemand abgestimmt: 0 von 4 Wahlberechtigten.');
@@ -1288,4 +1320,78 @@ it('marks an annulled round with an unreadable count as unreadable in the minute
     expect(Livewire::test('association.election.protocol', ['election' => $election])->instance()->plainText)
         ->toContain('Ergebnis nicht lesbar')
         ->toContain('election:verify '.$annulled->id);
+});
+
+/*
+ * The meeting component on its own: Livewire children are callable without
+ * the page, so every public method asks the board guard itself, a round of
+ * another election is not found, and the hand-offs to the page are events.
+ */
+it('answers 403 on every public method of the meeting component to a member who is not, or no longer, on the board', function () {
+    [$board] = electionBoard(1);
+    $election = Election::factory()->announced()->create();
+    $round = draftElectionRound(election: $election);
+    $member = electionVoter();
+
+    $methods = expectEveryMethodBoardOnly(
+        fn () => liveControl($election)->set('roundReason', 'Grund'),
+        $board,
+        $member,
+        ['roundId' => $round->id, 'kind' => 'open'],
+    );
+
+    expect($methods)->toBe([
+        'confirmRoundAction', 'confirmTieRunOff', 'createRunOff', 'election', 'recordCastingVote', 'refreshRounds',
+        'roundReports', 'sealRound', 'startCastingVote', 'startRoundAction', 'startTieRunOff', 'tie',
+    ])
+        ->and($round->fresh()->opened_at)->toBeNull()
+        ->and(ElectionAuditEntry::query()->count())->toBe(0);
+
+    NostrAuth::login($member->pubkey);
+    liveControl($election)->assertForbidden();
+});
+
+it('does not find a round of another election in any round action', function (string $method) {
+    liveBoard();
+    $election = Election::factory()->announced()->create();
+    draftElectionRound(election: $election);
+    $foreign = draftElectionRound(election: Election::factory()->announced()->create());
+
+    $arguments = $method === 'startRoundAction' ? [$foreign->id, 'open'] : [$foreign->id];
+
+    liveControl($election)->call($method, ...$arguments)->assertNotFound();
+
+    expect($foreign->fresh()->opened_at)->toBeNull()
+        ->and(ElectionAuditEntry::query()->count())->toBe(0);
+})->with(['startRoundAction', 'sealRound', 'startCastingVote', 'startTieRunOff', 'createRunOff']);
+
+it('asks the page for the meeting tab when a step comes from another tab, and tells the page after an act', function () {
+    liveBoard();
+    $election = Election::factory()->announced()->create();
+    $round = draftElectionRound(['title' => 'Vorsitz'], election: $election);
+
+    // Hidden behind another tab, the list renders nothing but the dialogs.
+    Livewire::test('association.election.admin-live', ['electionId' => $election->id, 'visible' => false])
+        ->assertDontSeeHtml('data-test="open-round-'.$round->id.'"')
+        ->call('startRoundAction', $round->id, 'open')
+        ->assertDispatched('show-section', section: 'live')
+        ->call('confirmRoundAction')
+        ->assertHasNoErrors()
+        ->assertDispatched('election-changed');
+
+    liveControl($election)
+        ->call('startRoundAction', $round->id, 'close')
+        ->assertNotDispatched('show-section')
+        ->assertNotDispatched('election-changed');
+
+    // The page side of both events.
+    livePage()
+        ->call('showSection', 'roll')
+        ->assertSet('section', 'roll')
+        ->dispatch('show-section', section: 'live')
+        ->assertSet('section', 'live')
+        ->dispatch('election-changed')
+        ->assertOk();
+
+    expect($round->fresh()->opened_at)->not->toBeNull();
 });

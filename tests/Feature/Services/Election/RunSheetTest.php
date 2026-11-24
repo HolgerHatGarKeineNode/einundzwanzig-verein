@@ -63,7 +63,7 @@ it('sends pending candidacies to the candidacies section and offers striking a f
         'text' => '„Präsidium“ hat noch keine freigegebene Kandidatur.',
         'action' => 'candidacies',
         'secondary_label' => 'Wahlgang streichen',
-        'secondary_click' => "startRoundAction({$first->id}, 'strike')",
+        'secondary_click' => runSheetClick('start-round-action', $first->id, 'strike'),
     ]);
 });
 
@@ -73,11 +73,11 @@ it('offers closing the open round, then opening the next, then the minutes', fun
     $first = draftElectionRound(['title' => 'Präsidium', 'position' => 1], election: $election);
     $second = draftElectionRound(['title' => 'Vorstand', 'position' => 2], election: $election);
 
-    expect(runSheetStep($election))->toMatchArray(['label' => '„Präsidium“ öffnen', 'click' => "startRoundAction({$first->id}, 'open')"]);
+    expect(runSheetStep($election))->toMatchArray(['label' => '„Präsidium“ öffnen', 'click' => runSheetClick('start-round-action', $first->id, 'open')]);
 
     app(OpenRound::class)->handle($first->fresh());
 
-    expect(runSheetStep($election))->toMatchArray(['text' => '„Präsidium“ ist offen.', 'click' => "startRoundAction({$first->id}, 'close')"])
+    expect(runSheetStep($election))->toMatchArray(['text' => '„Präsidium“ ist offen.', 'click' => runSheetClick('start-round-action', $first->id, 'close')])
         ->and(runSheetStates($election))->toBe(['done', 'done', 'done', 'current', 'ahead']);
 
     $stewardship = app(ElectionStewardship::class);
@@ -110,6 +110,6 @@ it('names the person and the way out when the next round cannot be opened', func
         'text' => '„Beisitz“ lässt sich nicht öffnen.',
         'action' => 'candidacies',
         'click' => null,
-        'secondary_click' => "startRoundAction({$beisitz->id}, 'strike')",
+        'secondary_click' => runSheetClick('start-round-action', $beisitz->id, 'strike'),
     ])->and(runSheetStep($election)['hint'])->toStartWith('Anna Beispiel ist in einem früheren Wahlgang schon gewählt.');
 });

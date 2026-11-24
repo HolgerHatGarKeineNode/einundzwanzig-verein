@@ -1,34 +1,16 @@
 <?php
 
-use App\Enums\ElectionCandidateStatus;
-use App\Enums\ElectionOutcome;
 use App\Enums\ElectionPhase;
-use App\Enums\ElectionRoundState;
-use App\Enums\ElectionTieKind;
 use App\Exceptions\ElectionActionRefusedException;
-use App\Exceptions\ElectionCandidateBlockedException;
-use App\Exceptions\ElectionRoundStateException;
 use App\Livewire\Traits\WithViewer;
 use App\Models\Election;
-use App\Models\ElectionRollEntry;
-use App\Models\ElectionRound;
-use App\Models\MemberProposal;
-use App\Services\Election\CreateRunOff;
-use App\Services\Election\ElectionAuditLog;
 use App\Services\Election\ElectionStewardship;
-use App\Services\Election\ElectoralRoll;
 use App\Services\Election\PurgeTestElection;
-use App\Services\Election\RecordCastingVote;
-use App\Services\Election\RefusalText;
-use App\Services\Election\RoundReport;
 use App\Services\Election\RunSheet;
-use App\Services\Election\TallyRound;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
-use Illuminate\Support\Collection;
-use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
 use Livewire\Attributes\On;
@@ -36,8 +18,12 @@ use Livewire\Component;
 
 /**
  * The board runs the election here: a run sheet per election with the one
- * next step, the settings of an election and its rounds, the candidacies and
- * the electoral roll.
+ * next step, and for the selected election four tabs, each a child
+ * component of its own — the settings (`admin-form`), the candidacies
+ * (`admin-candidacies`), the electoral roll (`admin-roll`) and the meeting
+ * (`admin-live`, mounted on every tab for the dialogs of the run sheet).
+ * The children tell the page `election-changed` after an act, and the page
+ * reads the run sheet again.
  *
  * The board is the Wahlleitung — every current board member may take every
  * step, also as a candidate (user, 2026-11-14). Every public method resolves
@@ -52,8 +38,6 @@ new class extends Component
 
     private const SECTIONS = ['settings', 'candidacies', 'roll', 'live'];
 
-    private const DEFAULT_CLOSE_REASON = 'Abstimmung in der Sitzung beendet.';
-
     #[Locked]
     public bool $isGuest = false;
 
@@ -64,31 +48,6 @@ new class extends Component
     public bool $creating = false;
 
     public string $section = 'settings';
-
-    #[Locked]
-    public ?int $pendingRoundId = null;
-
-    /** 'open', 'close', 'annul', 'strike' or 'repeat' — what the round modal confirms. */
-    #[Locked]
-    public ?string $pendingRoundAction = null;
-
-    public string $roundReason = '';
-
-    /** The tied round the casting-vote or tie run-off dialog is about. */
-    #[Locked]
-    public ?int $tieRoundId = null;
-
-    /** @var list<int|string> candidate ids the chair decided for */
-    public array $castingCandidates = [];
-
-    public string $castingChair = '';
-
-    /** In a yes-equals-no tie an empty selection decides everyone "Nein"; the chair must confirm that on purpose. */
-    public bool $castingAllNo = false;
-
-    public string $castingNote = '';
-
-    public bool $runOffResolved = false;
 
     public function mount(): void
     {
@@ -142,6 +101,7 @@ new class extends Component
         $this->select(Election::query()->findOrFail($electionId));
     }
 
+    #[On('show-section')]
     public function showSection(string $section): void
     {
         $this->boardActor();
@@ -177,269 +137,6 @@ new class extends Component
     }
 
     /**
-     * Ask before a round is opened, ended, annulled or repeated. Ending and
-     * annulling take a reason, which goes into the audit log.
-     */
-    public function startRoundAction(int $roundId, string $kind): void
-    {
-        $this->boardActor();
-
-        $round = ElectionRound::query()->findOrFail($roundId);
-
-        if ((int) $round->election_event_id !== $this->selectedElectionId) {
-            $this->select($round->election);
-        }
-
-        $this->pendingRoundId = (int) $round->id;
-        $this->pendingRoundAction = in_array($kind, ['open', 'close', 'annul', 'strike', 'repeat'], true) ? $kind : 'open';
-        $this->roundReason = $this->pendingRoundAction === 'close' ? __(self::DEFAULT_CLOSE_REASON) : '';
-        $this->section = 'live';
-        $this->resetErrorBag('roundReason');
-
-        Flux::modal('round-action')->show();
-    }
-
-    public function confirmRoundAction(ElectionStewardship $stewardship): void
-    {
-        $actor = $this->boardActor();
-
-        $round = ElectionRound::query()->findOrFail($this->pendingRoundId ?? abort(404));
-        $action = $this->pendingRoundAction ?? 'open';
-
-        if ($action === 'open' && ($openRound = $this->openRoundBesides($round)) !== null) {
-            $this->addError('roundReason', __('„:open“ ist noch offen. Es ist immer nur ein Wahlgang offen: Schließt „:open“ zuerst, dann lässt sich „:round“ öffnen.', ['open' => $openRound->title, 'round' => $round->title]));
-
-            return;
-        }
-
-        if (in_array($action, ['close', 'annul', 'strike'], true)) {
-            $this->validate(
-                ['roundReason' => ['required', 'string', 'min:3', 'max:1000']],
-                [
-                    'roundReason.required' => __('Nenne einen Grund. Er steht im Protokoll der Wahl.'),
-                    'roundReason.min' => __('Nenne einen Grund mit mindestens drei Zeichen.'),
-                    'roundReason.max' => __('Der Grund darf höchstens 1000 Zeichen lang sein.'),
-                ],
-            );
-        }
-
-        try {
-            $result = match ($action) {
-                'close' => $stewardship->closeEarly($round, $actor, trim($this->roundReason)),
-                'annul' => $stewardship->annul($round, $actor, trim($this->roundReason)),
-                'strike' => $stewardship->strike($round, $actor, trim($this->roundReason)),
-                'repeat' => $stewardship->repeat($round, $actor),
-                default => $stewardship->open($round, $actor),
-            };
-        } catch (ElectionRoundStateException $exception) {
-            $this->addError('roundReason', app(RefusalText::class)->of($action, $exception, $this->selectedElection));
-
-            return;
-        } catch (ElectionActionRefusedException) {
-            $this->addError('roundReason', __('„:round“ ist schon wiederholt oder nicht annulliert. Lade die Seite neu, vielleicht hat ihn schon jemand wiederholt.', ['round' => $round->title]));
-
-            return;
-        }
-
-        Flux::modal('round-action')->close();
-        $this->pendingRoundId = null;
-        $this->pendingRoundAction = null;
-        $this->roundReason = '';
-        $this->refreshElection($round->election);
-
-        Flux::toast(match ($action) {
-            'close' => __('„:round“ ist geschlossen und ausgezählt.', ['round' => $round->title]),
-            'annul' => __('„:round“ ist annulliert.', ['round' => $round->title]),
-            'strike' => __('„:round“ ist gestrichen.', ['round' => $round->title]),
-            'repeat' => __('„:round“ ist angelegt. Öffnet ihn, wenn alle bereit sind.', ['round' => $result->title]),
-            default => __('„:round“ ist offen. Die Wahlberechtigten können jetzt abstimmen.', ['round' => $round->title]),
-        }, variant: in_array($action, ['annul', 'strike'], true) ? 'warning' : 'success');
-    }
-
-    /**
-     * Seal a round whose 60 minutes ran out before anybody closed it.
-     */
-    public function sealRound(int $roundId, ElectionStewardship $stewardship): void
-    {
-        $actor = $this->boardActor();
-        $round = ElectionRound::query()->findOrFail($roundId);
-
-        try {
-            $stewardship->close($round, $actor);
-        } catch (ElectionRoundStateException) {
-            Flux::toast(__('„:round“ nimmt noch Stimmen an. Schließt ihn über „Wahlgang schließen“.', ['round' => $round->title]), variant: 'danger');
-
-            return;
-        }
-
-        $this->section = 'live';
-        $this->refreshElection($round->election);
-        Flux::toast(__('„:round“ ist ausgezählt.', ['round' => $round->title]), variant: 'success');
-    }
-
-    /**
-     * Open the dialog in which the election officer enters the chair's
-     * casting vote on the tie of a sealed round (statutes Art. 6).
-     */
-    public function startCastingVote(int $roundId): void
-    {
-        $this->boardActor();
-        $round = $this->tieRound($roundId);
-
-        if ($round === null) {
-            return;
-        }
-
-        $this->tieRoundId = (int) $round->id;
-        $this->castingCandidates = [];
-        $this->castingChair = '';
-        $this->castingAllNo = false;
-        $this->castingNote = '';
-        $this->section = 'live';
-        $this->resetErrorBag(['castingCandidates', 'castingChair', 'castingNote']);
-
-        Flux::modal('casting-vote')->show();
-    }
-
-    public function recordCastingVote(RecordCastingVote $castingVotes, TallyRound $tally): void
-    {
-        $actor = $this->boardActor();
-        $round = ElectionRound::query()->findOrFail($this->tieRoundId ?? abort(404));
-
-        // The tally refuses a round annulled while the dialog was open, so it
-        // sits in the same try as the recording and reaches the same refusal.
-        try {
-            $result = $tally->handle($round);
-            $exact = $result->tieKind === ElectionTieKind::Candidates;
-
-            $this->validate(
-                [
-                    'castingCandidates' => array_filter(['array', $exact ? 'size:'.$result->tiedSeats : 'max:'.$result->tiedSeats, $exact ? 'required' : null]),
-                    'castingCandidates.*' => ['integer', Rule::in($result->tied)],
-                    'castingChair' => ['required', 'string', 'min:2', 'max:'.RecordCastingVote::MAX_CHAIR_LENGTH],
-                    'castingNote' => ['nullable', 'string', 'max:'.ElectionAuditLog::MAX_REASON_LENGTH],
-                ],
-                [
-                    'castingCandidates.required' => trans_choice('{1} Wähle die Person, für die die/der Vorsitzende entschieden hat.|[2,*] Wähle die :count Personen, für die die/der Vorsitzende entschieden hat.', $result->tiedSeats, ['count' => $result->tiedSeats]),
-                    'castingCandidates.size' => trans_choice('{1} Wähle genau eine Person: Es geht um einen Sitz.|[2,*] Wähle genau :count Personen: Es geht um :count Sitze.', $result->tiedSeats, ['count' => $result->tiedSeats]),
-                    'castingCandidates.max' => trans_choice('{1} Höchstens eine Person kann mit Ja bestätigt werden: Es ist ein Sitz frei.|[2,*] Höchstens :count Personen können mit Ja bestätigt werden: Es sind :count Sitze frei.', $result->tiedSeats, ['count' => $result->tiedSeats]),
-                    'castingCandidates.*' => __('Wähle nur Personen aus dem Gleichstand.'),
-                    'castingChair.required' => __('Nenne die/den Vorsitzenden. Der Name steht im Protokoll.'),
-                    'castingChair.min' => __('Nenne die/den Vorsitzenden mit mindestens zwei Zeichen.'),
-                    'castingChair.max' => __('Der Name darf höchstens :max Zeichen lang sein.', ['max' => RecordCastingVote::MAX_CHAIR_LENGTH]),
-                    'castingNote.max' => __('Die Anmerkung darf höchstens :max Zeichen lang sein.', ['max' => ElectionAuditLog::MAX_REASON_LENGTH]),
-                ],
-            );
-
-            if (! $exact && $this->castingCandidates === [] && ! $this->castingAllNo) {
-                $this->addError('castingCandidates', __('Niemand ist angehakt. Hake an, wen die/der Vorsitzende mit Ja bestätigt, oder bestätige unten, dass alle mit Nein entschieden sind.'));
-
-                return;
-            }
-
-            if (! $exact && $this->castingCandidates !== [] && $this->castingAllNo) {
-                $this->addError('castingCandidates', __('Du hast Personen angehakt und zugleich „alle mit Nein“ bestätigt. Entscheide dich für eines.'));
-
-                return;
-            }
-
-            $castingVotes->handle($round, $actor, array_map(intval(...), $this->castingCandidates), $this->castingChair, $this->castingNote);
-        } catch (ElectionCandidateBlockedException $refusal) {
-            $this->addError('castingCandidates', app(RefusalText::class)->of('casting', $refusal, $this->selectedElection));
-
-            return;
-        } catch (\UnexpectedValueException) {
-            $this->addError('castingCandidates', app(RefusalText::class)->unreadable($round));
-
-            return;
-        } catch (ElectionActionRefusedException|ElectionRoundStateException) {
-            $this->addError('castingCandidates', __('Für „:round“ lässt sich kein Stichentscheid eintragen: Er ist schon eingetragen, es gibt eine Stichwahl, oder der Wahlgang ist annulliert. Lade die Seite neu.', ['round' => $round->title]));
-
-            return;
-        }
-
-        Flux::modal('casting-vote')->close();
-        $this->tieRoundId = null;
-        $this->castingCandidates = [];
-        $this->castingChair = '';
-        $this->castingAllNo = false;
-        $this->castingNote = '';
-        $this->refreshElection($round->election);
-
-        Flux::toast(__('Der Stichentscheid zu „:round“ ist eingetragen.', ['round' => $round->title]), variant: 'success');
-    }
-
-    /**
-     * Open the dialog for the run-off of a tie: the statutes have the chair
-     * decide, so a run-off only follows a resolution of the assembly.
-     */
-    public function startTieRunOff(int $roundId): void
-    {
-        $this->boardActor();
-        $round = $this->tieRound($roundId);
-
-        if ($round === null) {
-            return;
-        }
-
-        $this->tieRoundId = (int) $round->id;
-        $this->runOffResolved = false;
-        $this->section = 'live';
-        $this->resetErrorBag('runOffResolved');
-
-        Flux::modal('tie-run-off')->show();
-    }
-
-    public function confirmTieRunOff(CreateRunOff $runOffs): void
-    {
-        $actor = $this->boardActor();
-        $round = ElectionRound::query()->findOrFail($this->tieRoundId ?? abort(404));
-
-        $this->validate(
-            ['runOffResolved' => ['accepted']],
-            ['runOffResolved.accepted' => __('Eine Stichwahl gibt es bei Gleichstand nur, wenn die Versammlung sie beschlossen hat. Sonst fällt die/der Vorsitzende den Stichentscheid.')],
-        );
-
-        try {
-            $runOff = $runOffs->handle($round, $actor, resolvedByAssembly: true);
-        } catch (ElectionActionRefusedException|ElectionRoundStateException $exception) {
-            $this->addError('runOffResolved', str_contains($exception->getMessage(), 'cannot be counted')
-                ? app(RefusalText::class)->unreadableRunOff($round)
-                : __('Für „:round“ gibt es keine Stichwahl anzulegen: Der Stichentscheid ist schon eingetragen, oder es gibt die Stichwahl schon. Lade die Seite neu.', ['round' => $round->title]));
-
-            return;
-        }
-
-        Flux::modal('tie-run-off')->close();
-        $this->tieRoundId = null;
-        $this->runOffResolved = false;
-        $this->refreshElection($round->election);
-
-        Flux::toast(__('„:round“ ist angelegt. Öffnet sie, wenn alle bereit sind.', ['round' => $runOff->title]), variant: 'success');
-    }
-
-    public function createRunOff(int $roundId, CreateRunOff $runOffs): void
-    {
-        $actor = $this->boardActor();
-        $round = ElectionRound::query()->findOrFail($roundId);
-
-        try {
-            // A tie needs the assembly's resolution, given in the dialog of startTieRunOff(); here it is refused.
-            $runOff = $runOffs->handle($round, $actor);
-        } catch (ElectionActionRefusedException|ElectionRoundStateException $exception) {
-            Flux::toast(str_contains($exception->getMessage(), 'cannot be counted')
-                ? app(RefusalText::class)->unreadableRunOff($round)
-                : __('Für „:round“ gibt es keine Stichwahl anzulegen.', ['round' => $round->title]), variant: 'danger');
-
-            return;
-        }
-
-        $this->section = 'live';
-        $this->refreshElection($round->election);
-        Flux::toast(__('„:round“ ist angelegt. Öffnet sie, wenn alle bereit sind.', ['round' => $runOff->title]), variant: 'success');
-    }
-
-    /**
      * Delete a test election with every row of it — rounds, votes, roll,
      * audit lines. Refused for a real election.
      */
@@ -470,7 +167,8 @@ new class extends Component
     }
 
     /**
-     * Another board member, or the turnout poll, saw a round change.
+     * A child component acted, another board member or the turnout poll saw
+     * a round change: read the run sheet again.
      */
     #[On('election-round-changed')]
     #[On('election-changed')]
@@ -478,22 +176,7 @@ new class extends Component
     {
         $this->boardActor();
 
-        unset($this->elections, $this->selectedElection, $this->roundReports);
-    }
-
-    /**
-     * The rounds of the selected election with state, turnout and result.
-     *
-     * @return Collection<int, array<string, mixed>>
-     */
-    #[Computed]
-    public function roundReports(): Collection
-    {
-        $this->boardActor();
-
-        $election = $this->selectedElection;
-
-        return $election === null ? collect() : app(RoundReport::class)->forElection($election);
+        unset($this->elections, $this->selectedElection);
     }
 
     public function updatedSection(): void
@@ -539,139 +222,11 @@ new class extends Component
         return $moment->copy()->setTimezone(config('app.display_timezone'));
     }
 
-    protected function clock(?CarbonInterface $moment): string
-    {
-        return $moment === null ? '' : $this->local($moment)->format('H:i');
-    }
-
     protected function longDate(CarbonInterface $moment): string
     {
         $local = $this->local($moment);
 
         return $local->locale('de')->isoFormat('dd, D. MMMM YYYY').', '.$local->format('H:i').' '.__('Uhr');
-    }
-
-    /**
-     * The confirm text of the round modal: what happens, in numbers.
-     */
-    protected function pendingRoundText(ElectionRound $round): string
-    {
-        return match ($this->pendingRoundAction) {
-            'close' => $this->turnoutText($round).' '.__('Danach nimmt der Wahlgang keine Stimmen mehr an und wird sofort ausgezählt. Das lässt sich nicht zurücknehmen.'),
-            'strike' => __('„:round“ wird nie geöffnet und zählt wie ein annullierter Wahlgang: Niemand stimmt darüber ab. Das lässt sich nicht zurücknehmen. Der Grund steht im Protokoll.', ['round' => $round->title]),
-            // A counted round keeps its result in the minutes, marked as void: "never counted" would be false there.
-            'annul' => $round->isSealed()
-                ? __('Das ausgezählte Ergebnis wird ungültig. Es bleibt im Beschlussprotokoll stehen, markiert als „ungültig“, mit dem Grund. Der Wahlgang lässt sich nicht wieder öffnen.')
-                : __('Die abgegebenen Stimmen werden nie ausgezählt, und der Wahlgang lässt sich nicht wieder öffnen. Der Grund steht im Protokoll.'),
-            'repeat' => __('Legt „:title“ als neuen Wahlgang an, mit denselben freigegebenen Kandidaturen, derselben Zählregel und denselben Sitzen. Abgestimmt wird erst, wenn ihr ihn öffnet.', ['title' => ElectionStewardship::repeatTitle($round->title)]),
-            default => __('Ab jetzt können :count Wahlberechtigte abstimmen. Kandidaturen und Zählregel sind danach fest. Schließt ihn niemand, nimmt er nach :minutes Minuten keine Stimmen mehr an.', [
-                'count' => $round->parent_round_id !== null
-                    ? ElectionRollEntry::query()->where('election_round_id', $round->parent_round_id)->count()
-                    : app(ElectoralRoll::class)->entitled($round->election, now())->count(),
-                'minutes' => \App\Services\Election\OpenRound::LIVE_MAX_MINUTES,
-            ]),
-        };
-    }
-
-    /**
-     * How many of the roll have voted so far — read before the board closes
-     * a round, so nobody closes at 0 of 14 by mistake. Counts only.
-     */
-    protected function turnoutText(ElectionRound $round): string
-    {
-        $cast = $round->votes()->count();
-        $roll = $round->rollEntries()->count();
-
-        return $cast === 0
-            ? __('Noch hat niemand abgestimmt: 0 von :roll Wahlberechtigten.', ['roll' => $roll])
-            : __('Abgestimmt haben bisher :cast von :roll Wahlberechtigten.', ['cast' => $cast, 'roll' => $roll]);
-    }
-
-    /**
-     * The round of the same election that takes ballots right now, other
-     * than `$round` — only one is open at a time.
-     */
-    protected function openRoundBesides(ElectionRound $round): ?ElectionRound
-    {
-        $now = now();
-
-        return ElectionRound::query()
-            ->where('election_event_id', $round->election_event_id)
-            ->whereKeyNot($round->getKey())
-            ->whereNotNull('opened_at')
-            ->get()
-            ->first(fn (ElectionRound $other): bool => $other->stateAt($now) === ElectionRoundState::Open);
-    }
-
-    /**
-     * A sealed round of the election whose tie nobody has decided yet.
-     */
-    protected function tieRound(int $roundId): ?ElectionRound
-    {
-        $round = ElectionRound::query()->findOrFail($roundId);
-
-        if ((int) $round->election_event_id !== $this->selectedElectionId) {
-            $this->select($round->election);
-        }
-
-        abort_unless($round->isSealed(), 404);
-
-        // A stored vote that does not fit the round: no count, so no dialog — the board learns why instead of a 500.
-        try {
-            $outcome = app(TallyRound::class)->effective($round)->outcome;
-        } catch (\UnexpectedValueException) {
-            Flux::toast(app(RefusalText::class)->unreadable($round), variant: 'danger');
-
-            return null;
-        }
-
-        abort_unless($outcome === ElectionOutcome::Tie, 404);
-
-        return $round;
-    }
-
-    /**
-     * The tied candidates of the round in the tie dialogs, with their counts.
-     *
-     * @return array{round: ElectionRound, kind: ElectionTieKind, seats: int, candidates: list<array{id: int, name: string, for: int, yes: int, no: int}>}|null
-     */
-    #[Computed]
-    public function tie(): ?array
-    {
-        $this->boardActor();
-
-        $round = $this->tieRoundId === null ? null : ElectionRound::query()->with('candidates.pleb.profile')->find($this->tieRoundId);
-
-        if ($round === null || ! $round->isSealed()) {
-            return null;
-        }
-
-        try {
-            $result = app(TallyRound::class)->handle($round);
-        } catch (\UnexpectedValueException) {
-            return null;
-        }
-
-        if ($result->tieKind === null) {
-            return null;
-        }
-
-        return [
-            'round' => $round,
-            'kind' => $result->tieKind,
-            'seats' => $result->tiedSeats,
-            'candidates' => array_map(fn (int $id): array => [
-                'id' => $id,
-                'name' => MemberProposal::authorNameOf($round->candidates->firstWhere('id', $id)?->pleb),
-                'pubkey' => $round->candidates->firstWhere('id', $id)?->pleb?->pubkey,
-                ...$result->counts[$id],
-            ], $result->tied),
-        ];
-    }
-
-    protected function canRepeat(ElectionRound $round): bool
-    {
-        return app(ElectionStewardship::class)->awaitsRepeat($round);
     }
 
     protected function requireSelected(): Election
@@ -683,7 +238,7 @@ new class extends Component
     {
         $this->resetErrorBag();
         $this->selectedElectionId = (int) $election->id;
-        unset($this->selectedElection, $this->roundReports);
+        unset($this->selectedElection);
         $current = $this->selectedElection ?? $election;
         $step = app(RunSheet::class)->nextStepOf($current);
         $this->section = match (true) {
@@ -695,7 +250,7 @@ new class extends Component
 
     protected function refreshElection(Election $election): void
     {
-        unset($this->elections, $this->selectedElection, $this->roundReports);
+        unset($this->elections, $this->selectedElection);
     }
 
 };
@@ -810,11 +365,11 @@ new class extends Component
                                 @endif
                             @elseif ($section === 'candidacies')
                                 <livewire:association.election.admin-candidacies :election-id="$item->id" :key="'candidacies-'.$item->id" />
-                            @elseif ($section === 'live')
-                                @include('livewire.association.election.admin-live', ['election' => $item])
-                            @else
+                            @elseif ($section === 'roll')
                                 <livewire:association.election.admin-roll :election-id="$item->id" :key="'roll-'.$item->id" />
                             @endif
+                            {{-- On every tab: the run sheet takes its round steps through its dialogs. --}}
+                            <livewire:association.election.admin-live :election-id="$item->id" :visible="$section === 'live'" :key="'live-'.$item->id" />
                         </div>
                     @endif
                 </section>
@@ -841,153 +396,6 @@ new class extends Component
                         <flux:button wire:click="announce" variant="primary" class="min-h-11 w-full sm:w-auto" data-test="confirm-announce">{{ __('Wahl ankündigen') }}</flux:button>
                     </div>
                 </div>
-            </flux:modal>
-
-            @php
-                $pendingRound = $pendingRoundId ? \App\Models\ElectionRound::query()->with('election')->find($pendingRoundId) : null;
-            @endphp
-            <flux:modal name="round-action" class="w-full max-w-lg">
-                <form wire:submit="confirmRoundAction" class="space-y-6" data-test="round-action-form">
-                    <div>
-                        <flux:heading size="lg">
-                            @if ($pendingRound)
-                                {{ match ($pendingRoundAction) {
-                                    'close' => __('„:round“ schließen?', ['round' => $pendingRound->title]),
-                                    'annul' => __('„:round“ annullieren?', ['round' => $pendingRound->title]),
-                                    'strike' => __('„:round“ streichen?', ['round' => $pendingRound->title]),
-                                    'repeat' => __('„:round“ wiederholen?', ['round' => $pendingRound->title]),
-                                    default => __('„:round“ öffnen?', ['round' => $pendingRound->title]),
-                                } }}
-                            @endif
-                        </flux:heading>
-                        <flux:text class="mt-2">
-                            @if ($pendingRound)
-                                {{ $this->pendingRoundText($pendingRound) }}
-                            @endif
-                        </flux:text>
-                    </div>
-                    @if (in_array($pendingRoundAction, ['close', 'annul', 'strike'], true))
-                        <flux:field>
-                            <flux:label>{{ __('Grund für das Protokoll') }}</flux:label>
-                            <flux:textarea wire:model="roundReason" rows="2" maxlength="1000" data-test="round-reason" autofocus
-                                           placeholder="{{ match ($pendingRoundAction) { 'annul' => __('z. B. falsche Kandidatenliste geöffnet'), 'strike' => __('z. B. niemand kann mehr antreten'), default => __('z. B. alle Anwesenden haben abgestimmt') } }}" />
-                            <flux:error name="roundReason" />
-                        </flux:field>
-                    @else
-                        <flux:error name="roundReason" />
-                    @endif
-                    <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                        <flux:modal.close>
-                            <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto" :autofocus="! in_array($pendingRoundAction, ['close', 'annul', 'strike'], true)" data-test="cancel-round-action">{{ __('Abbrechen') }}</flux:button>
-                        </flux:modal.close>
-                        <flux:button type="submit" :variant="in_array($pendingRoundAction, ['annul', 'strike'], true) ? 'danger' : 'primary'" class="min-h-11 w-full sm:w-auto" data-test="confirm-round-action">
-                            {{ match ($pendingRoundAction) {
-                                'close' => __('Schließen und auszählen'),
-                                'annul' => __('Annullieren'),
-                                'strike' => __('Wahlgang streichen'),
-                                'repeat' => __('Wahlgang wiederholen'),
-                                default => __('Wahlgang öffnen'),
-                            } }}
-                        </flux:button>
-                    </div>
-                </form>
-            </flux:modal>
-
-            @php $tie = $this->tie; @endphp
-            {{-- The chair's casting vote on a tie (statutes Art. 6): the election officer enters it as the chair announced it. --}}
-            <flux:modal name="casting-vote" class="w-full max-w-lg">
-                <form wire:submit="recordCastingVote" class="space-y-6" data-test="casting-vote-form">
-                    <div>
-                        <flux:heading size="lg">{{ $tie ? __('Stichentscheid zu „:round“', ['round' => $tie['round']->title]) : __('Stichentscheid') }}</flux:heading>
-                        <flux:text class="mt-2">
-                            @if ($tie && $tie['kind'] === \App\Enums\ElectionTieKind::YesEqualsNo)
-                                {{ trans_choice('{1} Bei gleich vielen Ja- wie Nein-Stimmen fällt die/der Vorsitzende den Stichentscheid. Hake an, wen sie oder er mit Ja bestätigt; wer nicht angehakt ist, ist mit Nein entschieden. Frei ist ein Sitz.|[2,*] Bei gleich vielen Ja- wie Nein-Stimmen fällt die/der Vorsitzende den Stichentscheid. Hake an, wen sie oder er mit Ja bestätigt; wer nicht angehakt ist, ist mit Nein entschieden. Frei sind :count Sitze.', $tie['seats'], ['count' => $tie['seats']]) }}
-                            @elseif ($tie)
-                                {{ trans_choice('{1} Bei Stimmengleichheit fällt die/der Vorsitzende den Stichentscheid. Hake die Person an, für die sie oder er entschieden hat.|[2,*] Bei Stimmengleichheit fällt die/der Vorsitzende den Stichentscheid. Hake die :count Personen an, für die sie oder er entschieden hat.', $tie['seats'], ['count' => $tie['seats']]) }}
-                            @endif
-                            {{ __('Der Eintrag steht im Protokoll und lässt sich nicht ändern.') }}
-                        </flux:text>
-                    </div>
-                    @if ($tie)
-                        <fieldset>
-                            <legend class="text-sm font-medium text-text-primary">{{ __('Entschieden für') }}</legend>
-                            {{-- Every point of a row ticks: the label covers the row from the box to the counts, and the box column above and below the 18 px box is the checkbox's own transparent ::before, stretched to the row's height. --}}
-                            <flux:checkbox.group wire:model="castingCandidates">
-                                <ul class="mt-2 divide-y divide-border-subtle border-y border-border-subtle">
-                                    @foreach ($tie['candidates'] as $candidate)
-                                        <li wire:key="casting-{{ $tie['round']->id }}-{{ $candidate['id'] }}">
-                                            <flux:field variant="inline" class="relative items-center gap-x-0!">
-                                                <flux:checkbox value="{{ $candidate['id'] }}" :autofocus="$loop->first" class="before:absolute before:inset-y-0 before:start-0 before:w-[1.125rem] before:cursor-pointer" data-test="casting-checkbox-{{ $candidate['id'] }}" />
-                                                <flux:label class="flex! min-h-11 cursor-pointer items-center gap-3 py-2 ps-3 text-base!" data-test="casting-candidate-{{ $candidate['id'] }}">
-                                                    <span class="min-w-0 flex-1 font-bold break-words text-text-primary"><x-nostr-profile trigger="avatar" :pubkey="$candidate['pubkey']" :name="$candidate['name']" /></span>
-                                                    <span class="shrink-0 text-sm font-normal tabular-nums text-text-secondary">
-                                                        @if ($tie['kind'] === \App\Enums\ElectionTieKind::YesEqualsNo || $tie['round']->counting_rule === \App\Enums\ElectionCountingRule::YesNoPerCandidate)
-                                                            {{ __(':yes Ja, :no Nein', ['yes' => $candidate['yes'], 'no' => $candidate['no']]) }}
-                                                        @else
-                                                            {{ trans_choice('{0} 0 Stimmen|{1} 1 Stimme|[2,*] :count Stimmen', $candidate['for'], ['count' => $candidate['for']]) }}
-                                                        @endif
-                                                    </span>
-                                                </flux:label>
-                                            </flux:field>
-                                        </li>
-                                    @endforeach
-                                </ul>
-                            </flux:checkbox.group>
-                            <flux:error name="castingCandidates" />
-                            <flux:error name="castingCandidates.*" />
-                            @if ($tie['kind'] === \App\Enums\ElectionTieKind::YesEqualsNo)
-                                <flux:field variant="inline" class="relative mt-2 items-center gap-x-0!">
-                                    <flux:checkbox wire:model="castingAllNo" class="before:absolute before:inset-y-0 before:start-0 before:w-[1.125rem] before:cursor-pointer" data-test="casting-all-no" />
-                                    <flux:label class="flex! min-h-11 cursor-pointer items-center py-2 ps-3 text-base!">{{ __('Die/der Vorsitzende hat alle mit Nein entschieden') }}</flux:label>
-                                </flux:field>
-                            @endif
-                        </fieldset>
-                    @else
-                        <flux:error name="castingCandidates" />
-                    @endif
-                    <flux:field class="[&_input]:min-h-11">
-                        <flux:label>{{ __('Name der/des Vorsitzenden') }}</flux:label>
-                        <flux:input wire:model="castingChair" maxlength="{{ \App\Services\Election\RecordCastingVote::MAX_CHAIR_LENGTH }}" autocomplete="off" data-test="casting-chair" />
-                        <flux:error name="castingChair" />
-                    </flux:field>
-                    <flux:field>
-                        <flux:label badge="{{ __('optional') }}">{{ __('Anmerkung für das Protokoll') }}</flux:label>
-                        <flux:textarea wire:model="castingNote" rows="2" maxlength="{{ \App\Services\Election\ElectionAuditLog::MAX_REASON_LENGTH }}" data-test="casting-note" />
-                        <flux:error name="castingNote" />
-                    </flux:field>
-                    <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                        <flux:modal.close>
-                            <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto" data-test="cancel-casting-vote">{{ __('Abbrechen') }}</flux:button>
-                        </flux:modal.close>
-                        <flux:button type="submit" variant="primary" class="min-h-11 w-full sm:w-auto" data-test="confirm-casting-vote">{{ __('Stichentscheid eintragen') }}</flux:button>
-                    </div>
-                </form>
-            </flux:modal>
-
-            {{-- A run-off for a tie exists only by resolution of the assembly. --}}
-            <flux:modal name="tie-run-off" class="w-full max-w-lg">
-                <form wire:submit="confirmTieRunOff" class="space-y-6" data-test="tie-run-off-form">
-                    <div>
-                        <flux:heading size="lg">{{ $tie ? __('Stichwahl zu „:round“ anlegen?', ['round' => $tie['round']->title]) : __('Stichwahl anlegen?') }}</flux:heading>
-                        <flux:text class="mt-2">
-                            {{ __('Nach den Statuten fällt bei Stimmengleichheit die/der Vorsitzende den Stichentscheid. Eine Stichwahl gibt es nur, wenn die Versammlung sie beschlossen hat. Endet auch sie im Gleichstand, fällt die/der Vorsitzende den Stichentscheid.') }}
-                        </flux:text>
-                    </div>
-                    {{-- As in the casting-vote rows: the label and the checkbox's stretched ::before cover the whole row. The error sits below the field, outside the row the ::before spans. --}}
-                    <div>
-                        <flux:field variant="inline" class="relative items-center gap-x-0!" data-test="run-off-row">
-                            <flux:checkbox wire:model="runOffResolved" autofocus class="before:absolute before:inset-y-0 before:start-0 before:w-[1.125rem] before:cursor-pointer" data-test="run-off-resolved" />
-                            <flux:label class="flex! min-h-11 cursor-pointer items-center py-2 ps-3 text-base! break-words" data-test="run-off-resolved-label">{{ __('Die Versammlung hat eine Stichwahl beschlossen.') }}</flux:label>
-                        </flux:field>
-                        <flux:error name="runOffResolved" />
-                    </div>
-                    <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                        <flux:modal.close>
-                            <flux:button variant="ghost" class="min-h-11 w-full sm:w-auto" data-test="cancel-tie-run-off">{{ __('Abbrechen') }}</flux:button>
-                        </flux:modal.close>
-                        <flux:button type="submit" variant="primary" class="min-h-11 w-full sm:w-auto" data-test="confirm-tie-run-off">{{ __('Stichwahl anlegen') }}</flux:button>
-                    </div>
-                </form>
             </flux:modal>
 
             @if ($election->is_test)

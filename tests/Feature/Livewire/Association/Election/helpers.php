@@ -1,9 +1,11 @@
 <?php
 
 use App\Models\EinundzwanzigPleb;
+use App\Models\Election;
 use App\Support\NostrAuth;
 use Livewire\Attributes\Computed;
 use Livewire\Features\SupportTesting\Testable;
+use Livewire\Livewire;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 /*
@@ -72,4 +74,14 @@ function expectEveryMethodBoardOnly(Closure $mount, EinundzwanzigPleb $board, Ei
     }
 
     return $methods;
+}
+
+/**
+ * The meeting component of the board's page for `$election`, as on the
+ * "Sitzung" tab: the round list, its dialogs and every round action. The
+ * run sheet is the page's; read it on a fresh `association.election.admin`.
+ */
+function liveControl(Election $election): Testable
+{
+    return Livewire::test('association.election.admin-live', ['electionId' => $election->id, 'visible' => true]);
 }
