@@ -19,7 +19,6 @@
         {!! seo($SEOData ?? null) !!}
     @endif
     <title>{{ $title ?? 'Page Title' }}</title>
-    <script src="https://kit.fontawesome.com/866fd3d0ab.js" crossorigin="anonymous"></script>
     @googlefonts
     {{-- Seiteneigene Skripte, die VOR app.js laufen muessen. app.js startet
          Alpine; wer eine Alpine-Komponente bereitstellt, muss sie vorher

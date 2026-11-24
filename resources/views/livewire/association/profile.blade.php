@@ -673,7 +673,7 @@ new class extends Component
                         <li class="flex items-start gap-3">
                             <div
                                 class="shrink-0 w-9 h-9 rounded-full bg-amber-100 dark:bg-amber-900/60 flex items-center justify-center">
-                                <i class="fa-sharp-duotone fa-solid fa-bolt text-amber-600 dark:text-amber-400"></i>
+                                <flux:icon.bolt class="size-5 text-amber-600 dark:text-amber-400" aria-hidden="true"/>
                             </div>
                             <div class="min-w-0">
                                 <h3 class="text-sm font-semibold text-text-primary">Nostr Relay</h3>
@@ -683,7 +683,7 @@ new class extends Component
                         <li class="flex items-start gap-3">
                             <div
                                 class="shrink-0 w-9 h-9 rounded-full bg-emerald-100 dark:bg-emerald-900/60 flex items-center justify-center">
-                                <i class="fa-sharp-duotone fa-solid fa-check-circle text-emerald-600 dark:text-emerald-400"></i>
+                                <flux:icon.check-circle class="size-5 text-emerald-600 dark:text-emerald-400" aria-hidden="true"/>
                             </div>
                             <div class="min-w-0">
                                 <h3 class="text-sm font-semibold text-text-primary">NIP-05 Verifizierung</h3>
@@ -693,7 +693,7 @@ new class extends Component
                         <li class="flex items-start gap-3">
                             <div
                                 class="shrink-0 w-9 h-9 rounded-full bg-purple-100 dark:bg-purple-900/60 flex items-center justify-center">
-                                <i class="fa-sharp-duotone fa-solid fa-shield-halved text-purple-600 dark:text-purple-400"></i>
+                                <flux:icon.shield-check class="size-5 text-purple-600 dark:text-purple-400" aria-hidden="true"/>
                             </div>
                             <div class="min-w-0">
                                 <h3 class="text-sm font-semibold text-text-primary">Lightning Watchtower</h3>
@@ -703,7 +703,7 @@ new class extends Component
                         <li class="flex items-start gap-3">
                             <div
                                 class="shrink-0 w-9 h-9 rounded-full bg-rose-100 dark:bg-rose-900/60 flex items-center justify-center">
-                                <i class="fa-sharp-duotone fa-solid fa-cloud-arrow-up text-rose-600 dark:text-rose-400"></i>
+                                <flux:icon.cloud-arrow-up class="size-5 text-rose-600 dark:text-rose-400" aria-hidden="true"/>
                             </div>
                             <div class="min-w-0">
                                 <div class="flex items-center gap-2">
@@ -717,7 +717,7 @@ new class extends Component
                         <li class="flex items-start gap-3">
                             <div
                                 class="shrink-0 w-9 h-9 rounded-full bg-sky-100 dark:bg-sky-900/60 flex items-center justify-center">
-                                <i class="fa-sharp-duotone fa-solid fa-comments text-sky-600 dark:text-sky-400"></i>
+                                <flux:icon.chat-bubble-left-right class="size-5 text-sky-600 dark:text-sky-400" aria-hidden="true"/>
                             </div>
                             <div class="min-w-0">
                                 <div class="flex items-center gap-2">
@@ -730,7 +730,7 @@ new class extends Component
                         <li class="flex items-start gap-3">
                             <div
                                 class="shrink-0 w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-900/60 flex items-center justify-center">
-                                <i class="fa-sharp-duotone fa-solid fa-robot text-indigo-600 dark:text-indigo-300"></i>
+                                <flux:icon.cpu-chip class="size-5 text-indigo-600 dark:text-indigo-300" aria-hidden="true"/>
                             </div>
                             <div class="min-w-0">
                                 <div class="flex flex-wrap items-center gap-2">
@@ -959,7 +959,7 @@ new class extends Component
                                             </div>
                                             <div class="absolute bottom-3 left-3 right-3">
                                                 <div class="flex items-center gap-2">
-                                                    <i class="fa-sharp-duotone fa-solid fa-arrow-up-right-from-square text-white text-sm"></i>
+                                                    <flux:icon.arrow-top-right-on-square class="size-5 text-white text-sm" aria-hidden="true"/>
                                                     <span class="text-white text-xs font-medium">Vollbild</span>
                                                 </div>
                                             </div>
@@ -987,7 +987,7 @@ new class extends Component
                                             </div>
                                             <div class="absolute bottom-3 left-3 right-3">
                                                 <div class="flex items-center gap-2">
-                                                    <i class="fa-sharp-duotone fa-solid fa-arrow-up-right-from-square text-white text-sm"></i>
+                                                    <flux:icon.arrow-top-right-on-square class="size-5 text-white text-sm" aria-hidden="true"/>
                                                     <span class="text-white text-xs font-medium">Vollbild</span>
                                                 </div>
                                             </div>
@@ -1015,7 +1015,7 @@ new class extends Component
                                             </div>
                                             <div class="absolute bottom-3 left-3 right-3">
                                                 <div class="flex items-center gap-2">
-                                                    <i class="fa-sharp-duotone fa-solid fa-arrow-up-right-from-square text-white text-sm"></i>
+                                                    <flux:icon.arrow-top-right-on-square class="size-5 text-white text-sm" aria-hidden="true"/>
                                                     <span class="text-white text-xs font-medium">Vollbild</span>
                                                 </div>
                                             </div>
@@ -1043,7 +1043,7 @@ new class extends Component
                                             </div>
                                             <div class="absolute bottom-3 left-3 right-3">
                                                 <div class="flex items-center gap-2">
-                                                    <i class="fa-sharp-duotone fa-solid fa-arrow-up-right-from-square text-white text-sm"></i>
+                                                    <flux:icon.arrow-top-right-on-square class="size-5 text-white text-sm" aria-hidden="true"/>
                                                     <span class="text-white text-xs font-medium">Vollbild</span>
                                                 </div>
                                             </div>
@@ -1250,7 +1250,7 @@ new class extends Component
                             @if($invoiceStatusMessage)
                                 <flux:callout variant="{{ $invoiceStatusVariant }}" class="mb-6">
                                     <div class="flex items-start gap-3">
-                                        <i class="fa-sharp-duotone fa-solid fa-circle-info mt-1"></i>
+                                        <flux:icon.information-circle class="size-5 mt-1" aria-hidden="true"/>
                                         <div class="space-y-1">
                                             <p class="font-semibold text-text-primary">
                                                 {{ $invoiceStatusLabel ?? 'Rechnungsstatus' }}
@@ -1285,12 +1285,12 @@ new class extends Component
                                         wire:click="pay('{{ date('Y') }}:{{ $currentPubkey }}')"
                                         variant="primary"
                                         class="min-h-12 px-8 text-xl">
-                                        <i class="fa-sharp-duotone fa-solid fa-bolt-lightning mr-2"></i>
+                                        <flux:icon.bolt class="size-5 mr-2" aria-hidden="true"/>
                                         {{ __(':amount Sats bezahlen', ['amount' => $amountToPay]) }}
                                     </flux:button>
                                 @else
                                     <flux:button disabled variant="primary" color="green" class="min-h-12 px-8 text-xl">
-                                        <i class="fa-sharp-duotone fa-solid fa-check-circle mr-2"></i>
+                                        <flux:icon.check-circle class="size-5 mr-2" aria-hidden="true"/>
                                         Aktuelles Jahr bezahlt
                                     </flux:button>
                                 @endif

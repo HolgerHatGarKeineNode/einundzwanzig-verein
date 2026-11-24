@@ -205,7 +205,7 @@ new class extends Component
             <div class="flex items-start gap-3">
                 <div
                     class="shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/60 flex items-center justify-center">
-                    <i class="fa-sharp-duotone fa-solid fa-bolt text-amber-600 dark:text-amber-400 text-lg"></i>
+                    <flux:icon.bolt class="size-5 text-amber-600 dark:text-amber-400" aria-hidden="true"/>
                 </div>
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center justify-between gap-2">
@@ -262,7 +262,7 @@ new class extends Component
             <div class="flex items-start gap-3">
                 <div
                     class="shrink-0 w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/60 flex items-center justify-center">
-                    <i class="fa-sharp-duotone fa-solid fa-check-circle text-emerald-600 dark:text-emerald-400 text-lg"></i>
+                    <flux:icon.check-circle class="size-5 text-emerald-600 dark:text-emerald-400" aria-hidden="true"/>
                 </div>
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center justify-between gap-2">
@@ -366,7 +366,7 @@ new class extends Component
             <div class="flex items-start gap-3">
                 <div
                     class="shrink-0 w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900/60 flex items-center justify-center">
-                    <i class="fa-sharp-duotone fa-solid fa-shield-halved text-purple-600 dark:text-purple-400 text-lg"></i>
+                    <flux:icon.shield-check class="size-5 text-purple-600 dark:text-purple-400" aria-hidden="true"/>
                 </div>
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center justify-between gap-2">
@@ -425,7 +425,7 @@ new class extends Component
             <div class="flex items-start gap-3">
                 <div
                     class="shrink-0 w-10 h-10 rounded-full bg-rose-100 dark:bg-rose-900/60 flex items-center justify-center">
-                    <i class="fa-sharp-duotone fa-solid fa-cloud-arrow-up text-rose-600 dark:text-rose-400 text-lg"></i>
+                    <flux:icon.cloud-arrow-up class="size-5 text-rose-600 dark:text-rose-400" aria-hidden="true"/>
                 </div>
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center justify-between gap-2">
@@ -505,7 +505,7 @@ new class extends Component
             <div class="flex items-start gap-3">
                 <div
                     class="shrink-0 w-10 h-10 rounded-full bg-sky-100 dark:bg-sky-900/60 flex items-center justify-center">
-                    <i class="fa-sharp-duotone fa-solid fa-comments text-sky-600 dark:text-sky-400 text-lg"></i>
+                    <flux:icon.chat-bubble-left-right class="size-5 text-sky-600 dark:text-sky-400" aria-hidden="true"/>
                 </div>
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center justify-between gap-2">
@@ -589,7 +589,7 @@ new class extends Component
             <div class="flex items-start gap-3">
                 <div
                     class="shrink-0 w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900/60 flex items-center justify-center">
-                    <i class="fa-sharp-duotone fa-solid fa-robot text-indigo-600 dark:text-indigo-300 text-lg"></i>
+                    <flux:icon.cpu-chip class="size-5 text-indigo-600 dark:text-indigo-300" aria-hidden="true"/>
                 </div>
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center justify-between gap-2">
