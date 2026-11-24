@@ -332,12 +332,12 @@ new class extends Component
 
         $paymentEvent = $this->resolveCurrentPaymentEvent();
 
-        if ($paymentEvent->paid && ! $this->currentYearIsPaid) {
-            // The webhook may just have made this person a member.
-            $this->currentPleb->refresh();
-        }
-
         if ($paymentEvent->paid) {
+            if (! $this->currentYearIsPaid) {
+                // The webhook may just have made this person a member.
+                $this->currentPleb->refresh();
+            }
+
             $this->showPaidStatus();
         }
 

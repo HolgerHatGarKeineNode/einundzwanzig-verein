@@ -93,13 +93,14 @@ trait NostrFetcherTrait
 
         // Collect all responses from all relays
         $allResponses = collect([]);
+        $timeout = $this->profileRelayTimeout();
         foreach ($relayUrls as $relayUrl) {
             $relay = new Relay($relayUrl);
             $relay->setMessage($requestMessage);
             $request = new Request($relay, $requestMessage);
 
-            if ($this->profileRelayTimeout() !== null) {
-                $request->setTimeout($this->profileRelayTimeout());
+            if ($timeout !== null) {
+                $request->setTimeout($timeout);
             }
 
             try {
