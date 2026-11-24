@@ -258,13 +258,7 @@ class extends Component
         // Loaded with the member lookup above: a contact who is no member has an entry here.
         $profile = $this->profiles[$contact] ?? null;
 
-        if (filled($profile?->name) || filled($profile?->display_name)) {
-            return (string) ($profile->name ?: $profile->display_name);
-        }
-
-        $npub = (new Key)->convertPublicKeyToBech32($contact);
-
-        return substr($npub, 0, 12).'…'.substr($npub, -6);
+        return $profile?->label() ?? EinundzwanzigPleb::shortenNpub((new Key)->convertPublicKeyToBech32($contact));
     }
 
     protected function contactIsMember(): bool

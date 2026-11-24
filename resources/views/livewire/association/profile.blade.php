@@ -624,10 +624,10 @@ new class extends Component
                          alt="">
                     <div class="min-w-0 flex-1">
                         <h2 id="profile-identity" class="text-xl font-bold leading-tight break-words text-text-primary">
-                            {{ $currentPleb->profile?->display_name ?? $currentPleb->profile?->name ?? 'Unbekannt' }}
+                            <x-pleb-name :pleb="$currentPleb" />
                         </h2>
-                        @if($currentPleb->profile?->name)
-                            <p class="mt-1 text-sm text-text-tertiary">{{ $currentPleb->profile->name }}</p>
+                        @if(filled($currentPleb->profile?->display_name) && $currentPleb->profile->display_name !== $currentPleb->displayName())
+                            <p class="mt-1 text-sm text-text-tertiary">{{ $currentPleb->profile->display_name }}</p>
                         @endif
                     </div>
                 </div>

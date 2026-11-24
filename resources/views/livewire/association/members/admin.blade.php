@@ -321,7 +321,7 @@ new class extends Component
 
             foreach ($plebs as $pleb) {
                 $row = [
-                    $this->csvCell($pleb->profile?->name ?: $pleb->profile?->display_name ?? ''),
+                    $this->csvCell($pleb->profile?->label() ?? ''),
                     $this->csvCell((string) $pleb->npub),
                     $this->csvCell($pleb->email ?? ''),
                     $pleb->association_status->label(),
@@ -463,7 +463,7 @@ new class extends Component
                         <flux:table.cell>
                             <div class="flex flex-col">
                                 <flux:heading size="sm">
-                                    {{ $pleb->profile?->name ?: $pleb->profile?->display_name ?? '' }}
+                                    <x-pleb-name :pleb="$pleb" />
                                 </flux:heading>
                                 <a
                                     target="_blank"
@@ -515,7 +515,7 @@ new class extends Component
                                     variant="ghost"
                                     icon="envelope"
                                     class="min-h-11 min-w-11"
-                                    :aria-label="__('Nachrichten an :name', ['name' => $pleb->profile?->name ?: ($pleb->profile?->display_name ?: __('dieses Mitglied'))])"
+                                    :aria-label="__('Nachrichten an :name', ['name' => $pleb->displayName()])"
                                     data-test="member-messages-{{ $pleb->id }}"
                                 />
                                 <flux:button
@@ -523,7 +523,7 @@ new class extends Component
                                     variant="ghost"
                                     icon="trash"
                                     class="min-h-11 min-w-11"
-                                    :aria-label="__('Mitglied :name löschen', ['name' => $pleb->profile?->name ?: ($pleb->profile?->display_name ?: __('dieses Mitglied'))])"
+                                    :aria-label="__('Mitglied :name löschen', ['name' => $pleb->displayName()])"
                                 />
 
                                 @if($pleb->application_for)
@@ -532,7 +532,7 @@ new class extends Component
                                         variant="ghost"
                                         icon="check"
                                         class="min-h-11 min-w-11"
-                                        :aria-label="__('Mitglied :name akzeptieren', ['name' => $pleb->profile?->name ?: ($pleb->profile?->display_name ?: __('dieses Mitglied'))])"
+                                        :aria-label="__('Mitglied :name akzeptieren', ['name' => $pleb->displayName()])"
                                     />
                                 @endif
                             </div>
@@ -568,7 +568,7 @@ new class extends Component
                 <div>
                     <flux:heading size="lg">Zahlungsdetails</flux:heading>
                     <flux:subheading class="mt-2">
-                        {{ $this->selectedPleb->profile?->name ?: $this->selectedPleb->profile?->display_name ?? 'Unbekannt' }}
+                        <x-pleb-name :pleb="$this->selectedPleb" />
                     </flux:subheading>
                 </div>
 

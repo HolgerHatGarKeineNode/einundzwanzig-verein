@@ -121,7 +121,7 @@
                target="_blank"
                rel="noopener"
                class="truncate hover:text-orange-500 transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
-                {{ $project->einundzwanzigPleb->profile?->name ?? str($project->einundzwanzigPleb->npub)->limit(20) }}
+                <x-pleb-name :pleb="$project->einundzwanzigPleb" />
             </a>
             @if($project->website)
                 <span aria-hidden="true">·</span>

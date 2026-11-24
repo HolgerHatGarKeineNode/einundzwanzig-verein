@@ -615,7 +615,7 @@ new class extends Component
                                 <a href="https://njump.me/{{ $projectProposal->einundzwanzigPleb->npub }}"
                                    target="_blank" rel="noopener"
                                    class="flex min-h-11 min-w-0 items-center break-all text-text-secondary hover:text-orange-500 transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
-                                    {{ $projectProposal->einundzwanzigPleb->profile?->name ?? str($projectProposal->einundzwanzigPleb->npub)->limit(24) }}
+                                    <x-pleb-name :pleb="$projectProposal->einundzwanzigPleb" />
                                 </a>
                             </dd>
                         </div>

@@ -201,7 +201,7 @@ class extends Component
                                         alt=""
                                         class="size-8 shrink-0 rounded-full bg-bg-elevated object-cover"
                                     />
-                                    <span class="font-medium text-text-secondary">{{ $post->einundzwanzigPleb?->profile?->name ?? str($post->einundzwanzigPleb?->npub)->limit(32) }}</span>
+                                    <x-pleb-name :pleb="$post->einundzwanzigPleb" class="font-medium text-text-secondary" />
                                     <time datetime="{{ $post->created_at->toDateString() }}">{{ $post->created_at->format('d.m.Y') }}</time>
                                     <flux:badge size="sm">{{ $post->category->label() }}</flux:badge>
                                 </div>
@@ -312,7 +312,7 @@ class extends Component
                                     alt=""
                                     class="size-8 shrink-0 rounded-full bg-bg-elevated object-cover"
                                 />
-                                <span class="min-w-0 break-words font-medium text-text-secondary">{{ $currentPleb->profile?->name ?? str($currentPleb->npub)->limit(32) }}</span>
+                                <x-pleb-name :pleb="$currentPleb" class="min-w-0 break-words font-medium text-text-secondary" />
                             </p>
                         @endif
                     </div>

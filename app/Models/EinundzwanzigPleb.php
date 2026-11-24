@@ -170,6 +170,38 @@ class EinundzwanzigPleb extends Authenticatable implements CipherSweetEncrypted,
     }
 
     /**
+     * What a page prints for this member: the profile's name, else its
+     * display name, else the shortened npub. An erased member has neither a
+     * profile nor an npub, only a tombstone, and is printed as a former
+     * member.
+     *
+     * Ballots and results print the whole npub instead
+     * (`MemberProposal::authorNameOf()`).
+     */
+    public function displayName(): string
+    {
+        if ($this->isErased()) {
+            return __('Ehemaliges Mitglied');
+        }
+
+        return $this->profile?->label() ?? $this->shortNpub();
+    }
+
+    public function shortNpub(): string
+    {
+        return self::shortenNpub((string) $this->npub);
+    }
+
+    /**
+     * The first 12 and the last 6 characters of an npub, enough to tell two
+     * keys apart on a page without filling the line.
+     */
+    public static function shortenNpub(string $npub): string
+    {
+        return mb_strlen($npub) <= 19 ? $npub : mb_substr($npub, 0, 12).'…'.mb_substr($npub, -6);
+    }
+
+    /**
      * Every record except the erased ones.
      *
      * Needed wherever member rows are shown, exported or carried outside the

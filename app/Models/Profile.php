@@ -23,4 +23,19 @@ class Profile extends Model
         'lud06',
         'deleted',
     ];
+
+    /**
+     * The name the profile gives itself: `name`, else `display_name`, null
+     * when it has neither.
+     */
+    public function label(): ?string
+    {
+        foreach ([$this->name, $this->display_name] as $candidate) {
+            if (is_string($candidate) && trim($candidate) !== '') {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
 }
