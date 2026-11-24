@@ -41,7 +41,7 @@ it('refuses a vote written for the rendered board member after the session switc
     ]);
 
     NostrAuth::login($boardMember->pubkey);
-    $page = Livewire::test('association.project-support.show', ['projectProposal' => $project]);
+    $page = Livewire::test('association.project-support.show-vote-panel', ['projectProposal' => $project]);
 
     NostrAuth::login($outsider->pubkey);
     $page->call('castVote', false)->assertForbidden();
@@ -56,7 +56,7 @@ it('refuses an approval written for the rendered member after the session switch
     $project = ProjectProposal::factory()->create();
 
     NostrAuth::login($renderedFor->pubkey);
-    $page = Livewire::test('association.project-support.show', ['projectProposal' => $project]);
+    $page = Livewire::test('association.project-support.show-vote-panel', ['projectProposal' => $project]);
 
     NostrAuth::login($outsider->pubkey);
     $page->call('castVote', true)->assertForbidden();

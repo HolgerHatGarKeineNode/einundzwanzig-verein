@@ -36,7 +36,7 @@ function acceptThroughBoard(ProjectProposal $project): void
         ->each(function (EinundzwanzigPleb $board) use ($project) {
             NostrAuth::login($board->pubkey);
 
-            Livewire::test('association.project-support.show', ['projectProposal' => $project])
+            Livewire::test('association.project-support.show-vote-panel', ['projectProposal' => $project])
                 ->call('castVote', true)
                 ->assertHasNoErrors();
         });
@@ -158,7 +158,7 @@ it('prefills the payout with the approved amount, not a later raise', function (
     NostrAuth::login(firstBoardMember()->pubkey);
 
     // fresh(): mount() reads the model it is handed, as the route would load it.
-    Livewire::test('association.project-support.show', ['projectProposal' => $project->fresh()])
+    Livewire::test('association.project-support.show-vote-panel', ['projectProposal' => $project->fresh()])
         ->assertSet('payoutSats', 100000);
 });
 
@@ -169,7 +169,7 @@ it('refuses a payout above the approved amount', function () {
 
     NostrAuth::login(firstBoardMember()->pubkey);
 
-    Livewire::test('association.project-support.show', ['projectProposal' => $project->fresh()])
+    Livewire::test('association.project-support.show-vote-panel', ['projectProposal' => $project->fresh()])
         ->set('payoutSats', 5000000)
         ->call('recordPayout')
         ->assertHasErrors(['payoutSats']);
@@ -183,7 +183,7 @@ it('accepts a payout up to the approved amount', function () {
 
     NostrAuth::login(firstBoardMember()->pubkey);
 
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
+    Livewire::test('association.project-support.show-vote-panel', ['projectProposal' => $project])
         ->set('payoutSats', 100000)
         ->call('recordPayout')
         ->assertHasNoErrors();

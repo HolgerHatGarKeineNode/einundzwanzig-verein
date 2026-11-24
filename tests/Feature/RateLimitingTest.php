@@ -62,7 +62,7 @@ test('voting actions are rate limited after 10 attempts', function () {
         RateLimiter::attempt('voting:127.0.0.1', 10, function () {});
     }
 
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
+    Livewire::test('association.project-support.show-vote-panel', ['projectProposal' => $project])
         ->call('castVote', true)
         ->assertStatus(429);
 });
@@ -109,7 +109,7 @@ test('voting works within rate limit', function () {
 
     NostrAuth::login($pleb->pubkey);
 
-    Livewire::test('association.project-support.show', ['projectProposal' => $project])
+    Livewire::test('association.project-support.show-vote-panel', ['projectProposal' => $project])
         ->call('castVote', true)
         ->assertHasNoErrors();
 
