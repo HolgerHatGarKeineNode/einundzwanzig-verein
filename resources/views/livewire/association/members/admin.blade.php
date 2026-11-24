@@ -213,7 +213,7 @@ new class extends Component
     {
         $this->ensureAuthorized();
 
-        $this->showPaidOnly = !$this->showPaidOnly;
+        $this->showPaidOnly = ! $this->showPaidOnly;
         $this->resetPage();
     }
 
@@ -370,9 +370,9 @@ new class extends Component
 
             foreach ($plebs as $pleb) {
                 $row = [
-                    $pleb->profile?->name ?: $pleb->profile?->display_name ?? '',
-                    $pleb->npub,
-                    $pleb->email ?? '',
+                    $this->csvCell($pleb->profile?->name ?: $pleb->profile?->display_name ?? ''),
+                    $this->csvCell((string) $pleb->npub),
+                    $this->csvCell($pleb->email ?? ''),
                     $pleb->association_status->label(),
                 ];
 
@@ -389,6 +389,16 @@ new class extends Component
         }, 'mitglieder-export-'.date('Y-m-d').'.csv', [
             'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
+    }
+
+    /**
+     * Keeps a member-controlled value text in a spreadsheet: a cell starting
+     * with `=`, `+`, `-`, `@`, a tab or a carriage return would otherwise be
+     * evaluated as a formula when the export is opened.
+     */
+    private function csvCell(string $value): string
+    {
+        return $value !== '' && str_contains("=+-@\t\r", $value[0]) ? "'".$value : $value;
     }
 
     #[Computed]
