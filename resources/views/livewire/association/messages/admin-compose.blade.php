@@ -21,6 +21,7 @@ use Flux\Flux;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
+use Livewire\Attributes\Reactive;
 use Livewire\Component;
 
 /**
@@ -28,7 +29,8 @@ use Livewire\Component;
  * confirmed sending — type, audience, text, preview, dry run, test to self,
  * send.
  *
- * A child of `association.messages.admin`, mounted while that tab is open.
+ * A child of `association.messages.admin`, mounted with the page and shown
+ * while its tab is open, so the draft outlives a tab switch.
  * Board only and callable on its own like every Livewire component: every
  * public method and every computed property resolves the acting board
  * member from the session and answers 403 to anybody else. A confirmed
@@ -40,6 +42,14 @@ new class extends Component
     use WithViewer;
 
     private const UNREACHABLE_NAMES_SHOWN = 8;
+
+    /**
+     * Whether the tab is open. The page keeps this tab mounted while another
+     * one is open, so a half-written message survives a look at another tab;
+     * hidden, it renders nothing.
+     */
+    #[Reactive]
+    public bool $visible = false;
 
     public string $type = 'election_announcement';
 
@@ -470,6 +480,7 @@ new class extends Component
 ?>
 
 <div>
+@if ($visible)
 @php
     $composeType = \App\Enums\DmMessageType::tryFrom($type) ?? \App\Enums\DmMessageType::Individual;
     $composeAudience = \App\Enums\DmAudience::tryFrom($audience) ?? \App\Enums\DmAudience::Members;
@@ -703,5 +714,6 @@ new class extends Component
             </div>
         </div>
     </flux:modal>
+@endif
 @endif
 </div>

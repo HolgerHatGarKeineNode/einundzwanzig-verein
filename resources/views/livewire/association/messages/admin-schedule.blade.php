@@ -15,6 +15,7 @@ use Flux\Flux;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Carbon;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Reactive;
 use Livewire\Component;
 
 /**
@@ -22,7 +23,8 @@ use Livewire\Component;
  * election's planned messages, and a new planned row with the type's
  * default text.
  *
- * A child of `association.messages.admin`, mounted while that tab is open.
+ * A child of `association.messages.admin`, mounted with the page and shown
+ * while its tab is open, so a half-filled row outlives a tab switch.
  * Board only and callable on its own like every Livewire component: every
  * public method and every computed property resolves the acting board
  * member from the session and answers 403 to anybody else. A changed
@@ -34,6 +36,14 @@ new class extends Component
     use WithMessageDrafts;
     use WithViewer;
 
+
+    /**
+     * Whether the tab is open. The page keeps this tab mounted while another
+     * one is open, so a half-written planned row survives a look at another tab;
+     * hidden, it renders nothing.
+     */
+    #[Reactive]
+    public bool $visible = false;
 
     /** The election timeline messages the schedule offers. */
     private const SCHEDULE_TYPES = [
@@ -237,6 +247,8 @@ new class extends Component
 };
 ?>
 
+<div>
+@if ($visible)
 @php
     $election = $this->scheduleElection;
     $newTypeCase = \App\Enums\DmMessageType::tryFrom($newType) ?? \App\Enums\DmMessageType::ElectionAnnouncement;
@@ -369,4 +381,6 @@ new class extends Component
             </section>
         @endif
     @endif
+</div>
+@endif
 </div>

@@ -103,9 +103,9 @@ it('opens a sending the compose tab started in the history tab', function () {
     $recipient = EinundzwanzigPleb::factory()->active()->create();
     $run = DmMessage::factory()->create()->freezeRun([$recipient], DmAudience::Members);
 
-    messageCentre()
-        ->call('showTab', 'compose')
+    Livewire::withQueryParams(['bereich' => 'compose'])->test('association.messages.admin')
         ->assertSeeHtml('data-test="compose-text"')
+        ->assertDontSeeLivewire('association.messages.admin-history')
         ->dispatch('message-sent', runId: $run->id)
         ->assertSet('tab', 'history')
         ->assertSet('openRunId', $run->id)
@@ -170,7 +170,7 @@ it('keeps one primary button on the schedule tab: „Einplanen“, not the heade
     $isPrimary = fn (string $html, string $test): bool => preg_match('/<button(?=[^>]*data-test="'.$test.'")[^>]*>/', $html, $tag) === 1
         && str_contains($tag[0], 'bg-orange-primary');
 
-    $html = messageCentre()->call('showTab', 'schedule')->html();
+    $html = Livewire::withQueryParams(['bereich' => 'schedule'])->test('association.messages.admin')->html();
 
     expect($isPrimary($html, 'add-schedule-submit'))->toBeTrue()
         ->and($isPrimary($html, 'start-compose'))->toBeFalse()
@@ -191,3 +191,25 @@ it('names the browser extension and the phone app as the signer in the election 
 it('labels the modal close button in German', function () {
     expect(__('Close modal'))->toBe('Schließen');
 });
+
+/*
+ * The writing tabs stay mounted while another tab is open, so a draft
+ * survives a look at the history (in the browser: tests/e2e/dm-centre.spec.js,
+ * "The page keeps the text after sending"). Hidden, a tab renders nothing.
+ */
+it('keeps both writing tabs mounted on every tab and shows only the open one', function (string $tab, ?string $shown) {
+    messageCentreBoard();
+    Election::factory()->create();
+
+    $page = Livewire::withQueryParams(['bereich' => $tab])->test('association.messages.admin')
+        ->assertSeeLivewire('association.messages.admin-compose')
+        ->assertSeeLivewire('association.messages.admin-schedule');
+
+    foreach (['compose' => 'data-test="compose-text"', 'schedule' => 'data-test="add-schedule"'] as $writing => $hook) {
+        $writing === $shown ? $page->assertSeeHtml($hook) : $page->assertDontSeeHtml($hook);
+    }
+})->with([
+    'history' => ['history', null],
+    'compose' => ['compose', 'compose'],
+    'schedule' => ['schedule', 'schedule'],
+]);

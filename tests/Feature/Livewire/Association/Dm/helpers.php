@@ -20,10 +20,10 @@ function messageCentre(): Testable
     return Livewire::test('association.messages.admin');
 }
 
-/** The "Neue Nachricht" tab, as the page mounts it. */
+/** The "Neue Nachricht" tab, open. */
 function messageCompose(): Testable
 {
-    return Livewire::test('association.messages.admin-compose');
+    return Livewire::test('association.messages.admin-compose', ['visible' => true]);
 }
 
 /** The "Verlauf" tab, as the page mounts it, with the run it opens. */
@@ -32,10 +32,10 @@ function messageHistory(?int $openRunId = null): Testable
     return Livewire::test('association.messages.admin-history', ['openRunId' => $openRunId]);
 }
 
-/** The "Zeitplan" tab, as the page mounts it. */
+/** The "Zeitplan" tab, open. */
 function messageSchedule(): Testable
 {
-    return Livewire::test('association.messages.admin-schedule');
+    return Livewire::test('association.messages.admin-schedule', ['visible' => true]);
 }
 
 /**

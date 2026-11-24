@@ -23,7 +23,9 @@ use Livewire\Component;
  *
  * The page keeps the header, the sender-key and pause lines and the tabs;
  * each tab is a child component of its own (`admin-history`,
- * `admin-compose`, `admin-schedule`), mounted while it is open. The tabs
+ * `admin-compose`, `admin-schedule`). The history is mounted while its tab
+ * is open; the two writing tabs stay mounted and are shown by `visible`,
+ * so a draft survives a switch as it did when its state lived here. The tabs
  * hand back what the page shows of them: `message-sent` opens the started
  * run in the history, `message-run-toggled` keeps the header's primary
  * button, `messages-changed` refreshes the pause line and the tab counts.
@@ -272,13 +274,12 @@ class extends Component
         </nav>
 
         <div class="pt-8" data-test="work-area">
+            {{-- The writing tabs stay mounted, hidden, so a draft outlives a tab switch; the history is read fresh. --}}
             @if ($tab === 'history')
                 <livewire:association.messages.admin-history :open-run-id="$openRunId" key="messages-history" />
-            @elseif ($tab === 'compose')
-                <livewire:association.messages.admin-compose key="messages-compose" />
-            @else
-                <livewire:association.messages.admin-schedule key="messages-schedule" />
             @endif
+            <livewire:association.messages.admin-compose :visible="$tab === 'compose'" key="messages-compose" />
+            <livewire:association.messages.admin-schedule :visible="$tab === 'schedule'" key="messages-schedule" />
         </div>
     @endif
 </div>
