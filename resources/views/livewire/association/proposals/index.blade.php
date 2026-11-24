@@ -194,7 +194,7 @@ new class extends Component
             </div>
 
             @if ($this->proposals->isEmpty())
-                <div class="rounded-xl border border-dashed border-border-default px-6 py-12 text-center">
+                <div class="rounded-lg border border-dashed border-border-default px-6 py-12 text-center">
                     <p class="text-base text-text-secondary">
                         @if ($archive)
                             {{ __('Im Archiv liegt noch kein Vorschlag.') }}
@@ -212,7 +212,7 @@ new class extends Component
                 </div>
             @else
                 {{-- One box, one row per proposal. The whole row is the link. --}}
-                <ul class="divide-y divide-border-default overflow-hidden rounded-xl border border-border-default bg-bg-surface">
+                <ul class="divide-y divide-border-default overflow-hidden rounded-lg border border-border-default bg-bg-surface">
                     @foreach ($this->proposals as $proposal)
                         <li wire:key="proposal-{{ $proposal->id }}"
                             class="relative grid gap-3 px-4 py-4 transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-elevated has-[a:focus-visible]:outline-2 has-[a:focus-visible]:-outline-offset-2 has-[a:focus-visible]:outline-orange-500 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6 sm:px-6">

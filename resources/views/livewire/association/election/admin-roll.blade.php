@@ -28,9 +28,9 @@
         </div>
 
         @if ($rows->isEmpty())
-            <p class="mt-6 max-w-2xl rounded-xl border border-dashed border-border-default px-5 py-6 text-base text-text-secondary">{{ __('Es gibt keine Aktiv- oder Ehrenmitglieder.') }}</p>
+            <p class="mt-6 max-w-2xl rounded-lg border border-dashed border-border-default px-6 py-10 text-base text-text-secondary">{{ __('Es gibt keine Aktiv- oder Ehrenmitglieder.') }}</p>
         @else
-            <ul class="mt-6 divide-y divide-border-subtle rounded-xl border border-border-subtle bg-bg-surface" data-test="roll-list">
+            <ul class="mt-6 divide-y divide-border-default rounded-lg border border-border-default bg-bg-surface" data-test="roll-list">
                 <li class="relative hidden gap-4 px-5 py-3 text-sm text-text-tertiary sm:grid {{ $announced ? 'sm:grid-cols-[minmax(0,1fr)_17rem_13rem]' : 'sm:grid-cols-[minmax(0,1fr)_17rem]' }}" aria-hidden="true">
                     <span>{{ __('Mitglied') }}</span>
                     <span>{{ __('Wahlberechtigt') }}</span>
@@ -88,7 +88,7 @@
         </div>
 
         @if ($takesEnrolment)
-            <form wire:submit="enrol" class="relative mt-6 max-w-2xl space-y-4 rounded-xl border border-border-default bg-bg-surface p-4 sm:p-6 [&_input]:min-h-11 [&_select]:min-h-11" data-test="enrol-form">
+            <form wire:submit="enrol" class="relative mt-6 max-w-2xl space-y-4 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-6 [&_input]:min-h-11 [&_select]:min-h-11" data-test="enrol-form">
                 <h3 class="text-lg font-semibold text-text-primary">{{ __('Mitglied von Hand nachtragen') }}</h3>
                 <p class="text-base text-text-secondary">{{ __('Für einen Beitrag, den die Zahlung nicht kennt, etwa bar bezahlt. Der Grund steht im Protokoll der Wahl.') }}</p>
                 <flux:select wire:model="enrolMemberId" :label="__('Mitglied')" :placeholder="__('Mitglied wählen')" data-test="enrol-member">
@@ -103,7 +103,7 @@
             <p class="mt-4 text-sm text-text-secondary">{{ __('Nachtragen von Hand geht nur, solange der Wahlgang offen ist.') }}</p>
         @endif
 
-        <ul class="mt-6 divide-y divide-border-subtle rounded-xl border border-border-subtle bg-bg-surface" data-test="roll-list">
+        <ul class="mt-6 divide-y divide-border-default rounded-lg border border-border-default bg-bg-surface" data-test="roll-list">
             <li class="relative hidden gap-4 px-5 py-3 text-sm text-text-tertiary sm:grid sm:grid-cols-[minmax(0,1fr)_17rem_13rem]" aria-hidden="true">
                 <span>{{ __('Mitglied') }}</span>
                 <span>{{ __('Grund') }}</span>
@@ -130,7 +130,7 @@
     @endif
 
     @if ($this->takesEntitlement($election))
-        <form wire:submit="entitle" class="relative mt-8 max-w-2xl space-y-4 rounded-xl border border-border-default bg-bg-surface p-4 sm:p-6 [&_input]:min-h-11 [&_select]:min-h-11" data-test="entitle-form">
+        <form wire:submit="entitle" class="relative mt-8 max-w-2xl space-y-4 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-6 [&_input]:min-h-11 [&_select]:min-h-11" data-test="entitle-form">
             <h3 class="text-lg font-semibold text-text-primary">{{ __('Wahlberechtigung von Hand eintragen') }}</h3>
             <p class="text-base text-text-secondary">{{ __('Für ein Aktiv- oder Ehrenmitglied, dessen Beitrag die Zahlung nicht kennt, etwa bar bezahlt. Danach lässt sich seine Kandidatur freigeben, und jeder Wahlgang, den ihr danach öffnet, nimmt es ins Verzeichnis auf. Der Grund steht im Protokoll der Wahl.') }}</p>
             <flux:select wire:model="entitleMemberId" :label="__('Mitglied')" :placeholder="__('Mitglied wählen')" data-test="entitle-member">

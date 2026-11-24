@@ -1056,25 +1056,25 @@ class extends Component
             </flux:callout>
         </div>
     @else
-        <header class="mb-8 flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
-            <div class="max-w-2xl">
-                <h1 class="text-3xl font-bold leading-tight text-text-primary">{{ __('Nachrichten an Mitglieder') }}</h1>
-                <p class="mt-2 text-base text-text-secondary">
+        <x-page-header>
+            <x-slot:title>{{ __('Nachrichten an Mitglieder') }}</x-slot:title>
+                <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                     {{ __('Was der Verein als Nostr-Direktnachricht verschickt. Jede Nachricht steht zusätzlich im Posteingang des Mitglieds im Portal.') }}
                 </p>
-            </div>
-            @php
-                // One primary action at a time: an open run with failures offers its re-send as the primary one.
-                // On the schedule tab „Einplanen“ is the primary one, as soon as there is an election to plan for.
-                $openRunHasFailures = $tab === 'history' && $openRunId !== null && ($this->runs->firstWhere('id', $openRunId)?->failed_count ?? 0) > 0;
-                $scheduleHasPrimary = $tab === 'schedule' && $this->scheduleElection !== null;
-            @endphp
-            @if ($tab !== 'compose')
-                <flux:button wire:click="showTab('compose')" icon="pencil-square" :variant="$openRunHasFailures || $scheduleHasPrimary ? 'outline' : 'primary'" class="min-h-11" data-test="start-compose">
-                    {{ __('Neue Nachricht') }}
-                </flux:button>
-            @endif
-        </header>
+            <x-slot:actions>
+                @php
+                    // One primary action at a time: an open run with failures offers its re-send as the primary one.
+                    // On the schedule tab „Einplanen“ is the primary one, as soon as there is an election to plan for.
+                    $openRunHasFailures = $tab === 'history' && $openRunId !== null && ($this->runs->firstWhere('id', $openRunId)?->failed_count ?? 0) > 0;
+                    $scheduleHasPrimary = $tab === 'schedule' && $this->scheduleElection !== null;
+                @endphp
+                @if ($tab !== 'compose')
+                    <flux:button wire:click="showTab('compose')" icon="pencil-square" :variant="$openRunHasFailures || $scheduleHasPrimary ? 'outline' : 'primary'" class="min-h-11" data-test="start-compose">
+                        {{ __('Neue Nachricht') }}
+                    </flux:button>
+                @endif
+            </x-slot:actions>
+        </x-page-header>
 
         @unless ($this->senderKeyUsable)
             {{-- Not a reason to block: the portal inbox copy still arrives, and failed deliveries can be re-sent once the key is set. --}}

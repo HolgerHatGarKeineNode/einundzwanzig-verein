@@ -121,8 +121,8 @@ class extends Component
             <flux:callout.text>{{ __('Bitte melde dich zunächst mit Nostr an.') }}</flux:callout.text>
         </flux:callout>
     @else
-        <header class="mb-8">
-            <h1 class="text-3xl font-bold leading-tight text-text-primary sm:text-4xl">{{ __('Nachrichten vom Verein') }}</h1>
+        <x-page-header>
+            <x-slot:title>{{ __('Nachrichten vom Verein') }}</x-slot:title>
             @if ($this->messages->isNotEmpty())
                 <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                     @if ($this->unreadCount > 0)
@@ -131,7 +131,7 @@ class extends Component
                     {{ __('Was der Vorstand dir als Nostr-Direktnachricht schickt, steht auch hier. Antworten auf diese Nachrichten liest niemand; wen du stattdessen erreichst, steht am Ende jeder Nachricht.') }}
                 </p>
             @endif
-        </header>
+        </x-page-header>
 
         @if ($this->messages->isEmpty())
             <section class="rounded-lg border border-dashed border-border-default px-6 py-10" aria-labelledby="no-messages">

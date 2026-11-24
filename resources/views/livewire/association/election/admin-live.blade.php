@@ -26,7 +26,7 @@
     </div>
 
     @if ($reports->isEmpty())
-        <p class="mt-8 max-w-2xl rounded-xl border border-dashed border-border-default px-5 py-6 text-base text-text-secondary">{{ __('Diese Wahl hat noch keinen Wahlgang. Legt ihn unter „Einstellungen“ an.') }}</p>
+        <p class="mt-8 max-w-2xl rounded-lg border border-dashed border-border-default px-6 py-10 text-base text-text-secondary">{{ __('Diese Wahl hat noch keinen Wahlgang. Legt ihn unter „Einstellungen“ an.') }}</p>
     @else
         <ol class="mt-8 border-b border-border-default" data-test="live-rounds">
             @foreach ($reports as $report)

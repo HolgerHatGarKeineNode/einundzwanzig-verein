@@ -33,9 +33,9 @@
             @endunless
 
             @if ($group['candidates']->isEmpty())
-                <p class="mt-4 rounded-xl border border-dashed border-border-default px-5 py-6 text-base text-text-secondary">{{ __('Noch keine Kandidatur.') }}</p>
+                <p class="mt-4 rounded-lg border border-dashed border-border-default px-6 py-10 text-base text-text-secondary">{{ __('Noch keine Kandidatur.') }}</p>
             @else
-                <ul class="mt-4 divide-y divide-border-subtle rounded-xl border border-border-subtle bg-bg-surface">
+                <ul class="mt-4 divide-y divide-border-default rounded-lg border border-border-default bg-bg-surface">
                     @foreach ($group['candidates'] as $row)
                         @php
                             $candidate = $row['candidate'];

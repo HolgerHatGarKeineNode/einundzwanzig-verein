@@ -29,12 +29,12 @@
         <h2 id="runs-heading" class="text-xl font-bold text-text-primary">{{ __('Gesendet') }}</h2>
 
         @if ($this->runs->isEmpty())
-            <div class="mt-4 max-w-2xl rounded-xl border border-dashed border-border-default px-5 py-8" data-test="runs-empty">
+            <div class="mt-4 max-w-2xl rounded-lg border border-dashed border-border-default px-6 py-10" data-test="runs-empty">
                 <p class="text-lg font-semibold text-text-primary">{{ __('Noch keine Nachricht gesendet.') }}</p>
                 <p class="mt-2 text-base text-text-secondary">{{ __('Die erste ist meist die Ankündigung der Wahl. Schreib sie unter „Neue Nachricht“ oder plane sie im Zeitplan.') }}</p>
             </div>
         @else
-            <ul class="mt-4 divide-y divide-border-default overflow-hidden rounded-xl border border-border-default bg-bg-surface">
+            <ul class="mt-4 divide-y divide-border-default overflow-hidden rounded-lg border border-border-default bg-bg-surface">
                 @foreach ($this->runs as $run)
                     @php
                         $counts = $this->countsOf($run);

@@ -317,12 +317,12 @@ class extends Component
             $thread = $this->thread();
         @endphp
 
-        <header class="mb-8 max-w-2xl">
-            <h1 class="text-3xl font-bold leading-tight text-text-primary">{{ __('Posteingang des Vorstands') }}</h1>
-            <p class="mt-2 text-base text-text-secondary">
+        <x-page-header>
+            <x-slot:title>{{ __('Posteingang des Vorstands') }}</x-slot:title>
+            <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                 {{ __('Alle Nostr-Direktnachrichten an das Vereinskonto, von Mitgliedern und allen anderen. Jedes Vorstandsmitglied sieht alle Gespräche; eure Antwort geht als Nostr-Direktnachricht vom Vereinskonto.') }}
             </p>
-        </header>
+        </x-page-header>
 
         @unless ($this->inboxIsOn())
             <div role="status" class="mb-8 rounded-r-lg border-l-4 border-warning bg-bg-elevated p-4" data-test="inbox-off">

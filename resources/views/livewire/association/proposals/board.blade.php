@@ -122,7 +122,7 @@ new class extends Component
                             <p class="rounded-lg border border-dashed border-border-default px-6 py-10 text-base text-text-secondary">{{ $empty }}</p>
                         @else
                             {{-- Ordered on purpose: agenda order above, rank by support below. --}}
-                            <ol class="divide-y divide-border-default rounded-xl border border-border-default bg-bg-surface">
+                            <ol class="divide-y divide-border-default rounded-lg border border-border-default bg-bg-surface">
                                 @foreach ($proposals as $proposal)
                                     <li wire:key="{{ $section }}-{{ $proposal->id }}"
                                         class="relative grid gap-4 p-4 sm:grid-cols-[2rem_minmax(0,1fr)] sm:p-6 lg:grid-cols-[2rem_minmax(0,1fr)_20rem] lg:gap-6">

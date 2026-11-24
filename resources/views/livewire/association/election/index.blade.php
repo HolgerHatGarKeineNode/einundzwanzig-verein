@@ -1006,11 +1006,9 @@ new class extends Component
             @endif
         </div>
     @else
-        <header class="mb-8 max-w-2xl">
-            <h1 class="hyphens-auto break-words text-3xl font-bold leading-tight text-text-primary sm:text-4xl">
-                {{ $this->election?->name ?? __('Wahl') }}
-            </h1>
-            <p class="mt-2 text-base leading-normal text-text-secondary">
+        <x-page-header>
+            <x-slot:title>{{ $this->election?->name ?? __('Wahl') }}</x-slot:title>
+            <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                 @if ($this->election === null)
                     {{ __('Hier läuft die Vorstandswahl des Vereins, live in der Versammlung.') }}
                 @else
@@ -1037,7 +1035,7 @@ new class extends Component
                     @endforeach
                 </nav>
             @endif
-        </header>
+        </x-page-header>
 
         @if ($this->election?->is_test)
             <div role="note" class="mb-8 flex items-start gap-3 rounded-md border border-warning/60 bg-[repeating-linear-gradient(135deg,rgb(250_204_21/0.10)_0_12px,transparent_12px_24px)] px-4 py-3">

@@ -1743,22 +1743,22 @@ new class extends Component
             </flux:callout>
         </div>
     @else
-        <header class="mb-12 flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
-            <div class="max-w-2xl">
-                <h1 class="text-3xl font-bold leading-tight text-text-primary">{{ __('Wahl leiten') }}</h1>
-                <p class="mt-2 text-base text-text-secondary">
+        <x-page-header>
+            <x-slot:title>{{ __('Wahl leiten') }}</x-slot:title>
+                <p class="mt-2 max-w-prose text-base leading-normal text-text-secondary">
                     {{ __('Der Vorstand bereitet hier die Wahl vor: Termin, Wahlgänge, Kandidaturen und das Verzeichnis der Wahlberechtigten. Gewählt wird live in der Sitzung.') }}
                 </p>
-            </div>
-            @unless ($creating)
-                <flux:button wire:click="startCreate" icon="plus" class="min-h-11" :variant="$this->elections->isEmpty() ? 'primary' : 'outline'" data-test="start-create">
-                    {{ __('Wahl anlegen') }}
-                </flux:button>
-            @endunless
-        </header>
+            <x-slot:actions>
+                @unless ($creating)
+                    <flux:button wire:click="startCreate" icon="plus" class="min-h-11" :variant="$this->elections->isEmpty() ? 'primary' : 'outline'" data-test="start-create">
+                        {{ __('Wahl anlegen') }}
+                    </flux:button>
+                @endunless
+            </x-slot:actions>
+        </x-page-header>
 
         @if ($creating)
-            <section aria-labelledby="create-heading" class="mb-12 rounded-xl border border-border-default bg-bg-surface p-4 sm:p-8" data-test="create-panel">
+            <section aria-labelledby="create-heading" class="mb-12 rounded-lg border border-border-default bg-bg-surface p-4 sm:p-8" data-test="create-panel">
                 <h2 id="create-heading" class="text-2xl font-bold text-text-primary">{{ __('Neue Wahl') }}</h2>
                 <p class="mt-2 max-w-2xl text-base text-text-secondary">{{ __('Die Wahl bleibt ein Entwurf, bis ihr sie ankündigt. Mitglieder sehen sie erst danach.') }}</p>
                 <div class="mt-8">
@@ -1768,7 +1768,7 @@ new class extends Component
         @endif
 
         @if ($this->elections->isEmpty() && ! $creating)
-            <div class="max-w-2xl rounded-xl border border-dashed border-border-default px-5 py-8" data-test="empty-state">
+            <div class="max-w-2xl rounded-lg border border-dashed border-border-default px-6 py-10" data-test="empty-state">
                 <p class="text-lg font-semibold text-text-primary">{{ __('Noch keine Wahl angelegt.') }}</p>
                 <p class="mt-2 text-base text-text-secondary">{{ __('Legt die Wahl an, sobald der Sitzungstermin feststeht. Präsidium, Vorstand und Revisionsstelle sind als Wahlgänge vorbereitet.') }}</p>
             </div>

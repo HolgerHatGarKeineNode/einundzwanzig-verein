@@ -26,7 +26,7 @@
     </section>
 
     @if ($this->elections->isEmpty())
-        <div class="max-w-2xl rounded-xl border border-dashed border-border-default px-5 py-8" data-test="schedule-no-election">
+        <div class="max-w-2xl rounded-lg border border-dashed border-border-default px-6 py-10" data-test="schedule-no-election">
             <p class="text-lg font-semibold text-text-primary">{{ __('Noch keine Wahl angelegt.') }}</p>
             <p class="mt-2 text-base text-text-secondary">{{ __('Geplante Nachrichten gehören zu einer Wahl. Lege sie unter „Wahl leiten“ an.') }}</p>
         </div>
