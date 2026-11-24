@@ -34,15 +34,20 @@ class StoreAppApplicationController extends ApiV1Controller
      *
      * The application of `POST /api/v1/membership/applications` without a
      * signature: the subject is the `pubkey` field of the body, and the
-     * calling application vouches for it. Everything else is identical — it
-     * records the data and the consent to the statutes, and it changes NO
-     * status. The statutes tie the membership to the payment of the annual fee
-     * (Art. 4), so this call alone makes nobody a member.
+     * calling application vouches for it. Apart from the contact fields
+     * (below) it behaves the same — it records the data and the consent to
+     * the statutes, and it changes NO status. The statutes tie the membership
+     * to the payment of the annual fee (Art. 4), so this call alone makes
+     * nobody a member.
      *
      * 201 the first time consent is recorded, 200 on a repeat. The consent
-     * timestamp is the joining document: a repeat leaves it untouched and
-     * updates only the contact fields actually sent, with an absent field left
-     * alone and an explicit `null` clearing the stored value.
+     * timestamp is the joining document: a repeat leaves it untouched.
+     *
+     * Contact fields are written on a new record and, on an existing one,
+     * only into fields that are still empty. A stored value — email, NIP-05
+     * handle, application text, email opt-out — is never overwritten or
+     * cleared here: without a signature the caller is not proven to be the
+     * key holder. Changing stored contact data needs the signed branch.
      *
      * `association_status` and `paid` cannot be written through this endpoint.
      * The membership category is raised by a settled fee and by nothing else —
@@ -60,6 +65,14 @@ class StoreAppApplicationController extends ApiV1Controller
             $request->validated(),
             array_flip(self::CONTACT_FIELDS)
         );
+
+        if (! $pleb->wasRecentlyCreated) {
+            $contact = array_filter(
+                $contact,
+                fn (string $field): bool => $pleb->getAttribute($field) === null || $pleb->getAttribute($field) === '',
+                ARRAY_FILTER_USE_KEY,
+            );
+        }
 
         if ($contact !== []) {
             $pleb->fill($contact)->save();

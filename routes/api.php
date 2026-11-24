@@ -89,6 +89,9 @@ Route::prefix('v1/membership')->name('api.v1.membership.')->group(function () {
  *
  *   GET  /config            — Beitrag und Statuten, wie im Web-Zweig
  *   POST /applications      — Antrag + Statuten-Zustimmung, Subjekt im Body
+ *                             (contact fields only fill empty ones: an existing
+ *                             email or NIP-05 handle is never overwritten or
+ *                             cleared, see StoreAppApplicationController)
  *   POST /payments/{y}/invoice — BTCPay-Checkout, Subjekt im Body
  *
  * ES GIBT KEIN /me, KEIN /payments (Liste) und KEIN /export hier: ohne
