@@ -39,6 +39,22 @@ class extends Component
 
     public string $reply = '';
 
+    /**
+     * Members by pubkey, null for anyone who is none, read once per request:
+     * the list names up to CONVERSATIONS_SHOWN contacts and the open thread
+     * asks for its member several times. Private, so never in the snapshot.
+     *
+     * @var array<string, EinundzwanzigPleb|null>
+     */
+    private array $members = [];
+
+    /**
+     * Cached Nostr profiles by pubkey, for contacts who are no member.
+     *
+     * @var array<string, Profile|null>
+     */
+    private array $profiles = [];
+
     public function mount(): void
     {
         if (! NostrAuth::check()) {
@@ -144,16 +160,16 @@ class extends Component
             ->pluck('unread', 'counterparty_pubkey');
 
         $last = DmInboxMessage::query()->whereIn('id', $latest->values())->get()->keyBy('id');
-        $members = EinundzwanzigPleb::query()->notErased()->whereIn('pubkey', $latest->keys())->pluck('id', 'pubkey');
+        $this->loadContacts($latest->keys()->all());
         app(\App\Support\NostrAvatars::class)->preload($latest->keys());
 
-        return $latest->map(function (int $lastId, string $contact) use ($last, $unread, $members): array {
+        return $latest->map(function (int $lastId, string $contact) use ($last, $unread): array {
             $message = $last[$lastId];
 
             return [
                 'contact' => $contact,
                 'name' => $this->nameOf($contact),
-                'is_member' => $members->has($contact),
+                'is_member' => $this->memberFor($contact) !== null,
                 'preview' => ($message->direction === DmInboxMessage::OUT ? __('Vorstand: ') : '').str($message->body)->squish()->limit(90)->toString(),
                 'last_at' => $message->sent_at,
                 'unread' => (int) ($unread[$contact] ?? 0),
@@ -178,9 +194,51 @@ class extends Component
             ->get();
     }
 
+    /**
+     * Reads the members and, for everyone else, the cached profiles behind
+     * `$contacts` in two queries, so naming the list does not query per row.
+     *
+     * @param  list<string>  $contacts
+     */
+    protected function loadContacts(array $contacts): void
+    {
+        $missing = array_values(array_diff($contacts, array_keys($this->members)));
+
+        if ($missing === []) {
+            return;
+        }
+
+        $members = EinundzwanzigPleb::query()->notErased()->with(['profile', 'dmRelays'])->whereIn('pubkey', $missing)->get()->keyBy('pubkey');
+        $others = [];
+
+        foreach ($missing as $contact) {
+            $this->members[$contact] = $members->get($contact);
+
+            if ($this->members[$contact] === null && ! array_key_exists($contact, $this->profiles)) {
+                $others[] = $contact;
+            }
+        }
+
+        if ($others !== []) {
+            $profiles = Profile::query()->whereIn('pubkey', $others)->get()->keyBy('pubkey');
+
+            foreach ($others as $contact) {
+                $this->profiles[$contact] = $profiles->get($contact);
+            }
+        }
+    }
+
     protected function memberFor(?string $contact): ?EinundzwanzigPleb
     {
-        return $contact === null ? null : EinundzwanzigPleb::query()->notErased()->with(['profile', 'dmRelays'])->where('pubkey', $contact)->first();
+        if ($contact === null) {
+            return null;
+        }
+
+        if (! array_key_exists($contact, $this->members)) {
+            $this->members[$contact] = EinundzwanzigPleb::query()->notErased()->with(['profile', 'dmRelays'])->where('pubkey', $contact)->first();
+        }
+
+        return $this->members[$contact];
     }
 
     /**
@@ -196,7 +254,11 @@ class extends Component
             return MemberProposal::authorNameOf($member);
         }
 
-        $profile = Profile::query()->where('pubkey', $contact)->first();
+        if (! array_key_exists($contact, $this->profiles)) {
+            $this->profiles[$contact] = Profile::query()->where('pubkey', $contact)->first();
+        }
+
+        $profile = $this->profiles[$contact];
 
         if (filled($profile?->name) || filled($profile?->display_name)) {
             return (string) ($profile->name ?: $profile->display_name);
