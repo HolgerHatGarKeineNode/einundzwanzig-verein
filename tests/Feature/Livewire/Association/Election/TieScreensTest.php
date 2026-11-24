@@ -21,6 +21,7 @@ use App\Services\Election\OpenRound;
 use App\Services\Election\RecordCastingVote;
 use App\Services\Election\RoundManifest;
 use App\Services\Election\RoundReport;
+use App\Services\Election\TallyResult;
 use App\Services\Election\TallyRound;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
@@ -414,10 +415,10 @@ function fakeUnreadableCountServices(): void
 {
     app()->bind(CreateRunOff::class, fn ($app) => new class($app->make(TallyRound::class), $app->make(ElectionAuditLog::class)) extends CreateRunOff
     {
-        public function proposal(ElectionRound $round): array
+        public function proposal(ElectionRound $round, ?TallyResult $effective = null): array
         {
             try {
-                return parent::proposal($round);
+                return parent::proposal($round, $effective);
             } catch (UnexpectedValueException) {
                 return ['candidates' => [], 'seats' => 0, 'needs_resolution' => false];
             }

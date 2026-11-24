@@ -56,14 +56,15 @@ class CreateRunOff
      * A round whose stored votes do not fit it has no count, so nothing is
      * proposed from it; `handle()` refuses its run-off outright.
      *
+     * @param  TallyResult|null  $effective  the round's effective result when the caller has it already, so it is not counted twice
      * @return array{candidates: list<int>, seats: int, needs_resolution: bool}
      *
      * @throws ElectionRoundStateException when the round is not sealed
      */
-    public function proposal(ElectionRound $round): array
+    public function proposal(ElectionRound $round, ?TallyResult $effective = null): array
     {
         try {
-            $result = $this->tally->effective($round);
+            $result = $effective ?? $this->tally->effective($round);
         } catch (UnexpectedValueException) {
             return ['candidates' => [], 'seats' => 0, 'needs_resolution' => false];
         }

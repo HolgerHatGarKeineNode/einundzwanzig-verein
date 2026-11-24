@@ -72,6 +72,10 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
      * The round to show: the open one; else one whose time ran out; else the
      * one finished last; else the first that has not been opened yet.
      *
+     * The round is picked from its columns; only that one is reported. This
+     * runs on every poll, once a second, and a report of a sealed round
+     * counts its votes and rebuilds its manifest.
+     *
      * @return array{report: array<string, mixed>, number: int|null, total: int}|null
      */
     #[Computed]
@@ -83,22 +87,21 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
             return null;
         }
 
-        $reports = app(RoundReport::class)->forElection($this->election);
+        $reports = app(RoundReport::class);
+        $rounds = $reports->roundsOf($this->election);
+        $now = now();
+        $stateOf = fn (ElectionRound $round): ElectionRoundState => $round->stateAt($now);
 
-        if ($reports->isEmpty()) {
-            return null;
-        }
-
-        $report = $reports->first(fn (array $report): bool => $report['state'] === ElectionRoundState::Open)
-            ?? $reports->first(fn (array $report): bool => $report['over_by_clock'])
-            ?? $reports
-                ->filter(fn (array $report): bool => $report['round']->opened_at !== null && ($report['round']->closed_at !== null || $report['round']->annulled_at !== null))
+        $round = $rounds->first(fn (ElectionRound $round): bool => $stateOf($round) === ElectionRoundState::Open)
+            ?? $rounds->first(fn (ElectionRound $round): bool => $stateOf($round) === ElectionRoundState::Closed && ! $round->isSealed())
+            ?? $rounds
+                ->filter(fn (ElectionRound $round): bool => $round->opened_at !== null && ($round->closed_at !== null || $round->annulled_at !== null))
                 // Latest finished first; within one second the round itself before a run-off annulled along with it, then the later created.
-                ->sort(fn (array $a, array $b): int => $this->finishedOrder($b['round']) <=> $this->finishedOrder($a['round']))
+                ->sort(fn (ElectionRound $a, ElectionRound $b): int => $this->finishedOrder($b) <=> $this->finishedOrder($a))
                 ->first()
-            ?? $reports->first(fn (array $report): bool => $report['state'] === ElectionRoundState::Draft);
+            ?? $rounds->first(fn (ElectionRound $round): bool => $stateOf($round) === ElectionRoundState::Draft);
 
-        if ($report === null) {
+        if ($round === null) {
             return null;
         }
 
@@ -107,15 +110,15 @@ new #[Layout('layouts.bare')] #[Title('Wahl – Ansicht zum Teilen')] class exte
         // its place. An annulled round whose repeat is still owed keeps its
         // place in the total, so "von 4" does not drop to 3 between the annul
         // and the repeat. Numbers follow admin-live's list (same agenda).
-        $agenda = $reports
-            ->filter(fn (array $candidate): bool => $candidate['round']->parent_round_id === null && $candidate['state'] !== ElectionRoundState::Annulled)
+        $agenda = $rounds
+            ->filter(fn (ElectionRound $candidate): bool => $candidate->parent_round_id === null && $stateOf($candidate) !== ElectionRoundState::Annulled)
             ->values();
-        $owed = $reports
-            ->filter(fn (array $candidate): bool => $candidate['state'] === ElectionRoundState::Annulled && app(ElectionStewardship::class)->awaitsRepeat($candidate['round']))
+        $owed = $rounds
+            ->filter(fn (ElectionRound $candidate): bool => $stateOf($candidate) === ElectionRoundState::Annulled && app(ElectionStewardship::class)->awaitsRepeat($candidate))
             ->count();
-        $number = $agenda->search(fn (array $candidate): bool => $candidate['round']->is($report['round']));
+        $number = $agenda->search(fn (ElectionRound $candidate): bool => $candidate->is($round));
 
-        return ['report' => $report, 'number' => $number === false ? null : $number + 1, 'total' => $agenda->count() + $owed];
+        return ['report' => $reports->of($round, $now), 'number' => $number === false ? null : $number + 1, 'total' => $agenda->count() + $owed];
     }
 
     protected function clock(?CarbonInterface $moment = null): string

@@ -22,7 +22,6 @@ use App\Services\Election\TallyRound;
 use App\Support\NostrAuth;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Livewire\Features\SupportTesting\Testable;
 use Livewire\Livewire;
@@ -1262,11 +1261,13 @@ it('shows an unreadable round on the share view as one calm line and every other
                 parent::__construct($tally, $manifests, $runOffs);
             }
 
-            public function forElection(Election $election, ?CarbonInterface $now = null): Collection
+            public function of(ElectionRound $round, ?CarbonInterface $now = null): array
             {
-                return parent::forElection($election, $now)->map(fn (array $report): array => $report['round']->getKey() === $this->unreadableId
+                $report = parent::of($round, $now);
+
+                return $report['round']->getKey() === $this->unreadableId
                     ? [...$report, 'unreadable' => true, 'result' => null, 'run_off' => null]
-                    : [...$report, 'unreadable' => false]);
+                    : [...$report, 'unreadable' => false];
             }
         });
     };
