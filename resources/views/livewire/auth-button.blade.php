@@ -1,6 +1,7 @@
 <?php
 
 use App\Support\NostrAuth;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Locked;
 use Livewire\Attributes\On;
@@ -77,6 +78,15 @@ new class extends Component
             $this->skipRender();
 
             return;
+        }
+
+        /*
+         * Ten verifications per minute and IP, checked before the signature
+         * is: the limiter the page login handlers carried until R8 removed
+         * them, now on the one login every page shares.
+         */
+        if (! RateLimiter::attempt('nostr-login:'.request()->ip(), 10, function (): void {})) {
+            abort(429, 'Too many login attempts.');
         }
 
         try {
