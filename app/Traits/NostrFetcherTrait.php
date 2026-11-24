@@ -44,6 +44,16 @@ trait NostrFetcherTrait
         }
     }
 
+    /**
+     * Seconds to wait for each relay's answer in fetchProfile(); null keeps
+     * the vendor default of 60 s. It does not bound the connect itself:
+     * swentel's Relay::connect() builds its own client with that default.
+     */
+    protected function profileRelayTimeout(): int|float|null
+    {
+        return null;
+    }
+
     public function fetchProfile($npubs)
     {
         $hex = collect([]);
@@ -87,6 +97,11 @@ trait NostrFetcherTrait
             $relay = new Relay($relayUrl);
             $relay->setMessage($requestMessage);
             $request = new Request($relay, $requestMessage);
+
+            if ($this->profileRelayTimeout() !== null) {
+                $request->setTimeout($this->profileRelayTimeout());
+            }
+
             try {
                 $response = $request->send();
                 $data = $response[$relayUrl];

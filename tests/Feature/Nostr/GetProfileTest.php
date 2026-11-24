@@ -146,3 +146,27 @@ it('antwortet mit 404 statt mit 200, wenn kein Profil existiert', function () {
         ->assertNotFound()
         ->assertExactJson(['message' => 'Profile not found']);
 });
+
+it('does not ask the relays again for a pubkey they did not deliver within ten minutes', function () {
+    Http::fake([]);
+    $spy = spyOnProfileFetch();
+
+    $pubkey = profilePubkey('miss-cached');
+
+    $this->getJson('/api/nostr/profile/'.$pubkey)->assertNotFound();
+    $this->getJson('/api/nostr/profile/'.$pubkey)->assertNotFound();
+
+    expect($spy->fetched)->toBe([[$pubkey]]);
+
+    $this->travel(11)->minutes();
+
+    $this->getJson('/api/nostr/profile/'.$pubkey)->assertNotFound();
+
+    expect($spy->fetched)->toBe([[$pubkey], [$pubkey]]);
+});
+
+it('waits two seconds per relay instead of the vendor default of 60', function () {
+    $timeout = (fn () => $this->profileRelayTimeout())->call(app(GetProfile::class));
+
+    expect($timeout)->toBe(2);
+});
