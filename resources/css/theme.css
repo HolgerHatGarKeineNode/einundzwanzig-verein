@@ -67,6 +67,19 @@
     --color-danger:  #F87171;   /* helles Rot, auf Dunkel legibler als #EF4444 */
     --color-info:    #60A5FA;   /* kuehles Blau, max. Distanz zur warmen Marke */
 
+    /* State surfaces (P3/D9): each state colour at 20% over bg-surface
+       #111113, written out opaque so the contrast stays fixed on any page
+       fill. Badges and status chips use exactly these five pairs:
+         neutral  #ADADB0 on bg-elevated #1A1A1D  7.76:1
+         success  #22C55E on #143522              6.00:1
+         warning  #FACC15 on #403613              7.81:1
+         danger   #F87171 on #3F2426              5.09:1
+         info     #60A5FA on #212F41              5.40:1 */
+    --color-success-surface: #143522;
+    --color-warning-surface: #403613;
+    --color-danger-surface:  #3F2426;
+    --color-info-surface:    #212F41;
+
     /* =====================================================================
        Stimmzettel (Entscheidung E13): der einzige helle Bogen im Portal.
        Kuehles Papier statt Creme; Tinte ist das Zinc-900 der Skala.

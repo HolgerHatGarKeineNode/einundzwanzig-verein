@@ -356,7 +356,8 @@ class extends Component
                                 <span class="pointer-events-none relative flex w-full items-start justify-between gap-3">
                                     <span class="min-w-0 break-words text-sm text-text-secondary">{{ $conversation['preview'] }}</span>
                                     @if ($conversation['unread'] > 0)
-                                        <flux:badge color="orange" size="sm" class="shrink-0" data-test="unread-{{ $conversation['contact'] }}">{{ trans_choice('{1} 1 neu|[2,*] :count neu', $conversation['unread'], ['count' => $conversation['unread']]) }}</flux:badge>
+                                        {{-- Unread as on the member's message page: white border and the word, no state colour. --}}
+                                        <span class="shrink-0 rounded-sm border border-text-primary px-1.5 text-sm font-bold whitespace-nowrap text-text-primary" data-test="unread-{{ $conversation['contact'] }}">{{ trans_choice('{1} 1 neu|[2,*] :count neu', $conversation['unread'], ['count' => $conversation['unread']]) }}</span>
                                     @endif
                                 </span>
                             </li>
