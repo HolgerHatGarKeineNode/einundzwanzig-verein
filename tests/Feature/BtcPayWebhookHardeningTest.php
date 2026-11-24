@@ -594,7 +594,14 @@ it('does not promote on a settled fee for a past year', function () {
 
 /* ---------------------------------------------------------------- DoD 8 --- */
 
-it('reverses a booked fee on InvoiceInvalid without lowering the category', function () {
+it('keeps a booked fee on InvoiceInvalid and writes no Storno', function () {
+    /*
+     * CHANGED ON 2026-11-24, owner decision verbatim: "Wenn Webhook meldet,
+     * dass bezahlt, dann ist bezahlt! Lightning Invoices sind nicht
+     * rückholbar!" Until then this delivery took `paid` back and wrote a
+     * PaymentReversal. A settled fee is final now, so `InvoiceInvalid` is
+     * acknowledged and changes nothing.
+     */
     hardFakeInvoice();
 
     $subject = hardSubject(
@@ -606,25 +613,18 @@ it('reverses a booked fee on InvoiceInvalid without lowering the category', func
 
     $payment = $subject['payment']->fresh();
 
-    expect((bool) $payment->paid)->toBeFalse()
-        // A payment provider does not end memberships; Art. 4.2 rules out any
-        // claim to a refund in the first place.
+    expect((bool) $payment->paid)->toBeTrue()
+        ->and($payment->btc_pay_invoice)->toBe(HARD_INVOICE)
+        ->and(PaymentReversal::query()->count())->toBe(0)
         ->and($subject['pleb']->fresh()->association_status)->toBe(AssociationStatus::PASSIVE);
 
-    $reversal = PaymentReversal::query()->where('payment_event_id', $payment->id)->first();
+    // Nothing to decide, so nothing is asked and nothing is recorded.
+    Http::assertNothingSent();
 
-    // The history still shows what came in: year, amount and currency of the
-    // original entry, kept in the reversal rather than joined off a row that
-    // may be invoiced again.
-    expect($reversal)->not->toBeNull()
-        ->and($reversal->year)->toBe((int) now()->year)
-        ->and($reversal->amount)->toBe(21000)
-        ->and($reversal->currency)->toBe('SATS')
-        ->and($reversal->reason)->toBe('InvoiceInvalid')
-        ->and($payment->btc_pay_invoice)->toBe(HARD_INVOICE);
+    expect(BtcPayWebhookDelivery::query()->count())->toBe(0);
 });
 
-it('writes no second Storno when InvoiceInvalid is redelivered', function () {
+it('writes no Storno when InvoiceInvalid is redelivered', function () {
     hardFakeInvoice();
 
     $subject = hardSubject(
@@ -635,7 +635,8 @@ it('writes no second Storno when InvoiceInvalid is redelivered', function () {
     hardPost(['type' => 'InvoiceInvalid', 'deliveryId' => 'del-x'])->assertNoContent();
     hardPost(['type' => 'InvoiceInvalid', 'deliveryId' => 'del-y', 'originalDeliveryId' => 'del-x', 'isRedelivery' => true])->assertNoContent();
 
-    expect(PaymentReversal::query()->count())->toBe(1);
+    expect(PaymentReversal::query()->count())->toBe(0)
+        ->and((bool) $subject['payment']->fresh()->paid)->toBeTrue();
 });
 
 /* ---------------------------------------------------------------- DoD 9 --- */

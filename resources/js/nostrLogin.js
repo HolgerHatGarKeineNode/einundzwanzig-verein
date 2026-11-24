@@ -14,6 +14,10 @@ const CHALLENGE_REQUEST_TIMEOUT_MS = 20000
 // on the way gives neither; this ends the wait instead.
 const LOGIN_SERVER_TIMEOUT_MS = 30000
 
+// The profile prefetch only fills the Alpine store before the reload. A slow
+// relay lookup behind it on the server must not hold up the login.
+const PROFILE_PREFETCH_TIMEOUT_MS = 1500
+
 // NostrAuth::issueChallenge(): 32 random bytes, lowercase hex.
 const CHALLENGE_PATTERN = /^[0-9a-f]{64}$/
 
@@ -249,9 +253,10 @@ export default () => ({
             }
 
             // Pre-fetch the profile so it lands in the Alpine store before the
-            // reload completes. Non-critical: failures are logged but ignored.
+            // reload completes. Non-critical: failures are logged but ignored,
+            // and the login goes on after PROFILE_PREFETCH_TIMEOUT_MS at most.
             try {
-                const response = await fetch('/api/nostr/profile/' + pubkey);
+                const response = await withTimeout(fetch('/api/nostr/profile/' + pubkey), PROFILE_PREFETCH_TIMEOUT_MS);
                 if (response.ok) {
                     const data = await response.json();
                     Alpine.store('nostr', {user: data});

@@ -7,6 +7,7 @@ use App\Models\Profile;
 use App\Traits\NostrFetcherTrait;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * GET /api/nostr/profile/{key} — liefert das gespiegelte kind-0-Profil zu EINEM Pubkey.
@@ -26,11 +27,19 @@ class GetProfile extends Controller
 {
     use NostrFetcherTrait;
 
+    /**
+     * How long a pubkey whose profile the relays did not deliver is left
+     * alone. Every login asks this endpoint, and an unanswered lookup used to
+     * be repeated on each call (four relays in sequence, measured 21 s).
+     */
+    private const MISS_TTL_SECONDS = 600;
+
     public function __invoke(string $key, Request $request): Profile|JsonResponse
     {
         $profile = Profile::query()->where('pubkey', $key)->first();
 
-        if (! $profile) {
+        // add() is atomic: concurrent misses for one pubkey start one lookup.
+        if (! $profile && Cache::add('nostr-profile-lookup:'.$key, true, self::MISS_TTL_SECONDS)) {
             $this->fetchProfile([$key]);
 
             $profile = Profile::query()->where('pubkey', $key)->first();
@@ -41,5 +50,10 @@ class GetProfile extends Controller
         }
 
         return $profile;
+    }
+
+    protected function profileRelayTimeout(): int|float|null
+    {
+        return 2;
     }
 }

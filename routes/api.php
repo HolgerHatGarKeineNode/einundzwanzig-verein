@@ -20,8 +20,10 @@ use Illuminate\Support\Facades\Route;
 // ist kein Pubkey, sondern ein Tippfehler oder ein Scan — und wird hier abgewiesen,
 // bevor der Controller laeuft. Gleiches Muster wie `Nostr\GetProfiles`
 // (`app/Http/Controllers/Nostr/GetProfiles.php:60`).
+// The same limiter as /nostr/profiles: a miss here dials the profile relays.
 Route::get('/nostr/profile/{key}', GetProfile::class)
-    ->where('key', '[0-9a-f]{64}');
+    ->where('key', '[0-9a-f]{64}')
+    ->middleware('throttle:nostr-profiles');
 
 Route::get('/members/{year}', GetPaidMembers::class);
 

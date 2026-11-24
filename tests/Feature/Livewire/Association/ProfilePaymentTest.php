@@ -29,6 +29,12 @@ function fakeBtcPayStatus(string $status): void
     ]);
 }
 
+/*
+ * A paid fee is final (owner decision of 2026-11-24: "Wenn Webhook meldet, dass
+ * bezahlt, dann ist bezahlt! … eine weitere Abfrage auf BTCPay ist nicht mehr
+ * notwendig."), so the two cases below no longer reach BTCPay at all: whatever
+ * it would answer, the page shows the booking from this database.
+ */
 it('keeps a paid payment event when btcpay reports the invoice as expired', function () {
     fakeBtcPayStatus('Expired');
 
@@ -45,12 +51,16 @@ it('keeps a paid payment event when btcpay reports the invoice as expired', func
     NostrAuth::login($pleb->pubkey);
 
     Livewire::test('association.profile')
-        ->assertSet('invoiceStatus', 'Expired')
+        ->assertSet('invoiceStatus', 'Settled')
+        ->assertSet('currentYearIsPaid', true)
+        ->call('listenForPayment')
         ->assertSet('currentYearIsPaid', true);
 
     expect(PaymentEvent::query()->whereKey($paymentEvent->id)->exists())->toBeTrue()
         ->and((bool) $paymentEvent->fresh()->paid)->toBeTrue()
         ->and($paymentEvent->fresh()->btc_pay_invoice)->toBe('invoice-under-test');
+
+    Http::assertNothingSent();
 });
 
 it('keeps a paid payment event when btcpay reports the invoice as invalid', function () {
@@ -68,10 +78,16 @@ it('keeps a paid payment event when btcpay reports the invoice as invalid', func
 
     NostrAuth::login($pleb->pubkey);
 
-    Livewire::test('association.profile')->assertSet('invoiceStatus', 'Invalid');
+    Livewire::test('association.profile')
+        ->assertSet('invoiceStatus', 'Settled')
+        ->call('listenForPayment')
+        ->assertSet('currentYearIsPaid', true);
 
     expect(PaymentEvent::query()->whereKey($paymentEvent->id)->exists())->toBeTrue()
-        ->and((bool) $paymentEvent->fresh()->paid)->toBeTrue();
+        ->and((bool) $paymentEvent->fresh()->paid)->toBeTrue()
+        ->and($paymentEvent->reversals()->count())->toBe(0);
+
+    Http::assertNothingSent();
 });
 
 it('still drops an unpaid expired invoice — the counter-check', function () {

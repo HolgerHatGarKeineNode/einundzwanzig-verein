@@ -44,6 +44,14 @@ test('nostr profile api route is rate limited', function () {
     $this->getJson('/api/nostr/profile/'.hash('sha256', 'testkey'))->assertStatus(429);
 });
 
+test('nostr profile api route shares the nostr-profiles limit of 30 a minute', function () {
+    for ($i = 0; $i < 30; $i++) {
+        $this->getJson('/api/nostr/profile/'.hash('sha256', 'limit'.$i))->assertNotFound();
+    }
+
+    $this->getJson('/api/nostr/profile/'.hash('sha256', 'limit-over'))->assertStatus(429);
+});
+
 test('voting actions are rate limited after 10 attempts', function () {
     $pleb = EinundzwanzigPleb::factory()->create();
     $project = ProjectProposal::factory()->create();

@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\V1\ApiV1Controller;
 use App\Models\EinundzwanzigPleb;
 use App\Models\MembershipGrant;
 use App\Models\PaymentEvent;
+use App\Services\MembershipService;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -192,37 +193,34 @@ it('never drops a settled fee because BTCPay calls the invoice invalid', functio
      * a refund used to be enough to destroy the only proof that the fee had
      * ever been paid.
      *
-     * CHANGED IN P5, and the change is the point rather than a concession:
-     * `paid` is now taken back and a Storno row records that it was — because
-     * BTCPay disowning an invoice is a fact, and leaving `paid` standing would
-     * make the books claim money the association no longer has. What the test
-     * still guards is what it always guarded: NOTHING IS DESTROYED. The row
-     * survives, the invoice reference survives, the amount and year survive in
-     * the reversal, and the membership category is not touched.
-     *
-     * The reversal runs on the refresh path and not only in the webhook on
-     * purpose. Both ask BTCPay the same question; if only one of them acted on
-     * the answer, the same fact would leave the database in two different
-     * states depending on who happened to ask — which is the second truth this
-     * whole phase exists to prevent.
+     * CHANGED ON 2026-11-24, owner decision verbatim: "Wenn Webhook meldet,
+     * dass bezahlt, dann ist bezahlt! Lightning Invoices sind nicht
+     * rückholbar! Heißt eine weitere Abfrage auf BTCPay ist nicht mehr
+     * notwendig." From P5 until then the refresh took `paid` back and wrote a
+     * Storno row. Now a paid fee is final: BTCPay is not asked at all, `paid`
+     * stays, no reversal is written, and the membership category is not
+     * touched.
      */
     Http::fake(['pay.einundzwanzig.space/*' => Http::response(['id' => 'inv-open', 'status' => 'Invalid', 'amount' => '21000', 'currency' => 'SATS'])]);
 
     $subject = refSubject(paid: true, attributes: ['association_status' => AssociationStatus::PASSIVE]);
 
-    refreshCall($subject['privkey'])['response']->assertOk();
+    refreshCall($subject['privkey'])['response']
+        ->assertOk()
+        ->assertJsonPath('data.payment.paid', true)
+        // A paid invoice has no payment request worth fetching.
+        ->assertJsonPath('data.bolt11', null);
 
     $payment = PaymentEvent::query()->find($subject['payment']->id);
 
     expect($payment)->not->toBeNull()
         ->and($payment->btc_pay_invoice)->toBe('inv-open')
-        ->and((bool) $payment->paid)->toBeFalse()
-        // The original incoming payment is still on the record, in full.
-        ->and($payment->reversals()->count())->toBe(1)
-        ->and((int) $payment->reversals()->first()->amount)->toBe(21000)
-        ->and((int) $payment->reversals()->first()->year)->toBe((int) now()->year)
+        ->and((bool) $payment->paid)->toBeTrue()
+        ->and($payment->reversals()->count())->toBe(0)
         // A payment provider does not end memberships (Art. 4.2).
         ->and($subject['pleb']->fresh()->association_status)->toBe(AssociationStatus::PASSIVE);
+
+    Http::assertNothingSent();
 });
 
 it('refuses a year that has no invoice to ask about', function () {
@@ -380,12 +378,16 @@ it('does not destroy the Storno when the same invalid invoice is refreshed twice
      * F1, measured by the security-auditor and reproduced here. No attacker
      * needed and no admin either — the member's own profile page polls this.
      *
-     * The trap is that the Storno sets `paid = false`, and the branch that
-     * frees an expired fee year keyed its refusal on exactly that flag. So the
-     * second call saw an unpaid record with a dead invoice, deleted it, and
+     * The trap is that a Storno sets `paid = false`, and the branch that frees
+     * an expired fee year keyed its refusal on exactly that flag. So a refresh
+     * saw an unpaid record with a dead invoice, deleted it, and
      * `payment_reversals` plus `membership_grants` went with it through their
      * cascades — leaving a PASSIVE member with no record of a payment, no
      * record of its reversal and no record of why they were promoted.
+     *
+     * Since 2026-11-24 no Storno is written any more (a settled fee is final),
+     * but the ones written before that date are history and still sit in the
+     * database. The Storno is therefore set up directly here, as such a row.
      *
      * The membership category survives, which is what makes it silent: nothing
      * about the row looks wrong afterwards.
@@ -405,24 +407,26 @@ it('does not destroy the Storno when the same invalid invoice is refreshed twice
         'granted_at' => now(),
     ]);
 
-    refreshCall($subject['privkey'])['response']->assertOk();
+    app(MembershipService::class)->reversePayment($subject['payment'], 'InvoiceInvalid', 'webhook');
 
-    $afterFirst = [
+    $before = [
         'payments' => PaymentEvent::query()->count(),
         'reversals' => DB::table('payment_reversals')->count(),
         'grants' => MembershipGrant::query()->count(),
     ];
 
-    expect($afterFirst)->toBe(['payments' => 1, 'reversals' => 1, 'grants' => 1]);
+    expect($before)->toBe(['payments' => 1, 'reversals' => 1, 'grants' => 1]);
 
-    // The second call. Same endpoint, same upstream answer, nothing new to do.
+    refreshCall($subject['privkey'])['response']->assertOk();
+
+    // A second call. Same endpoint, same upstream answer, nothing new to do.
     refreshCall($subject['privkey'])['response']->assertOk();
 
     expect([
         'payments' => PaymentEvent::query()->count(),
         'reversals' => DB::table('payment_reversals')->count(),
         'grants' => MembershipGrant::query()->count(),
-    ])->toBe($afterFirst)
+    ])->toBe($before)
         ->and(PaymentEvent::query()->find($subject['payment']->id))->not->toBeNull()
         ->and($subject['pleb']->fresh()->association_status)->toBe(AssociationStatus::PASSIVE);
 

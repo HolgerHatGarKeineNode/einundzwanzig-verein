@@ -38,9 +38,9 @@ class MembershipService
 {
     /**
      * BTCPay states in which an invoice can no longer be paid, so the fee year
-     * has to be freed up for a fresh checkout. The Volt component knows the
-     * same two names (`invoiceIsExpired()`); this constant is the one the API
-     * reads, and both feed the identical `releaseExpiredInvoice()`.
+     * has to be freed up for a fresh checkout. The API and the profile page
+     * both read this constant, and both feed the identical
+     * `releaseExpiredInvoice()`.
      *
      * @var list<string>
      */
@@ -907,6 +907,12 @@ class MembershipService
      * Idempotent by construction: an unpaid record has nothing to reverse, so
      * a redelivered `InvoiceInvalid` writes no second Storno.
      *
+     * NO PRODUCTION CALLER since 2026-11-24: a settled fee is final (see
+     * refreshPaymentStatus()), so neither the webhook nor the refresh path
+     * reverses any more. Kept because Storno rows written before that date
+     * are history, and the tests that pin how such a row is treated build
+     * that state through this method.
+     *
      * @return array{payment_event: PaymentEvent, reversed: bool, reversal: PaymentReversal|null}
      */
     public function reversePayment(PaymentEvent $paymentEvent, string $reason, string $source = 'unknown', ?string $deliveryId = null): array
@@ -1032,29 +1038,26 @@ class MembershipService
             return ['payment_event' => $paymentEvent, 'status' => null, 'released' => false];
         }
 
+        /*
+         * A BOOKED FEE IS FINAL, so BTCPay is not asked about it at all.
+         * Owner decision of 2026-11-24, verbatim: "Wenn Webhook meldet, dass
+         * bezahlt, dann ist bezahlt! Lightning Invoices sind nicht rückholbar!
+         * Heißt eine weitere Abfrage auf BTCPay ist nicht mehr notwendig."
+         *
+         * This replaces the Storno that used to run here on `Invalid`: a later
+         * "mark invalid" in the BTCPay backend cannot pull back money that a
+         * Lightning payment has already delivered, so it must not take the
+         * booking back either. `paid` is only ever written by markPaid() on a
+         * settled invoice, which is why `Settled` is reported without asking.
+         */
+        if ($paymentEvent->paid) {
+            return ['payment_event' => $paymentEvent, 'status' => 'Settled', 'released' => false];
+        }
+
         $invoice = $this->btcPay->getInvoice($invoiceId);
 
         $status = $invoice['status'] ?? null;
         $status = is_string($status) ? $status : null;
-
-        /*
-         * A BOOKED fee reported as invalid is a Storno, and it is checked
-         * before the dead-invoice branch because that branch would swallow it:
-         * `Invalid` is one of the two dead statuses, and releaseExpiredInvoice()
-         * declines on a paid record and returns — leaving `paid` standing on a
-         * fee BTCPay has just disowned. Freeing the year is the right answer
-         * for an UNPAID checkout; taking the booking back with a record is the
-         * right answer for a paid one. Same status, two different facts.
-         */
-        if ($status === 'Invalid' && $paymentEvent->paid) {
-            $reversal = $this->reversePayment($paymentEvent, 'InvoiceInvalid', source: 'refresh');
-
-            return [
-                'payment_event' => $reversal['payment_event']->refresh(),
-                'status' => $status,
-                'released' => false,
-            ];
-        }
 
         if (in_array($status, self::DEAD_INVOICE_STATUSES, true)) {
             $release = $this->releaseExpiredInvoice($paymentEvent);
