@@ -17,7 +17,6 @@ use App\Models\ElectionCandidate;
 use App\Models\ElectionCastingVote;
 use App\Models\ElectionManifest;
 use App\Models\ElectionRound;
-use App\Models\ElectionVote;
 use App\Models\MemberProposal;
 use App\Services\Election\Candidacies;
 use App\Services\Election\CastBallot;
@@ -398,20 +397,17 @@ new class extends Component
         $states = $this->allRounds->mapWithKeys(fn (ElectionRound $round): array => [(int) $round->getKey() => $round->stateAt($now)]);
         $openedIds = $states->reject(fn (ElectionRoundState $state): bool => $state === ElectionRoundState::Draft)->keys()->all();
         $onRoll = [];
-        $eventIds = collect();
+        $eventIds = [];
 
         if ($viewer !== null && $openedIds !== []) {
             $onRoll = array_flip(app(ElectoralRoll::class)->roundIdsContaining($viewer, $openedIds));
-            $eventIds = ElectionVote::query()
-                ->whereIn('election_round_id', $openedIds)
-                ->where('einundzwanzig_pleb_id', $viewer->getKey())
-                ->pluck('event_id', 'election_round_id');
+            $eventIds = ElectionRound::voteEventIdsOf($viewer, $openedIds);
         }
 
         return $states->map(fn (ElectionRoundState $state, int $id): array => [
             'state' => $state,
             'onRoll' => isset($onRoll[$id]),
-            'eventId' => is_string($eventIds->get($id)) ? $eventIds->get($id) : null,
+            'eventId' => $eventIds[$id] ?? null,
         ])->all();
     }
 
