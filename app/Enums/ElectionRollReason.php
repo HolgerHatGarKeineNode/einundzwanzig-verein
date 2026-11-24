@@ -19,4 +19,14 @@ enum ElectionRollReason: string
      * does not say more than that, the audit line does.
      */
     case ConfirmedByBoard = 'confirmed_by_board';
+
+    public function label(): string
+    {
+        return match ($this) {
+            self::ActiveFeePaid => __('Aktivmitglied, Beitrag bezahlt'),
+            self::HonoraryFeePaid => __('Ehrenmitglied, Beitrag bezahlt'),
+            self::HonoraryExempt => __('Ehrenmitglied, ohne Beitrag'),
+            self::ConfirmedByBoard => __('Vom Vorstand bestätigt'),
+        };
+    }
 }

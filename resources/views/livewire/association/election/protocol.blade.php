@@ -2,7 +2,6 @@
 
 use App\Enums\ElectionAuditAction;
 use App\Enums\ElectionCountingRule;
-use App\Enums\ElectionFeeRule;
 use App\Enums\ElectionOutcome;
 use App\Enums\ElectionRoundState;
 use App\Enums\ElectionTieKind;
@@ -124,7 +123,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
 
         $lines[] = '';
         $lines[] = __('Sitzung: :date', ['date' => $election->meeting_at ? $this->stamp($election->meeting_at) : __('kein Termin')]);
-        $lines[] = __('Wahlberechtigt: Aktiv- und Ehrenmitglieder mit :rule', ['rule' => $this->feeRuleLabel($election)]).($election->honorary_without_fee ? __(', Ehrenmitglieder auch ohne Beitrag') : '').'.';
+        $lines[] = __('Wahlberechtigt: Aktiv- und Ehrenmitglieder mit :rule', ['rule' => $election->fee_rule->label($election->fee_year)]).($election->honorary_without_fee ? __(', Ehrenmitglieder auch ohne Beitrag') : '').'.';
 
         foreach ($this->reports as $index => $report) {
             $round = $report['round'];
@@ -185,24 +184,9 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
         return $moment === null ? '' : $moment->copy()->setTimezone(config('app.display_timezone'))->format('H:i');
     }
 
-    protected function feeRuleLabel(Election $election): string
-    {
-        $year = $election->fee_year ?? (int) now()->year;
-
-        return match ($election->fee_rule) {
-            ElectionFeeRule::Year => __('Beitrag :year', ['year' => $year]),
-            ElectionFeeRule::YearOrPrevious => __('Beitrag :year oder :previous', ['year' => $year, 'previous' => $year - 1]),
-            ElectionFeeRule::LastTwelveMonths => __('Beitrag in den letzten 12 Monaten'),
-        };
-    }
-
     protected function ruleText(ElectionCountingRule $rule, int $seats, bool $isRunOff): string
     {
-        $label = $isRunOff ? __('Stichwahl') : match ($rule) {
-            ElectionCountingRule::SingleMajority => __('Einzelwahl'),
-            ElectionCountingRule::YesNoPerCandidate => __('Bestätigungswahl'),
-            ElectionCountingRule::MostVotes => __('Mehrfachwahl'),
-        };
+        $label = $isRunOff ? __('Stichwahl') : $rule->label();
 
         return $label.', '.trans_choice('{1} ein Sitz|[2,*] :count Sitze', $seats, ['count' => $seats]);
     }
@@ -425,7 +409,7 @@ new #[Layout('layouts.bare')] #[Title('Beschlussprotokoll')] class extends Compo
             <dt class="text-text-secondary print:text-black">{{ __('Sitzung') }}</dt>
             <dd>{{ $election->meeting_at ? $this->stamp($election->meeting_at) : __('kein Termin') }}</dd>
             <dt class="text-text-secondary print:text-black">{{ __('Wahlberechtigt') }}</dt>
-            <dd>{{ __('Aktiv- und Ehrenmitglieder mit :rule', ['rule' => $this->feeRuleLabel($election)]) }}{{ $election->honorary_without_fee ? __(', Ehrenmitglieder auch ohne Beitrag') : '' }}</dd>
+            <dd>{{ __('Aktiv- und Ehrenmitglieder mit :rule', ['rule' => $election->fee_rule->label($election->fee_year)]) }}{{ $election->honorary_without_fee ? __(', Ehrenmitglieder auch ohne Beitrag') : '' }}</dd>
             @if ($election->announced_at)
                 <dt class="text-text-secondary print:text-black">{{ __('Angekündigt') }}</dt>
                 <dd>{{ $this->stamp($election->announced_at) }}</dd>

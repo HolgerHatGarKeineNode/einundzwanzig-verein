@@ -89,4 +89,28 @@ enum ElectionCountingRule: string
             self::YesNoPerCandidate => count($candidateIds),
         };
     }
+
+    /**
+     * The name of the rule as the board and the minutes call it.
+     */
+    public function label(): string
+    {
+        return match ($this) {
+            self::SingleMajority => __('Einzelwahl'),
+            self::YesNoPerCandidate => __('Bestätigungswahl'),
+            self::MostVotes => __('Mehrfachwahl'),
+        };
+    }
+
+    /**
+     * One sentence on how the rule counts.
+     */
+    public function hint(): string
+    {
+        return match ($this) {
+            self::SingleMajority => __('Eine Stimme. Gewählt ist, wer mehr als die Hälfte der gültigen Stimmen hat.'),
+            self::YesNoPerCandidate => __('Ja oder Nein je Person. Gewählt ist, wer mehr Ja als Nein hat.'),
+            self::MostVotes => __('So viele Stimmen wie Sitze. Gewählt sind die am häufigsten Genannten.'),
+        };
+    }
 }

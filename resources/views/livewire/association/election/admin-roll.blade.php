@@ -2,7 +2,7 @@
 @php
     $opened = $this->openedRounds;
     $announced = $election->announced_at !== null;
-    $ruleLabel = $this->feeRuleLabel($election->fee_rule, $election->fee_year);
+    $ruleLabel = $election->fee_rule->label($election->fee_year);
 @endphp
 
 <div class="relative" data-test="roll">
@@ -42,9 +42,9 @@
                         <span class="text-sm sm:text-base">
                             <span class="text-text-tertiary sm:sr-only">{{ __('Wahlberechtigt:') }}</span>
                             @if ($row['reason'])
-                                <span class="text-text-primary">{{ __('Ja') }}</span><span class="text-text-secondary">, {{ $this->reasonLabel($row['reason']) }}</span>
+                                <span class="text-text-primary">{{ __('Ja') }}</span><span class="text-text-secondary">, {{ $row['reason']->label() }}</span>
                             @else
-                                <span class="text-text-secondary">{{ __('Nein') }}, {{ $this->missingFeeText($election) }}</span>
+                                <span class="text-text-secondary">{{ __('Nein') }}, {{ $election->fee_rule->missingText($election->fee_year) }}</span>
                             @endif
                         </span>
                         @if ($announced)
@@ -114,7 +114,7 @@
                     <span class="min-w-0 font-bold text-text-primary break-words"><x-nostr-profile :pubkey="$row['pubkey']" :name="$row['name']" :picture="$row['picture']" /></span>
                     <span class="text-sm sm:text-base">
                         <span class="text-text-tertiary sm:sr-only">{{ __('Grund:') }}</span>
-                        <span class="text-text-primary">{{ $this->reasonLabel($row['reason']) }}</span><span class="text-text-secondary">, {{ $this->sourceLabel($row['source']) }}</span>
+                        <span class="text-text-primary">{{ $row['reason']->label() }}</span><span class="text-text-secondary">, {{ $row['source']->label() }}</span>
                     </span>
                     <span class="text-sm sm:text-base">
                         <span class="text-text-tertiary sm:sr-only">{{ __('Seit Ankündigung angemeldet:') }}</span>

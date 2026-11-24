@@ -51,7 +51,7 @@
 
         <flux:radio.group wire:model.live="form.fee_rule" variant="cards" class="flex-col" :label="__('Beitragsregel')" data-test="form-fee-rule">
             @foreach (\App\Enums\ElectionFeeRule::cases() as $rule)
-                <flux:radio value="{{ $rule->value }}" :label="$this->feeRuleLabel($rule, $feeYear)" :description="$this->feeRuleHint($rule, $feeYear)" />
+                <flux:radio value="{{ $rule->value }}" :label="$rule->label($feeYear)" :description="$rule->hint($feeYear)" />
             @endforeach
         </flux:radio.group>
         <flux:error name="form.fee_rule" />
@@ -105,10 +105,10 @@
                     <div class="mt-4">
                         <flux:select wire:model.live="form.rounds.{{ $index }}.counting_rule" :label="__('Zählregel')">
                             @foreach (\App\Enums\ElectionCountingRule::cases() as $rule)
-                                <flux:select.option value="{{ $rule->value }}">{{ $this->countingRuleLabel($rule) }}</flux:select.option>
+                                <flux:select.option value="{{ $rule->value }}">{{ $rule->label() }}</flux:select.option>
                             @endforeach
                         </flux:select>
-                        <p class="mt-2 text-sm text-text-secondary">{{ $this->countingRuleHint($round['counting_rule'] ?? '') }}</p>
+                        <p class="mt-2 text-sm text-text-secondary">{{ \App\Enums\ElectionCountingRule::tryFrom($round['counting_rule'] ?? '')?->hint() }}</p>
                     </div>
                     @unless ($locked)
                         <div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">

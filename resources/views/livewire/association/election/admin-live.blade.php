@@ -81,7 +81,7 @@
                                     {{ trans_choice('{1} Stichwahl zu „:parent“, ein Sitz. Gewählt ist, wer die meisten Stimmen hat.|[2,*] Stichwahl zu „:parent“, :count Sitze. Gewählt sind, die am häufigsten genannt werden.', $round->seats, ['parent' => $titles->get($round->parent_round_id, ''), 'count' => $round->seats]) }}
                                 @endif
                             @else
-                                {{ $this->countingRuleLabel($round->counting_rule) }}, {{ trans_choice('{1} ein Sitz|[2,*] :count Sitze', $round->seats, ['count' => $round->seats]) }}.
+                                {{ $round->counting_rule->label() }}, {{ trans_choice('{1} ein Sitz|[2,*] :count Sitze', $round->seats, ['count' => $round->seats]) }}.
                             @endif
                             @if (! $report['sealed'] && $report['candidates'] !== [])
                                 {{ __('Zur Wahl: :names.', ['names' => implode(', ', $report['candidates'])]) }}

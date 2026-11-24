@@ -25,7 +25,7 @@
                 {{ $loop->iteration }}. {{ $round->title }}
             </h3>
             <p class="mt-1 text-sm text-text-tertiary">
-                {{ trans_choice('{1} Ein Sitz|[2,*] :count Sitze', $round->seats, ['count' => $round->seats]) }}, {{ $this->countingRuleLabel($round->counting_rule) }}
+                {{ trans_choice('{1} Ein Sitz|[2,*] :count Sitze', $round->seats, ['count' => $round->seats]) }}, {{ $round->counting_rule->label() }}
             </p>
 
             @unless ($isDraft)
@@ -53,7 +53,7 @@
                                     @if ($pending && ! $row['entitled'])
                                         <span class="inline-flex items-center gap-1.5 text-warning" data-test="candidate-fee-missing">
                                             <flux:icon.exclamation-triangle variant="micro" class="size-4" aria-hidden="true" />
-                                            {{ __(':missing, Freigabe erst nach der Zahlung', ['missing' => $this->missingFeeText($election)]) }}
+                                            {{ __(':missing, Freigabe erst nach der Zahlung', ['missing' => $election->fee_rule->missingText($election->fee_year)]) }}
                                         </span>
                                     @endif
                                 </div>
