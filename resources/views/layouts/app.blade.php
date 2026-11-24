@@ -1,7 +1,5 @@
 @php
     $currentRoute = request()->route()->getName();
-    $isCurrentRouteClass = 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100';
-    $isNotCurrentRouteClass = 'text-gray-600 dark:text-gray-400';
     $inboxMember = \App\Support\NostrAuth::user()?->getPleb();
     $unreadMessages = $inboxMember instanceof \App\Models\EinundzwanzigPleb
         ? app(\App\Services\Dm\DirectMessageInbox::class)->unreadCount($inboxMember)

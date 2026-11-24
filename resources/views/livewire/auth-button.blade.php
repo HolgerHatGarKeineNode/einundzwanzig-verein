@@ -145,14 +145,12 @@ new class extends Component
          @keydown.window.escape="if (nostrLoginInProgress) { $event.preventDefault(); $event.stopPropagation(); cancelNostrLogin(); }"
          @keydown.window.tab="if (nostrLoginInProgress) { $event.preventDefault(); $event.stopPropagation(); $refs.cancelLogin?.focus(); }"
          x-effect="document.body.style.overflow = nostrLoginInProgress ? 'hidden' : ''"
-         class="fixed inset-0 z-[100] flex items-center justify-center bg-zinc-950/70 backdrop-blur-md">
-        <div class="mx-4 w-full max-w-md rounded-2xl bg-white px-8 py-10 text-center shadow-2xl ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-800">
-            <div class="relative mx-auto flex size-20 items-center justify-center">
-                <span class="absolute inset-0 animate-ping rounded-full bg-amber-500/20" aria-hidden="true"></span>
-                <span class="absolute inset-2 rounded-full bg-amber-500/10" aria-hidden="true"></span>
-                <flux:icon.arrow-path class="relative size-10 animate-spin text-amber-600 dark:text-amber-400"
-                                      aria-hidden="true"/>
-            </div>
+         class="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md">
+        <div class="mx-4 w-full max-w-md rounded-lg border border-border-default bg-bg-surface px-8 py-12 text-center shadow-2xl">
+            {{-- One quiet spinner; the pulsing halo is gone (P3/D11), and it stops
+                 under reduced motion — the heading below says what is happening. --}}
+            <flux:icon.arrow-path class="mx-auto size-10 animate-spin text-orange-500 motion-reduce:animate-none"
+                                  aria-hidden="true"/>
 
             <flux:heading id="nostr-login-progress-heading-{{ $location }}" size="lg" class="mt-6">
                 Signiere mit deinem Nostr-Wallet
@@ -168,7 +166,7 @@ new class extends Component
                  sehr hohen z-index UEBER diesem Overlay, ist also bedienbar —
                  aber der alte Satz schickte den Nutzer zu einer Erweiterung, die
                  er nicht hat, waehrend die Loesung vor ihm stand. --}}
-            <flux:text id="nostr-login-progress-description-{{ $location }}" class="mt-3 text-zinc-600 dark:text-zinc-400">
+            <flux:text id="nostr-login-progress-description-{{ $location }}" class="mt-4 text-text-secondary">
                 Bestätige die Anmeldung in deiner Browser-Erweiterung oder im
                 Nostr-Dialog über dieser Seite. Danach geht es automatisch weiter.
             </flux:text>
