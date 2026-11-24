@@ -1,18 +1,14 @@
 <?php
 
-use App\Enums\AssociationStatus;
 use App\Enums\ElectionCandidateStatus;
 use App\Enums\ElectionOutcome;
 use App\Enums\ElectionPhase;
-use App\Enums\ElectionRollReason;
-use App\Enums\ElectionRollSource;
 use App\Enums\ElectionRoundState;
 use App\Enums\ElectionTieKind;
 use App\Exceptions\ElectionActionRefusedException;
 use App\Exceptions\ElectionCandidateBlockedException;
 use App\Exceptions\ElectionRoundStateException;
 use App\Livewire\Traits\WithViewer;
-use App\Models\EinundzwanzigPleb;
 use App\Models\Election;
 use App\Models\ElectionRollEntry;
 use App\Models\ElectionRound;
@@ -21,7 +17,6 @@ use App\Services\Election\CreateRunOff;
 use App\Services\Election\ElectionAuditLog;
 use App\Services\Election\ElectionStewardship;
 use App\Services\Election\ElectoralRoll;
-use App\Services\Election\EnrolByHand;
 use App\Services\Election\PurgeTestElection;
 use App\Services\Election\RecordCastingVote;
 use App\Services\Election\RefusalText;
@@ -69,16 +64,6 @@ new class extends Component
     public bool $creating = false;
 
     public string $section = 'settings';
-
-    public ?int $rollRoundId = null;
-
-    public ?int $enrolMemberId = null;
-
-    public string $enrolReason = '';
-
-    public ?int $entitleMemberId = null;
-
-    public string $entitleReason = '';
 
     #[Locked]
     public ?int $pendingRoundId = null;
@@ -189,91 +174,6 @@ new class extends Component
         }
 
         Flux::toast(__('„:name“ ist gelöscht.', ['name' => $election->name]));
-    }
-
-    public function enrol(EnrolByHand $enrolByHand): void
-    {
-        $actor = $this->boardActor();
-
-        $this->validate(
-            [
-                'enrolMemberId' => ['required', 'integer'],
-                'enrolReason' => ['required', 'string', 'min:3', 'max:1000'],
-            ],
-            [
-                'enrolMemberId.required' => __('Wähle das Mitglied, das ihr nachtragt.'),
-                'enrolReason.required' => __('Nenne einen Grund, etwa „Beitrag bar bezahlt“. Er steht im Protokoll der Wahl.'),
-                'enrolReason.min' => __('Nenne einen Grund mit mindestens drei Zeichen.'),
-                'enrolReason.max' => __('Der Grund darf höchstens 1000 Zeichen lang sein.'),
-            ],
-        );
-
-        $round = $this->rollRound ?? abort(404);
-        $member = EinundzwanzigPleb::query()->with('profile')->findOrFail($this->enrolMemberId);
-
-        try {
-            $enrolByHand->handle($round, $member, $actor, trim($this->enrolReason));
-        } catch (ElectionRoundStateException) {
-            $this->addError('enrolMemberId', __('Nachtragen geht nur, solange der Wahlgang offen ist.'));
-
-            return;
-        } catch (ElectionActionRefusedException) {
-            $this->addError('enrolMemberId', __(':name steht schon im Verzeichnis oder ist weder Aktiv- noch Ehrenmitglied.', ['name' => MemberProposal::authorNameOf($member)]));
-
-            return;
-        }
-
-        $this->enrolMemberId = null;
-        $this->enrolReason = '';
-        unset($this->rollEntries, $this->enrolCandidates, $this->elections, $this->selectedElection);
-        Flux::toast(__(':name ist im Verzeichnis von „:round“ nachgetragen.', ['name' => MemberProposal::authorNameOf($member), 'round' => $round->title]), variant: 'success');
-    }
-
-    /**
-     * Record that a member is entitled to vote in the selected election
-     * although the portal knows no qualifying fee — paid in cash, say. From
-     * then on the candidacy can be approved, and every round opened later
-     * puts the member on its roll.
-     */
-    public function entitle(EnrolByHand $enrolByHand): void
-    {
-        $actor = $this->boardActor();
-
-        $this->validate(
-            [
-                'entitleMemberId' => ['required', 'integer'],
-                'entitleReason' => ['required', 'string', 'min:3', 'max:1000'],
-            ],
-            [
-                'entitleMemberId.required' => __('Wähle das Mitglied, das ihr als wahlberechtigt eintragt.'),
-                'entitleReason.required' => __('Nenne einen Grund, etwa „Beitrag bar bezahlt“. Er steht im Protokoll der Wahl.'),
-                'entitleReason.min' => __('Nenne einen Grund mit mindestens drei Zeichen.'),
-                'entitleReason.max' => __('Der Grund darf höchstens 1000 Zeichen lang sein.'),
-            ],
-        );
-
-        $election = $this->requireSelected();
-        $member = EinundzwanzigPleb::query()->with('profile')->findOrFail($this->entitleMemberId);
-        $name = MemberProposal::authorNameOf($member);
-
-        try {
-            $enrolByHand->entitle($election, $member, $actor, trim($this->entitleReason));
-        } catch (ElectionRoundStateException) {
-            $this->addError('entitleMemberId', __('Jeder Wahlgang dieser Wahl ist schon geöffnet oder abgeschlossen. Tragt :name im Verzeichnis des offenen Wahlgangs nach.', ['name' => $name]));
-
-            return;
-        } catch (ElectionActionRefusedException $refusal) {
-            $this->addError('entitleMemberId', str_contains($refusal->getMessage(), 'entitled already')
-                ? __(':name ist schon wahlberechtigt. Es gibt nichts einzutragen.', ['name' => $name])
-                : __(':name ist weder Aktiv- noch Ehrenmitglied. Wahlberechtigt sind nur Aktiv- und Ehrenmitglieder.', ['name' => $name]));
-
-            return;
-        }
-
-        $this->entitleMemberId = null;
-        $this->entitleReason = '';
-        unset($this->rollPreview, $this->entitleCandidates, $this->elections, $this->selectedElection);
-        Flux::toast(__(':name ist für „:election“ als wahlberechtigt eingetragen.', ['name' => $name, 'election' => $election->name]), variant: 'success');
     }
 
     /**
@@ -578,7 +478,7 @@ new class extends Component
     {
         $this->boardActor();
 
-        unset($this->elections, $this->selectedElection, $this->roundReports, $this->openedRounds, $this->rollRound);
+        unset($this->elections, $this->selectedElection, $this->roundReports);
     }
 
     /**
@@ -632,169 +532,11 @@ new class extends Component
     }
 
     /**
-     * Before any round is opened: every active and honorary member, whether
-     * the fee rule makes them entitled right now and why, and whether they
-     * signed in since the announcement.
-     *
-     * @return Collection<int, array{name: string, reason: ElectionRollReason|null, signed_in: CarbonInterface|null}>
-     */
-    #[Computed]
-    public function rollPreview(): Collection
-    {
-        $this->boardActor();
-
-        $election = $this->selectedElection;
-
-        if ($election === null) {
-            return collect();
-        }
-
-        $roll = app(ElectoralRoll::class);
-        $entitled = $roll->entitled($election, now())->get()->keyBy('id');
-
-        return EinundzwanzigPleb::query()
-            ->notErased()
-            ->whereIn('association_status', array_column(ElectoralRoll::VOTING_STATUSES, 'value'))
-            ->with('profile')
-            ->get()
-            ->map(fn (EinundzwanzigPleb $pleb): array => [
-                'name' => MemberProposal::authorNameOf($pleb),
-                'pubkey' => $pleb->pubkey,
-                'picture' => $pleb->profile?->picture,
-                'reason' => $entitled->has($pleb->id) ? $roll->reasonOf($entitled->get($pleb->id)) : null,
-                'signed_in' => $this->signedInSinceAnnouncement($election, $pleb),
-            ])
-            ->sortBy(fn (array $row): string => ($row['reason'] === null ? '1' : '0').mb_strtolower($row['name']))
-            ->values();
-    }
-
-    /**
-     * The opened rounds of the selected election — each has a roll of its own.
-     *
-     * @return Collection<int, ElectionRound>
-     */
-    #[Computed]
-    public function openedRounds(): Collection
-    {
-        $this->boardActor();
-
-        return $this->selectedElection?->rounds->whereNotNull('opened_at')->values() ?? collect();
-    }
-
-    #[Computed]
-    public function rollRound(): ?ElectionRound
-    {
-        $this->boardActor();
-
-        return $this->openedRounds->firstWhere('id', $this->rollRoundId) ?? $this->openedRounds->last();
-    }
-
-    /**
-     * @return Collection<int, array{name: string, reason: ElectionRollReason, source: ElectionRollSource, signed_in: CarbonInterface|null}>
-     */
-    #[Computed]
-    public function rollEntries(): Collection
-    {
-        $this->boardActor();
-
-        $round = $this->rollRound;
-        $election = $this->selectedElection;
-
-        if ($round === null || $election === null) {
-            return collect();
-        }
-
-        return ElectionRollEntry::query()
-            ->where('election_round_id', $round->id)
-            ->with('pleb.profile')
-            ->get()
-            ->map(fn (ElectionRollEntry $entry): array => [
-                'name' => MemberProposal::authorNameOf($entry->pleb),
-                'pubkey' => $entry->pleb?->pubkey,
-                'picture' => $entry->pleb?->profile?->picture,
-                'reason' => $entry->reason,
-                'source' => $entry->source,
-                'signed_in' => $entry->pleb === null ? null : $this->signedInSinceAnnouncement($election, $entry->pleb),
-            ])
-            ->sortBy(fn (array $row): string => mb_strtolower($row['name']))
-            ->values();
-    }
-
-    /**
-     * Active and honorary members not yet on the roll of the shown round.
-     *
-     * @return Collection<int, array{id: int, name: string}>
-     */
-    #[Computed]
-    public function enrolCandidates(): Collection
-    {
-        $this->boardActor();
-
-        $round = $this->rollRound;
-
-        if ($round === null) {
-            return collect();
-        }
-
-        return EinundzwanzigPleb::query()
-            ->notErased()
-            ->whereIn('association_status', [AssociationStatus::ACTIVE->value, AssociationStatus::HONORARY->value])
-            ->whereNotIn('id', ElectionRollEntry::query()->select('einundzwanzig_pleb_id')->where('election_round_id', $round->id))
-            ->with('profile')
-            ->get()
-            ->map(fn (EinundzwanzigPleb $pleb): array => ['id' => (int) $pleb->id, 'name' => MemberProposal::authorNameOf($pleb)])
-            ->sortBy(fn (array $row): string => mb_strtolower($row['name']))
-            ->values();
-    }
-
-    /**
-     * Active and honorary members the fee rule of the selected election does
-     * not entitle right now — whom the board can enter as entitled by hand.
-     *
-     * @return Collection<int, array{id: int, name: string}>
-     */
-    #[Computed]
-    public function entitleCandidates(): Collection
-    {
-        $this->boardActor();
-
-        $election = $this->selectedElection;
-
-        if ($election === null) {
-            return collect();
-        }
-
-        return EinundzwanzigPleb::query()
-            ->notErased()
-            ->whereIn('association_status', array_column(ElectoralRoll::VOTING_STATUSES, 'value'))
-            ->whereNotIn('id', app(ElectoralRoll::class)->entitled($election, now())->select('einundzwanzig_plebs.id'))
-            ->with('profile')
-            ->get()
-            ->map(fn (EinundzwanzigPleb $pleb): array => ['id' => (int) $pleb->id, 'name' => MemberProposal::authorNameOf($pleb)])
-            ->sortBy(fn (array $row): string => mb_strtolower($row['name']))
-            ->values();
-    }
-
-    /**
-     * Can a manual entitlement still matter: is a round of the election
-     * neither opened nor struck?
-     */
-    protected function takesEntitlement(Election $election): bool
-    {
-        return $election->rounds->contains(fn (ElectionRound $round): bool => $round->opened_at === null && $round->annulled_at === null);
-    }
-
-    /**
      * A stored moment in the zone the association meets in.
      */
     protected function local(CarbonInterface $moment): CarbonInterface
     {
         return $moment->copy()->setTimezone(config('app.display_timezone'));
-    }
-
-    protected function shortDate(?CarbonInterface $moment): string
-    {
-        return $moment === null ? '' : $this->local($moment)->format('d.m.Y');
     }
 
     protected function clock(?CarbonInterface $moment): string
@@ -932,14 +674,6 @@ new class extends Component
         return app(ElectionStewardship::class)->awaitsRepeat($round);
     }
 
-    protected function signedInSinceAnnouncement(Election $election, EinundzwanzigPleb $pleb): ?CarbonInterface
-    {
-        return $election->announced_at !== null && $pleb->last_login_at !== null && $pleb->last_login_at->gte($election->announced_at)
-            ? $pleb->last_login_at
-            : null;
-    }
-
-
     protected function requireSelected(): Election
     {
         return Election::query()->findOrFail($this->selectedElectionId ?? abort(404));
@@ -949,8 +683,7 @@ new class extends Component
     {
         $this->resetErrorBag();
         $this->selectedElectionId = (int) $election->id;
-        unset($this->selectedElection, $this->rollPreview, $this->openedRounds, $this->rollRound, $this->rollEntries, $this->enrolCandidates, $this->roundReports);
-        $this->rollRoundId = null;
+        unset($this->selectedElection, $this->roundReports);
         $current = $this->selectedElection ?? $election;
         $step = app(RunSheet::class)->nextStepOf($current);
         $this->section = match (true) {
@@ -962,7 +695,7 @@ new class extends Component
 
     protected function refreshElection(Election $election): void
     {
-        unset($this->elections, $this->selectedElection, $this->rollPreview, $this->openedRounds, $this->rollRound, $this->rollEntries, $this->roundReports);
+        unset($this->elections, $this->selectedElection, $this->roundReports);
     }
 
 };
@@ -1080,7 +813,7 @@ new class extends Component
                             @elseif ($section === 'live')
                                 @include('livewire.association.election.admin-live', ['election' => $item])
                             @else
-                                @include('livewire.association.election.admin-roll', ['election' => $item])
+                                <livewire:association.election.admin-roll :election-id="$item->id" :key="'roll-'.$item->id" />
                             @endif
                         </div>
                     @endif
