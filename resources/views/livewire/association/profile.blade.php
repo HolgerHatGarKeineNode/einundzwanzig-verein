@@ -365,6 +365,17 @@ new class extends Component
         $this->loadPayments();
     }
 
+    /**
+     * Whether the page has anything to wait for: the current fee year is
+     * unpaid and an invoice for it is open. Only then is the poll rendered.
+     */
+    protected function shouldPollPayment(): bool
+    {
+        return ! $this->currentYearIsPaid
+            && (bool) $this->currentPleb?->paymentEvents->last()?->btc_pay_invoice
+            && ! in_array($this->invoiceStatus, MembershipService::DEAD_INVOICE_STATUSES, true);
+    }
+
     protected function loadPayments(): void
     {
         $this->payments = $this->currentPleb
@@ -1231,7 +1242,10 @@ new class extends Component
                 Livewire exposes pay()/createPaymentEvent() directly regardless.
             --}}
             @if($currentPleb && ($currentPleb->association_status->value > 1 || $currentPleb->applied_at))
-                <flux:card wire:poll.20s="listenForPayment">
+                <flux:card>
+                    @if($this->shouldPollPayment())
+                        <div wire:poll.20s="listenForPayment"></div>
+                    @endif
                     <div class="space-y-6">
                         <!-- Payment Info -->
                         <div>

@@ -475,6 +475,62 @@ it('picks up a fee the webhook booked while the page was open, from the database
     Http::assertSentCount(1);
 });
 
+it('renders the payment poll only while the current year is unpaid and an invoice is open', function () {
+    $poll = 'wire:poll.20s="listenForPayment"';
+
+    $pleb = EinundzwanzigPleb::factory()->active()->create();
+
+    $paymentEvent = $pleb->paymentEvents()->create([
+        'year' => date('Y'),
+        'amount' => 21000,
+        'event_id' => 'event-poll',
+        'btc_pay_invoice' => 'invoice-poll',
+        'paid' => false,
+    ]);
+
+    Http::fake([
+        'https://pay.einundzwanzig.space/*' => Http::response([
+            'id' => 'invoice-poll',
+            'status' => 'New',
+            'expirationTime' => now()->addMinutes(30)->toIso8601String(),
+        ], 200),
+    ]);
+
+    NostrAuth::login($pleb->pubkey);
+
+    $component = Livewire::test('association.profile')->assertSeeHtml($poll);
+
+    // The webhook books the fee: the next poll sees it and the poll goes away.
+    $paymentEvent->forceFill(['paid' => true, 'paid_at' => now()])->save();
+
+    $component->call('listenForPayment')->assertDontSeeHtml($poll);
+
+    // Paid on page load: nothing to wait for from the start.
+    Livewire::test('association.profile')->assertDontSeeHtml($poll);
+});
+
+it('renders no payment poll without an open invoice', function () {
+    $pleb = EinundzwanzigPleb::factory()->active()->create();
+
+    NostrAuth::login($pleb->pubkey);
+
+    // No invoice started yet.
+    Livewire::test('association.profile')->assertDontSeeHtml('wire:poll.20s="listenForPayment"');
+
+    $pleb->paymentEvents()->where('year', date('Y'))->update(['btc_pay_invoice' => 'invoice-dead']);
+
+    Http::fake([
+        'https://pay.einundzwanzig.space/*' => Http::response([
+            'id' => 'invoice-dead',
+            'status' => 'Expired',
+            'expirationTime' => now()->subMinutes(5)->toIso8601String(),
+        ], 200),
+    ]);
+
+    // A dead invoice is freed on page load; nothing is open to wait for.
+    Livewire::test('association.profile')->assertDontSeeHtml('wire:poll.20s="listenForPayment"');
+});
+
 it('refuses the reserved NIP-05 name on the profile screen', function () {
     /*
      * NIP-05 gives the name `_` a special meaning: clients render
