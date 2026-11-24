@@ -2,7 +2,6 @@ import {Alpine, Livewire} from '../../vendor/livewire/livewire/dist/livewire.esm
 
 import nostrDefault from "./nostrDefault.js";
 import nostrLogin from "./nostrLogin.js";
-import nostrZap from "./nostrZap.js";
 import projectChatRoom from "./projectChatRoom.js";
 import projectChatFeed from "./projectChatFeed.js";
 import nostrLogout from "./nostrLogout.js";
@@ -42,7 +41,6 @@ Alpine.store('nostr', {
 
 Alpine.data('nostrDefault', nostrDefault);
 Alpine.data('nostrLogin', nostrLogin);
-Alpine.data('nostrZap', nostrZap);
 // Registrierung hier, nicht in einem seitenspezifischen Entry: Alpine startet
 // unten mit Livewire.start(); wer eine Komponente bereitstellt, muss vorher
 // registriert sein. Das Chat-SDK laedt projectChatRoom selbst per dynamischem
