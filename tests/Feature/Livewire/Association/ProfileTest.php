@@ -5,6 +5,7 @@ use App\Models\EinundzwanzigPleb;
 use App\Services\Nostr\EventSigning;
 use App\Support\NostrAuth;
 use Illuminate\Support\Facades\Http;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Livewire;
 use swentel\nostr\Key\Key;
 use Tests\Support\FakeRelayTransport;
@@ -634,3 +635,7 @@ it('lets no guest trigger the DM inbox re-check', function () {
 
     expect($relay->fetched())->toBe([]);
 });
+
+it('rejects a malformed update to the locked nip05 status as locked, not with a 500', function () {
+    Livewire::test('association.profile')->set('nip05', []);
+})->throws(CannotUpdateLockedPropertyException::class);

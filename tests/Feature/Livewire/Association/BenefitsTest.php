@@ -8,6 +8,7 @@ use App\Support\NostrAuth;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Livewire;
 
 it('shows the locked state with all services for guests', function () {
@@ -188,4 +189,20 @@ it('counts the new year from the first of January', function () {
 
     NostrAuth::login($paidThisYear->pubkey);
     Livewire::test('association.benefits')->assertSet('currentYearIsPaid', true);
+});
+
+it('rejects a malformed update to the locked nip05 status as locked, not with a 500', function (mixed $payload) {
+    Livewire::test('association.benefits')->set('nip05', $payload);
+})->with([
+    'empty array' => [[]],
+    'without handles' => [['mismatch' => false]],
+    'handles not a list of strings' => [['handles' => [['x']], 'mismatch' => false]],
+])->throws(CannotUpdateLockedPropertyException::class);
+
+it('restores a well-formed nip05 status unchanged from the wire', function () {
+    $status = Nip05Status::fromLivewire(['handles' => ['satoshi'], 'mismatch' => true]);
+
+    expect($status->handles)->toBe(['satoshi'])
+        ->and($status->mismatch)->toBeTrue()
+        ->and($status->verifiedHandle)->toBe('satoshi');
 });

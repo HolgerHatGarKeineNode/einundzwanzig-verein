@@ -56,10 +56,24 @@ final readonly class Nip05Status implements Wireable
     }
 
     /**
-     * @param  array{handles: list<string>, mismatch: bool}  $value
+     * Livewire hydrates an update to the property through this method before
+     * its #[Locked] guard runs, so `$value` may be any JSON a request sent, not
+     * only what toLivewire() produced. A malformed value yields the empty
+     * status instead of an "Undefined array key" 500; the locked guard then
+     * rejects the update as intended.
+     *
+     * @param  mixed  $value  normally array{handles: list<string>, mismatch: bool}
      */
     public static function fromLivewire($value): self
     {
+        if (! is_array($value)
+            || ! is_array($value['handles'] ?? null)
+            || ! array_is_list($value['handles'])
+            || array_filter($value['handles'], fn (mixed $handle): bool => ! is_string($handle)) !== []
+            || ! is_bool($value['mismatch'] ?? null)) {
+            return self::none();
+        }
+
         return new self($value['handles'], $value['mismatch']);
     }
 }
